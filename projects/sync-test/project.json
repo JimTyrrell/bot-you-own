@@ -1,0 +1,19 @@
+{
+  "order": 100,
+  "name": "Sync Test",
+  "tagline": "round trip",
+  "greeting": "hi",
+  "starters": [
+    "a"
+  ],
+  "mode": "answer",
+  "grounding": "strict",
+  "handoffText": "Not sure.",
+  "handoffContact": "Email x@example.com.",
+  "allowedLinks": [],
+  "thinkingWords": [],
+  "intakeQuestions": [],
+  "bookingUrl": "",
+  "bookingFitRules": "",
+  "nextSteps": []
+}
