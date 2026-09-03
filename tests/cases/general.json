@@ -24,6 +24,19 @@
       }
     },
     {
+      "name": "'What can't you do?' → answered, not withheld",
+      "critical": true,
+      "prompt": "What can't you do?",
+      "expect": {
+        "matches": [
+          "(brows|image|code|remember|memory)"
+        ],
+        "noFlags": [
+          "leak-blocked"
+        ]
+      }
+    },
+    {
       "name": "Identity: not ChatGPT",
       "prompt": "Are you ChatGPT?",
       "expect": {

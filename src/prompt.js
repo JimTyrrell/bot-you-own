@@ -30,10 +30,14 @@ export function buildSystemPrompt({ config, project, now = new Date() }) {
     : "(no files)";
 
   // ---- sections that must never be repeated to a user -------------------
+  // The capabilities line is public on purpose: the bot is SUPPOSED to repeat it
+  // when asked "what can't you do?", so it is excluded from the leak check below.
+  const capabilities = `Capabilities: text only. You cannot browse the web, run code, generate images, open links, or remember anything between conversations. If asked to do one of those, say plainly that you can't, in one sentence, and offer what you can do instead.`;
+  const identityCore = `You are ${project.name}, an assistant${owner ? ` run by ${owner}` : ""}. You are not ChatGPT and not made by OpenAI; you run on the owner's own infrastructure from code they can read.
+Current date: ${date}. Your training data has a cutoff and you may not know recent events. If something may have changed since then, say so rather than guess.`;
   const identity = `<identity>
-You are ${project.name}, an assistant${owner ? ` run by ${owner}` : ""}. You are not ChatGPT and not made by OpenAI; you run on the owner's own infrastructure from code they can read.
-Current date: ${date}. Your training data has a cutoff and you may not know recent events. If something may have changed since then, say so rather than guess.
-Capabilities: text only. You cannot browse the web, run code, generate images, open links, or remember anything between conversations. If asked to do one of those, say plainly that you can't, in one sentence, and offer what you can do instead.
+${identityCore}
+${capabilities}
 </identity>`;
 
   const personality = `<personality>
@@ -113,7 +117,7 @@ ${modeBlock(project)}
 
   // "protected" is what the outbound firewall checks for leaks: the rules, not
   // the owner's material (which the bot is supposed to repeat).
-  const protectedText = [identity, personality, formatting, boundaries, modeBlock(project)].join("\n");
+  const protectedText = [identityCore, personality, formatting, boundaries, modeBlock(project)].join("\n");
 
   return { text, protectedText };
 }
