@@ -28,6 +28,14 @@ supposed to repeat: the capabilities line, the owner's files, the handoff.
 handoff text + contact · `{{links}}` the allowed links as a bullet list ·
 `{{#handoff}}…{{/handoff}}` include the line only when a handoff exists.
 
+## The rule: root is global, the bot's folder wins
+Any file in this folder can be copied into `projects/<name>/prompt/` with the
+**same name**, and that copy replaces it for that bot only. Register it as the
+4th argument of `project(...)` in `projects/index.js`. Example in the repo:
+`projects/brightside-dental/prompt/3-personality.md` gives the dental bot a
+calmer voice while the other bots keep the shared one. Jobs work the same way:
+`projects/<name>/prompt/jobs/<mode>.md`.
+
 ## What's per bot, and what's shared
 - **Shared by every project** (this folder): personality, formatting, boundaries, answering rules, the job descriptions.
 - **Per project** (`projects/<name>/`): `project.json` (name, greeting, starters, `mode`, `grounding`, allowed links, handoff, thinking words), `instructions.md` (the owner's own words, on top), `knowledge/` (the files).

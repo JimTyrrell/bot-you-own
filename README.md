@@ -30,6 +30,11 @@ It is built from three layers, and the workshop teaches them in this order:
 Everything in **Yours** is text. Edit it in GitHub, commit, and the bot updates
 in about a minute. Nothing in **Engine** needs to change to launch a bot.
 
+**One rule to remember:** a file at the root is global; the same file inside a
+bot's folder applies to that bot only, and wins. `prompt/3-personality.md` is
+every bot's voice; `projects/brightside-dental/prompt/3-personality.md` is the
+dental bot's.
+
 ## Deploy it (three minutes, no card)
 
 <!-- TODO Jim: replace USER/REPO once the GitHub repo exists, then check the button renders. -->

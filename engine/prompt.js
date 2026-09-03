@@ -48,23 +48,27 @@ export function buildSystemPrompt({ config, project, now = new Date() }) {
     handoff,
     links: (project.allowedLinks || []).map((l) => `- ${l}`).join("\n") || "- (none)",
   };
-  const t = (md) => fill(md, vars);
+  // Root file = global default. A copy in projects/<name>/prompt/ overrides it
+  // for that bot only (registered in projects/index.js). Same name, same placeholders.
+  const overrides = project.prompt || {};
+  const pick = (name, md) => overrides[name] ?? md;
+  const t = (name, md) => fill(pick(name, md), vars);
 
   // --- protected sections: the firewall withholds answers that quote these ---
-  const identityCore = t(identityMd);
-  const personality = t(personalityMd);
-  const formatting = t(formattingMd);
-  const boundaries = t(boundariesMd);
+  const identityCore = t("1-identity.md", identityMd);
+  const personality = t("3-personality.md", personalityMd);
+  const formatting = t("4-formatting.md", formattingMd);
+  const boundaries = t("9-boundaries.md", boundariesMd);
   const job = modeBlock(project);
 
   // --- public sections: the bot is meant to repeat these ---------------------
-  const capabilities = t(capabilitiesMd);
+  const capabilities = t("2-capabilities.md", capabilitiesMd);
   const identity = `<identity>\n${identityCore}\n${capabilities}\n</identity>`;
   const ownerInstructions = project.instructions
-    ? `<owner_instructions>\n${t(ownerIntroMd)}\n${project.instructions}\n</owner_instructions>`
+    ? `<owner_instructions>\n${t("5-owner-instructions-intro.md", ownerIntroMd)}\n${project.instructions}\n</owner_instructions>`
     : "";
-  const knowledge = `<files>\n${t(strict ? filesStrictMd : filesOpenMd)}\n${filesBlock}\n</files>\n\n<how_to_answer>\n${t(strict ? answeringStrictMd : answeringOpenMd)}\n</how_to_answer>`;
-  const links = `<links>\n${t(linksMd)}\n</links>`;
+  const knowledge = `<files>\n${strict ? t("6-files-strict.md", filesStrictMd) : t("6-files-open.md", filesOpenMd)}\n${filesBlock}\n</files>\n\n<how_to_answer>\n${strict ? t("7-answering-strict.md", answeringStrictMd) : t("7-answering-open.md", answeringOpenMd)}\n</how_to_answer>`;
+  const links = `<links>\n${t("8-links.md", linksMd)}\n</links>`;
 
   const text = [
     identity,

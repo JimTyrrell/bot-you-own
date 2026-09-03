@@ -12,6 +12,7 @@ projects/
       about.md
       faq.md
       pricing.md
+    prompt/            ← optional: a copy of any root prompt/ file, for this bot only (root = global, here = this bot)
   index.js             ← the list of projects the bot can see (3 lines per project)
 ```
 

@@ -35,7 +35,9 @@ export const MODES = Object.fromEntries(
 );
 
 export function modeBlock(project) {
-  const mode = MODES[project.mode] || MODES.answer;
+  const base = MODES[project.mode] || MODES.answer;
+  const own = project.prompt?.[`jobs/${project.mode}.md`];   // projects/<name>/prompt/jobs/<mode>.md
+  const mode = own ? { ...base, ...parseJob(own) } : base;
   const extras = [];
   if (project.mode === "intake" && project.intakeQuestions?.length) {
     extras.push(`What to collect, in this order, one at a time:\n` + project.intakeQuestions.map((q, i) => `${i + 1}. ${q}`).join("\n"));
