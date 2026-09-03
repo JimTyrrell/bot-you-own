@@ -22,7 +22,9 @@ files as its first source.
 ## Make your own (five minutes)
 1. Copy `_template/` to a new folder, e.g. `my-shop/`.
 2. Fill in `project.json`. The important fields are `mode`, `grounding`,
-   `allowedLinks` and `handoffContact`.
+   `allowedLinks` and `handoffContact`. `thinkingWords` is the fun one: what the
+   page says while it waits for the first word ("Checking the files", "One moment"…).
+   Any number of them; leave it out to use the list in `config.js`.
 3. Paste your instructions into `instructions.md` — **raw**, don't tidy them.
 4. Put your material in `knowledge/`. The best material is the emails you've
    already written answering the same question for the tenth time.

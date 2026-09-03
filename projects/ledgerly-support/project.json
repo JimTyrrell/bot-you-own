@@ -22,8 +22,27 @@
   "bookingUrl": "",
   "bookingFitRules": "",
   "nextSteps": [
-    { "name": "The 14-day free trial", "who": "someone who hasn't tried Ledgerly yet", "link": "https://ledgerly.example" },
-    { "name": "A 20-minute demo call", "who": "a consultant with more than one client and questions about invoicing or tax", "link": "https://ledgerly.example/book-a-demo" },
-    { "name": "The setup docs", "who": "an existing customer trying to connect a bank or import data", "link": "https://ledgerly.example/docs" }
+    {
+      "name": "The 14-day free trial",
+      "who": "someone who hasn't tried Ledgerly yet",
+      "link": "https://ledgerly.example"
+    },
+    {
+      "name": "A 20-minute demo call",
+      "who": "a consultant with more than one client and questions about invoicing or tax",
+      "link": "https://ledgerly.example/book-a-demo"
+    },
+    {
+      "name": "The setup docs",
+      "who": "an existing customer trying to connect a bank or import data",
+      "link": "https://ledgerly.example/docs"
+    }
+  ],
+  "thinkingWords": [
+    "Checking the plan details",
+    "Reading the billing page",
+    "Looking that up in the docs",
+    "One sec",
+    "Consulting the FAQ"
   ]
 }

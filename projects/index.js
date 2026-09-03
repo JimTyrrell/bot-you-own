@@ -80,5 +80,6 @@ export function listProjects() {
     starters: p.starters,
     mode: p.mode,
     grounding: p.grounding,
+    thinkingWords: Array.isArray(p.thinkingWords) && p.thinkingWords.length ? p.thinkingWords : undefined,
   }));
 }

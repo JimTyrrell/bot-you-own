@@ -60,4 +60,14 @@ export const CONFIG = {
 
   // ---- 6. LOOKS --------------------------------------------------------------
   accent: "#10a37f",
+
+  // What the page says while it waits for the first word of an answer (usually
+  // one to three seconds). One is picked at random, then they rotate. Any number
+  // of words; a project can bring its own list in project.json → "thinkingWords".
+  thinkingWords: [
+    "Thinking", "Pondering", "Mulling it over", "Checking the files", "Rummaging",
+    "Cogitating", "Noodling", "Consulting the notes", "Brewing", "Percolating",
+    "Weighing it up", "Reading that back", "Sifting", "Deliberating", "Ruminating",
+    "Chewing on it", "Looking that up", "Marshalling the facts", "Considering", "Composing",
+  ],
 };

@@ -43,6 +43,7 @@ export default {
         owner: CONFIG.owner,
         siteName: CONFIG.siteName,
         accent: CONFIG.accent,
+        thinkingWords: Array.isArray(CONFIG.thinkingWords) ? CONFIG.thinkingWords : ["Thinking"],
         model: CONFIG.model,
         provider: CONFIG.provider,
         defaultProject: CONFIG.defaultProject,

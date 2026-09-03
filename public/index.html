@@ -75,6 +75,11 @@
   .body pre code { background:none; padding:0; }
   .body a { color:var(--accent); }
   .cursor::after { content:"▍"; animation:blink 1s infinite; color:var(--muted); }
+  .thinking { color:var(--muted); font-style:italic; }
+  .thinking::after { content:"…"; }
+  .thinking span { display:inline-block; animation:fadein .35s ease; }
+  @keyframes fadein { from { opacity:0; transform:translateY(2px); } to { opacity:1; transform:none; } }
+  @media (prefers-reduced-motion: reduce) { .thinking span { animation:none; } }
   @keyframes blink { 50% { opacity:0; } }
   .flags { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0 0 40px; width:100%; }
   .flag { font-size:11px; padding:2px 8px; border-radius:999px; background:var(--chip); color:var(--chipText); }
@@ -297,7 +302,14 @@ async function send(text) {
   if (!chat.messages.length) { $('log').innerHTML = ''; chat.title = text.slice(0, 40); }
   chat.messages.push({ role: 'user', content: text });
   addMessage('user', text);
-  const body = addMessage('assistant', ''); body.classList.add('cursor');
+  const body = addMessage('assistant', '');
+  // "Thinking…" — rotates through the project's words (or the global list) until the first token lands.
+  const words = (state.project.thinkingWords || state.cfg.thinkingWords || ['Thinking']).slice();
+  let wi = Math.floor(Math.random() * words.length);
+  const showWord = () => { body.className = 'body thinking'; body.innerHTML = '<span>' + esc(words[wi]) + '</span>'; wi = (wi + 1) % words.length; };
+  showWord();
+  const ticker = words.length > 1 ? setInterval(showWord, 1400) : null;
+  const stopThinking = () => { if (ticker) clearInterval(ticker); body.className = 'body cursor'; };
   scrollDown();
 
   state.busy = true; sendBtn.classList.add('stop'); sendBtn.textContent = '■'; sendBtn.title = 'Stop';
@@ -321,7 +333,7 @@ async function send(text) {
           const line = buf.slice(0, i).trim(); buf = buf.slice(i + 2);
           if (!line.startsWith('data:')) continue;
           const ev = JSON.parse(line.slice(5));
-          if (ev.type === 'delta') { full += ev.text; body.innerHTML = md(full); scrollDown(); }
+          if (ev.type === 'delta') { if (!full) stopThinking(); full += ev.text; body.innerHTML = md(full); scrollDown(); }
           if (ev.type === 'final') { finalText = ev.text; flags = ev.flags || []; }
         }
       }
@@ -329,7 +341,7 @@ async function send(text) {
   } catch (err) {
     if (err.name === 'AbortError') finalText = full || '(stopped)'; else finalText = 'Sorry — something went wrong on our end.';
   }
-  body.classList.remove('cursor');
+  stopThinking(); body.classList.remove('cursor');
   const reply = finalText ?? full;
   body.innerHTML = md(reply);
   if (flags.length) body.parentElement.appendChild(flagRow(flags));

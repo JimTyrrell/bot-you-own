@@ -12,7 +12,10 @@
   "grounding": "strict",
   "handoffText": "I don't have that written down, and I'd rather not guess about anything to do with your care.",
   "handoffContact": "Call the front desk on (970) 555-0142 during opening hours, or email hello@brightsidedental.example.",
-  "allowedLinks": ["https://brightsidedental.example", "https://brightsidedental.example/new-patients"],
+  "allowedLinks": [
+    "https://brightsidedental.example",
+    "https://brightsidedental.example/new-patients"
+  ],
   "intakeQuestions": [
     "What's your name?",
     "Have you been to Brightside before, or is this your first visit?",
@@ -22,5 +25,12 @@
   ],
   "bookingUrl": "",
   "bookingFitRules": "",
-  "nextSteps": []
+  "nextSteps": [],
+  "thinkingWords": [
+    "Checking with the front desk",
+    "Looking at the practice notes",
+    "One moment",
+    "Pulling up our hours",
+    "Reading the insurance list"
+  ]
 }
