@@ -128,6 +128,22 @@ export function screenOutbound(reply, { allowedLinks, protectedText, config }) {
   return { text, flags };
 }
 
+// --- The handoff, enforced. --------------------------------------------------
+// In a strict project the owner wrote a handoff contact for a reason. Models
+// paraphrase it about one time in three ("consult a professional") and drop the
+// phone number. If the reply is a decline and the contact isn't in it, add it.
+// A contact line on the end of a decline is never wrong; a missing one is.
+const DECLINE = /\b(i(?:'|’)?m not able to|i am not able to|i can(?:'|’)?t\b|i cannot\b|i(?:'|’)?m unable to|i am unable to|i don(?:'|’)?t have (?:that|specific|any|the)\b|not something i can\b|i(?:'|’)?d rather not\b|isn(?:'|’)?t (?:something )?(?:written|in the files|in our files))/i;
+export function ensureHandoff(reply, project) {
+  if (project.grounding === "open" || !project.handoffContact) return { text: reply, added: false };
+  if (!DECLINE.test(reply)) return { text: reply, added: false };
+  const contact = project.handoffContact;
+  const tokens = (contact.match(/[\w.+-]+@[\w.-]+|\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}|https?:\/\/\S+/g) || []);
+  const present = tokens.length ? tokens.some((t) => reply.includes(t)) : reply.includes(contact.slice(0, 24));
+  if (present) return { text: reply, added: false };
+  return { text: reply.trim().replace(/\s+$/, "") + " " + contact, added: true };
+}
+
 // --- Llama Guard: a second model that only answers safe / unsafe -------------
 // Model on Workers AI: @cf/meta/llama-guard-3-8b. Output is free text —
 // "safe", or "unsafe" followed by category codes (S1–S14). Parse with a regex;

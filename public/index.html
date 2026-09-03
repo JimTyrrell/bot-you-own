@@ -273,7 +273,7 @@ function addMessage(role, content, flags) {
 const FLAG_LABELS = {
   'injection-blocked': '🛡 blocked before the model', 'link-stripped': '🔗 link removed', 'leak-blocked': '🛡 answer withheld: it quoted the rules',
   'rate-limited': '⏱ rate limited', 'model-error': '⚠ model error', 'gateway-blocked': '🛡 blocked at the gateway',
-  'invisible-text-stripped': '👁 hidden characters removed', 'secret-detected': '🔑 looks like a secret was pasted',
+  'invisible-text-stripped': '👁 hidden characters removed', 'handoff-appended': '📇 contact added by the firewall', 'secret-detected': '🔑 looks like a secret was pasted',
 };
 function flagRow(flags) {
   const row = document.createElement('div'); row.className = 'flags';

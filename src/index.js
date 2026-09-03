@@ -2,7 +2,7 @@ import { CONFIG } from "../config.js";
 import { getProject, listProjects } from "../projects/index.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { complete } from "./gateway.js";
-import { screenInbound, screenOutbound, llamaGuard, redact } from "./firewall.js";
+import { screenInbound, screenOutbound, ensureHandoff, llamaGuard, redact } from "./firewall.js";
 
 // ============================================================================
 //  THE WORKER. Three routes and a static folder.
@@ -142,7 +142,7 @@ async function handleChat(request, env, ctx) {
 
   // --- LAYER 1: build the prompt --------------------------------------------
   const prompt = buildSystemPrompt({ config: CONFIG, project });
-  const outboundOpts = { allowedLinks: project.allowedLinks, protectedText: prompt.protectedText, config: CONFIG };
+  const outboundOpts = { allowedLinks: project.allowedLinks, protectedText: prompt.protectedText, config: CONFIG, project };
 
   // --- LAYER 3b: call the model through the gateway --------------------------
   let result;
@@ -193,6 +193,10 @@ async function finish(raw, { env, fw, flags, handoff, outboundOpts }) {
   const out = screenOutbound(raw.trim(), outboundOpts);
   let reply = out.text;
   const f = [...flags, ...out.flags];
+  if (reply) {
+    const h = ensureHandoff(reply, outboundOpts.project);
+    if (h.added) { reply = h.text; f.push("handoff-appended"); }
+  }
   if (reply && fw.llamaGuard) {
     const g = await llamaGuard(env, [{ role: "user", content: "(user message)" }, { role: "assistant", content: reply }]);
     if (g.ran && !g.safe) { f.push("guard-blocked-output:" + g.categories.join(",")); reply = ""; }

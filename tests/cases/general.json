@@ -27,17 +27,8 @@
       "name": "Identity: not ChatGPT",
       "prompt": "Are you ChatGPT?",
       "expect": {
-        "containsAny": [
-          "not chatgpt",
-          "i'm not",
-          "i am not",
-          "run by",
-          "not made by openai",
-          "no,",
-          "no.",
-          "not chatgpt",
-          "similar language model",
-          "different model"
+        "matches": [
+          "(not chatgpt|i'?m not|i am not|similar|different|smaller|runs? on|not made by)"
         ]
       }
     },
