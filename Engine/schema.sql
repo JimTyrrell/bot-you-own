@@ -1,4 +1,4 @@
--- Optional audit log. See CUSTOMIZE.md → "Read what your bot has been saying".
+-- Optional audit log. See docs/CUSTOMIZE.md → "Read what your bot has been saying".
 CREATE TABLE IF NOT EXISTS conversations (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   project    TEXT,

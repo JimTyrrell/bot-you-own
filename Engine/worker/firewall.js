@@ -8,7 +8,7 @@
 //  regexes, a second model that only says safe/unsafe), and REQUEST inside the
 //  model where you can't (the <boundaries> section of the prompt).
 //
-//  Every check returns a verdict. config.js decides what to do with it. Every
+//  Every check returns a verdict. YourBots/config.js decides what to do with it. Every
 //  check fails OPEN: if it can't run, the bot still answers. Each one is tagged
 //  with the OWASP LLM Top 10 (2025) risk it addresses.
 //

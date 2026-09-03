@@ -21,7 +21,7 @@ export default {
 
     // --- THE DOOR. If the ACCESS_PASSPHRASE secret is set, the bot is locked:
     //     /api/config hides the projects and /api/chat refuses without a token.
-    //     Unset = a public bot. See DEPLOY.md → "Lock it".
+    //     Unset = a public bot. See docs/DEPLOY.md → "Lock it".
     // --- WHO CAN USE IT (config.access.mode): open | key | email | key+email ---
     const wantKey = /key/.test(CONFIG.access?.mode || "key");
     const wantEmail = /email/.test(CONFIG.access?.mode || "");
@@ -138,7 +138,7 @@ async function allowed(env, request) {
 
 // --- The door: a token derived from the passphrase, never the passphrase itself.
 //     The page stores the token in localStorage and sends it as a header, which
-//     also works inside the embed iframe (cookies don't — see CUSTOMIZE.md).
+//     also works inside the embed iframe (cookies don't — see docs/CUSTOMIZE.md).
 async function accessToken(env, label = "bot-you-own/access/v1") {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(String(env.ACCESS_PASSPHRASE || "")), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(label));
@@ -398,7 +398,7 @@ function exportFiles(p, id) {
 }
 async function syncToGitHub(env, id) {
   const repo = CONFIG.github?.repo, branch = CONFIG.github?.branch || "main";
-  if (!repo) return { error: "config.js → github.repo is empty" };
+  if (!repo) return { error: "YourBots/config.js → github.repo is empty" };
   if (!env.GITHUB_TOKEN) return { error: "GITHUB_TOKEN secret is not set (fine-grained token, Contents: read & write, only this repo)" };
   const p = await resolveProject(env, id);
   if (!p || (p.id && p.id !== id && !PROJECTS[id])) return { error: "unknown bot" };

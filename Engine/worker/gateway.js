@@ -2,14 +2,14 @@
 //  LAYER 3b — THE GATEWAY
 //
 //  One function: complete({ env, config, system, messages, stream }).
-//  It talks to whichever model config.js names, through Cloudflare AI Gateway
+//  It talks to whichever model YourBots/config.js names, through Cloudflare AI Gateway
 //  when a gateway id is set, and hands back either the full text or an async
 //  iterator of text chunks.
 //
 //  Why a gateway at all: it's the dollar ceiling. AI Gateway gives you logs,
 //  caching, a per-minute rate limit, a SPEND LIMIT in dollars, and Guardrails
 //  (Llama Guard at the edge) — all from the dashboard, none of it in code.
-//  See DEPLOY.md. Fails open: if the gateway call errors, we retry without it.
+//  See docs/DEPLOY.md. Fails open: if the gateway call errors, we retry without it.
 //
 //  Providers:
 //    workers-ai  — no key. env.AI.run(). Default.
