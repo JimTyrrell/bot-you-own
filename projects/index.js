@@ -23,6 +23,7 @@ import dentalMeta from "./brightside-dental/project.json";
 import dentalInstructions from "./brightside-dental/instructions.md";
 import dentalPractice from "./brightside-dental/knowledge/practice.md";
 import dentalFees from "./brightside-dental/knowledge/fees.md";
+import dentalAdvice from "./brightside-dental/knowledge/patient-advice.md";
 
 // --- ledgerly-support: concierge with refund/discount traps ----------------
 import ledgerlyMeta from "./ledgerly-support/project.json";
@@ -42,6 +43,7 @@ export const PROJECTS = {
   "brightside-dental": project(dentalMeta, dentalInstructions, {
     "practice.md": dentalPractice,
     "fees.md": dentalFees,
+    "patient-advice.md": dentalAdvice,
   }),
   "ledgerly-support": project(ledgerlyMeta, ledgerlyInstructions, {
     "product.md": ledgerlyProduct,
