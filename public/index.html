@@ -51,6 +51,11 @@
   .spacer { flex:1; }
   .iconbtn { border:1px solid var(--edge); background:var(--bg); color:var(--text); border-radius:8px; padding:4px 8px; cursor:pointer; font-size:13px; }
   #menu { display:none; }
+  /* Header controls are laid out from first paint and never appear/disappear later:
+     disabled until config arrives, then enabled or made invisible (space kept). */
+  .iconbtn:disabled { opacity:.45; cursor:default; }
+  #hoodbtn.off { visibility:hidden; }
+  #modelpill { min-width:120px; text-align:right; }
 
   #scroll { flex:1; overflow-y:auto; }
   #log { max-width:760px; margin:0 auto; padding:24px 16px 12px; display:flex; flex-direction:column; gap:18px; }
@@ -161,7 +166,7 @@
       <span class="pill" id="modepill"></span>
       <span class="spacer"></span>
       <span class="pill" id="modelpill"></span>
-      <button class="iconbtn" id="hoodbtn" title="Under the hood (admin)" hidden>⚙ Under the hood</button>
+      <button class="iconbtn" id="hoodbtn" title="Under the hood (admin)" disabled>⚙ Under the hood</button>
     </header>
     <aside id="hood">
       <header><h1>Under the hood</h1><span class="pill" id="hoodproj"></span><span class="spacer"></span><button class="iconbtn" id="hoodclose">✕</button></header>
@@ -232,7 +237,7 @@ function boot() { fetch('/api/config', { headers: authHeaders() }).then((r) => r
   $('brand').textContent = cfg.siteName || 'The Bot You Own';
   if (cfg.accent) document.documentElement.style.setProperty('--accent', cfg.accent);
   $('modelpill').textContent = (cfg.model || '').replace(/^@cf\//, '');
-  $('hoodbtn').hidden = !cfg.adminEnabled;
+  $('hoodbtn').disabled = !cfg.adminEnabled; $('hoodbtn').classList.toggle('off', !cfg.adminEnabled);
   const v = cfg.version || {}; const built = v.builtAt ? new Date(v.builtAt).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '';
   $('foot').innerHTML = 'Run by <b>' + esc(cfg.owner || '') + '</b><br>' + esc(cfg.provider || '') + ' · your account, your bill<br><span title="' + esc(built) + '">v' + esc(v.version || '?') + (v.commit ? ' · ' + esc(v.commit) : '') + (built ? ' · ' + esc(built) : '') + '</span>';
   const want = qs.get('project') || cfg.defaultProject;
