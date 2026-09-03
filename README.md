@@ -94,6 +94,19 @@ set we run, in plain rules you can read.
 
 ---
 
+## Lock it (so the world can't run up your bill)
+Set one secret and the bot asks for a passphrase before it will talk:
+```bash
+npx wrangler secret put ACCESS_PASSPHRASE      # or: dashboard → Worker → Settings → Variables & Secrets
+```
+Locally, put `ACCESS_PASSPHRASE=…` in a `.dev.vars` file (already git-ignored).
+The page shows an unlock screen; the passphrase is never stored in the browser — a
+token derived from it is, so it also works inside the embed iframe. Wrong guesses
+share the same per-visitor rate limit as chat. Remove the secret and the bot is
+public again. **Use this for demos, internal bots and anything you haven't put a
+spend cap on yet.** A public website bot stays open and relies on the rate limit
+plus an AI Gateway spend limit.
+
 ## What it costs
 - **Nothing to start.** Free tier: 100,000 requests a day, 10,000 AI neurons a day. The free tier is a hard ceiling with no surprise bill.
 - **$5/month** for the Workers paid plan when you outgrow it, plus metered AI usage — small. Put an AI Gateway spend limit on it the day you go paid.

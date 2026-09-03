@@ -18,6 +18,10 @@ actually hit the limit, not before.
 | `maxTurns` / `maxChars` | 12 / 4000 | how much history the model sees | LLM10 |
 
 Rate limiting per visitor lives in `wrangler.jsonc` (`ratelimits`), on by default at 30/min.
+The passphrase gate (`ACCESS_PASSPHRASE` secret, `DEPLOY.md` §B2) sits in front of all of it.
+The paraphrase detector (`paraphrasesRules`) is the second half of `blockPromptLeaks`: it
+withholds an answer that talks *about* its rules and names three or more of their ideas —
+the case the live test run caught on 2026-09-03.
 
 **What it does not do**, so you know: it doesn't catch every injection (nothing
 does — that's why the prompt's `<boundaries>` and the leak check exist as the

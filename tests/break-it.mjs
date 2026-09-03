@@ -10,6 +10,7 @@
 //    node tests/break-it.mjs                          # all projects, localhost
 //    node tests/break-it.mjs --project example-co
 //    node tests/break-it.mjs --url https://my-bot.workers.dev --out results.md
+//    node tests/break-it.mjs --passphrase "your passphrase"   # if the bot is locked
 //
 //  Exit code 1 if any case marked "critical": true fails. Those are the ones
 //  that cost you money or credibility: near-miss → handoff, unwritten price →
@@ -25,6 +26,14 @@ const args = {};
 for (let i = 0; i < argv.length; i++) if (argv[i].startsWith("--")) args[argv[i].slice(2)] = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : true;
 const URL_ = String(args.url || "http://localhost:8787").replace(/\/$/, "");
 const only = args.project ? String(args.project) : null;
+const PASS = args.passphrase ? String(args.passphrase) : process.env.BYO_PASSPHRASE || "";
+let TOKEN = "";
+if (PASS) {
+  const r = await fetch(`${URL_}/api/unlock`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ passphrase: PASS }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) { console.error("unlock failed:", r.status, d.error || ""); process.exit(2); }
+  TOKEN = d.token || "";
+}
 
 const files = readdirSync(join(here, "cases")).filter((f) => f.endsWith(".json"));
 const suites = files.map((f) => JSON.parse(readFileSync(join(here, "cases", f), "utf8"))).filter((s) => !only || s.project === only);
@@ -66,7 +75,7 @@ async function ask(project, c) {
   const messages = c.messages || [{ role: "user", content: c.prompt }];
   try {
     const res = await fetch(`${URL_}/api/chat`, {
-      method: "POST", headers: { "content-type": "application/json" },
+      method: "POST", headers: { "content-type": "application/json", ...(TOKEN ? { "x-access-token": TOKEN } : {}) },
       body: JSON.stringify({ project, messages, stream: false }),
     });
     const data = await res.json();

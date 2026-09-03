@@ -18,10 +18,28 @@ export default {
 
     if (url.pathname === "/health") return new Response("ok");
 
+    // --- THE DOOR. If the ACCESS_PASSPHRASE secret is set, the bot is locked:
+    //     /api/config hides the projects and /api/chat refuses without a token.
+    //     Unset = a public bot. See DEPLOY.md → "Lock it".
+    const locked = Boolean(env.ACCESS_PASSPHRASE);
+    const token = locked ? await accessToken(env) : null;
+    const authed = !locked || safeEqual(request.headers.get("x-access-token") || "", token);
+
+    if (url.pathname === "/api/unlock") {
+      if (request.method !== "POST") return json({ error: "POST only" }, 405);
+      if (!locked) return json({ token: null, locked: false });
+      if (!(await allowed(env, request))) return json({ error: "too many attempts" }, 429);
+      let b; try { b = await request.json(); } catch { return json({ error: "bad request" }, 400); }
+      const given = await accessToken({ ACCESS_PASSPHRASE: String(b.passphrase || "") });
+      return safeEqual(given, token) ? json({ token, locked: true }) : json({ error: "wrong passphrase" }, 401);
+    }
+
     if (url.pathname === "/api/config") {
+      if (locked && !authed) return json({ locked: true, siteName: CONFIG.siteName, accent: CONFIG.accent });
       const all = listProjects();
       const projects = CONFIG.singleProject ? all.filter((p) => p.id === CONFIG.defaultProject) : all;
       return json({
+        locked,
         owner: CONFIG.owner,
         siteName: CONFIG.siteName,
         accent: CONFIG.accent,
@@ -34,6 +52,7 @@ export default {
 
     if (url.pathname === "/api/chat") {
       if (request.method !== "POST") return json({ error: "POST only" }, 405);
+      if (!authed) return json({ error: "locked", reply: "This bot is locked. Enter the passphrase to continue." }, 401);
       return handleChat(request, env, ctx);
     }
 
@@ -41,18 +60,39 @@ export default {
   },
 };
 
+// --- LLM10 Unbounded Consumption: rate limit per visitor (fail-open) -------
+async function allowed(env, request) {
+  if (!env.RATE_LIMITER) return true;
+  const ip = request.headers.get("cf-connecting-ip") || "anon";
+  try {
+    const { success } = await env.RATE_LIMITER.limit({ key: ip });
+    return success;
+  } catch (err) {
+    console.error("rate limit check failed, allowing through", err);
+    return true;
+  }
+}
+
+// --- The door: a token derived from the passphrase, never the passphrase itself.
+//     The page stores the token in localStorage and sends it as a header, which
+//     also works inside the embed iframe (cookies don't — see CUSTOMIZE.md).
+async function accessToken(env) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(String(env.ACCESS_PASSPHRASE || "")), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode("bot-you-own/access/v1"));
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function safeEqual(a, b) {
+  a = String(a || ""); b = String(b || "");
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
 async function handleChat(request, env, ctx) {
-  // --- LLM10 Unbounded Consumption: rate limit per visitor (fail-open) -----
-  if (env.RATE_LIMITER) {
-    const ip = request.headers.get("cf-connecting-ip") || "anon";
-    try {
-      const { success } = await env.RATE_LIMITER.limit({ key: ip });
-      if (!success) {
-        return json({ reply: "You're sending messages faster than I can think. Give me a moment and try again.", flags: ["rate-limited"] }, 429);
-      }
-    } catch (err) {
-      console.error("rate limit check failed, allowing through", err);
-    }
+  if (!(await allowed(env, request))) {
+    return json({ reply: "You're sending messages faster than I can think. Give me a moment and try again.", flags: ["rate-limited"] }, 429);
   }
 
   let body;

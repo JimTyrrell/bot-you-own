@@ -17,6 +17,16 @@ node tests/break-it.mjs         # in a second terminal — the break-it set
 npx wrangler deploy             # → https://bot-you-own.<subdomain>.workers.dev
 ```
 
+## B2. Lock it (recommended for the demo)
+```bash
+printf 'your passphrase here' | npx wrangler secret put ACCESS_PASSPHRASE
+```
+Local dev reads it from `.dev.vars` (`ACCESS_PASSPHRASE=…`). The test runner takes
+`--passphrase "…"` or the `BYO_PASSPHRASE` env var. Delete the secret to reopen the bot.
+What it is: `/api/unlock` turns the passphrase into an HMAC token; `/api/chat` and
+the full `/api/config` require that token in an `x-access-token` header. It is a
+gate against strangers and scripts, not user accounts — everyone shares one phrase.
+
 ## C. Your own domain
 Dashboard → Workers & Pages → the Worker → Settings → Domains & Routes → Add →
 Custom Domain → `chat.yourdomain.com`. The domain has to be on Cloudflare. Pick

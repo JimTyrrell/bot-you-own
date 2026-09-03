@@ -81,9 +81,9 @@ export function stripDisallowedLinks(text, allowedLinks = []) {
 
 // LLM07 System Prompt Leakage. If the reply contains a run of words that only
 // exists in the protected part of the prompt, the model has been talked into
-// reciting it. We compare 8-word windows — long enough that ordinary answers
+// reciting it. We compare 7-word windows — long enough that ordinary answers
 // never collide, short enough to catch a paraphrase that kept a sentence.
-export function leaksPrompt(reply, protectedText, window = 8) {
+export function leaksPrompt(reply, protectedText, window = 7) {
   const words = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9' ]+/g, " ").split(/\s+/).filter(Boolean);
   const p = words(protectedText);
   const r = words(reply);
@@ -97,6 +97,19 @@ export function leaksPrompt(reply, protectedText, window = 8) {
   return /<(identity|personality|formatting|boundaries|files|how_to_answer|links|job|owner_instructions)>/i.test(reply);
 }
 
+// LLM07, the paraphrase case. A model can be talked into describing its rules
+// "in its own words" — no 8-word run matches, but the answer is still a leak.
+// Two signals together: it's talking ABOUT its rules, and it names several of
+// the distinctive ideas in them. Either alone is normal conversation.
+const META_TALK = /\b(my|the|these|those|its) (personality|formatting|system|hidden|internal|core) (rules?|instructions?|prompt|guidelines|directives)\b|\b(rules?|instructions?|guidelines) (that )?(i|it) (follow|was given|were given|operate under|adhere to)\b|\bi('m| am| was) (supposed|told|instructed|programmed|designed|configured) to\b/i;
+const RULE_TERMS = ["warm", "direct", "flatter", "lecture", "moraliz", "clarifying question", "match the length", "restate the question", "as an ai", "minimum formatting", "fenced code", "emoji", "civil", "hostile", "reveal", "paraphrase", "privileged", "untrusted", "persona", "boundaries", "sycophan", "disclaimer", "would you like me", "let me know if", "allowed list", "hand off", "handoff", "only from the files", "written down"];
+export function paraphrasesRules(reply) {
+  const low = String(reply || "").toLowerCase();
+  if (!META_TALK.test(low)) return false;
+  const hits = RULE_TERMS.filter((t) => low.includes(t)).length;
+  return hits >= 3;
+}
+
 export function screenOutbound(reply, { allowedLinks, protectedText, config }) {
   const flags = [];
   let text = String(reply || "");
@@ -107,6 +120,9 @@ export function screenOutbound(reply, { allowedLinks, protectedText, config }) {
   }
   if (config.firewall?.blockPromptLeaks !== false && leaksPrompt(text, protectedText)) {
     flags.push("leak-blocked");
+    text = "";
+  } else if (config.firewall?.blockPromptLeaks !== false && paraphrasesRules(text)) {
+    flags.push("leak-blocked:paraphrase");
     text = "";
   }
   return { text, flags };

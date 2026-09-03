@@ -87,6 +87,15 @@
   .send.stop { background:var(--danger); color:#fff; }
   .disclaimer { text-align:center; font-size:11px; color:var(--muted); padding:6px 0 4px; }
 
+  /* ---- the door ---- */
+  #lock { position:fixed; inset:0; background:var(--bg); z-index:50; display:none; align-items:center; justify-content:center; padding:20px; }
+  #lock.show { display:flex; }
+  #lock form { width:min(380px,100%); border:1px solid var(--edge); border-radius:16px; padding:24px; background:var(--side); display:flex; flex-direction:column; gap:12px; box-shadow:0 2px 12px rgba(0,0,0,.06); }
+  #lock h2 { margin:0; font-size:18px; } #lock p { margin:0; color:var(--muted); font-size:13px; }
+  #lock input { padding:11px 12px; border:1px solid var(--edge); border-radius:10px; background:var(--bg); color:var(--text); font:inherit; }
+  #lock button { padding:10px; border:0; border-radius:10px; background:var(--text); color:var(--bg); font-weight:600; cursor:pointer; }
+  #lockmsg { color:var(--danger); min-height:18px; font-size:13px; }
+
   @media (max-width: 760px) {
     .app { grid-template-columns:1fr; }
     aside { position:fixed; inset:0 30% 0 0; z-index:20; transform:translateX(-100%); transition:transform .2s; box-shadow:0 0 40px rgba(0,0,0,.3); }
@@ -98,6 +107,13 @@
 </style>
 </head>
 <body>
+<div id="lock"><form id="lockform">
+  <h2 id="locktitle">This bot is locked</h2>
+  <p>Enter the passphrase to continue.</p>
+  <input id="pass" type="password" placeholder="Passphrase" autocomplete="current-password" />
+  <button type="submit">Unlock</button>
+  <div id="lockmsg"></div>
+</form></div>
 <div class="app">
   <aside id="side">
     <div class="brand"><span id="brand">The Bot You Own</span><button class="iconbtn" id="theme" title="Toggle theme">◐</button></div>
@@ -160,7 +176,20 @@ const store = {
   remove(pid, id) { this.save(pid, this.list(pid).filter((c) => c.id !== id)); },
 };
 
-fetch('/api/config').then((r) => r.json()).then((cfg) => {
+// ---- the door ----
+let TOKEN = ''; try { TOKEN = localStorage.getItem('byo:token') || ''; } catch {}
+const authHeaders = () => TOKEN ? { 'x-access-token': TOKEN } : {};
+function showLock(msg) { $('lock').classList.add('show'); $('lockmsg').textContent = msg || ''; $('pass').focus(); }
+$('lockform').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const res = await fetch('/api/unlock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ passphrase: $('pass').value }) });
+  const data = await res.json().catch(() => ({}));
+  if (res.ok && data.token) { TOKEN = data.token; try { localStorage.setItem('byo:token', TOKEN); } catch {} $('lock').classList.remove('show'); $('pass').value = ''; boot(); }
+  else $('lockmsg').textContent = res.status === 429 ? 'Too many attempts. Wait a minute.' : 'Wrong passphrase.';
+});
+
+function boot() { fetch('/api/config', { headers: authHeaders() }).then((r) => r.json()).then((cfg) => {
+  if (cfg.locked && !cfg.projects) { $('brand').textContent = cfg.siteName || 'The Bot You Own'; return showLock(TOKEN ? 'Your key expired. Enter the passphrase again.' : ''); }
   state.cfg = cfg; state.projects = cfg.projects;
   document.title = cfg.siteName || 'The Bot You Own';
   $('brand').textContent = cfg.siteName || 'The Bot You Own';
@@ -169,7 +198,8 @@ fetch('/api/config').then((r) => r.json()).then((cfg) => {
   $('foot').innerHTML = 'Run by <b>' + esc(cfg.owner || '') + '</b><br>' + esc(cfg.provider || '') + ' · your account, your bill';
   const want = qs.get('project') || cfg.defaultProject;
   selectProject(state.projects.find((p) => p.id === want) || state.projects[0]);
-}).catch(() => { $('log').innerHTML = '<p style="color:var(--muted)">Could not load /api/config.</p>'; });
+}).catch(() => { $('log').innerHTML = '<p style="color:var(--muted)">Could not load /api/config.</p>'; }); }
+boot();
 
 function selectProject(p) {
   state.project = p;
@@ -275,9 +305,10 @@ async function send(text) {
   let full = '', finalText = null, flags = [];
   try {
     const res = await fetch('/api/chat', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, signal: state.abort.signal,
+      method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, signal: state.abort.signal,
       body: JSON.stringify({ project: state.project.id, messages: chat.messages.map(({ role, content }) => ({ role, content })), stream: true }),
     });
+    if (res.status === 401) { TOKEN = ''; try { localStorage.removeItem('byo:token'); } catch {} showLock('Enter the passphrase to continue.'); }
     if (!(res.headers.get('content-type') || '').includes('event-stream')) {
       const data = await res.json().catch(() => ({}));
       finalText = data.reply || data.error || 'Sorry — something went wrong on our end.'; flags = data.flags || [];
