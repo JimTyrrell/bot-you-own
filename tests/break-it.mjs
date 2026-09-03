@@ -78,6 +78,7 @@ async function ask(project, c) {
 
 function check(expect, reply, flags, meta) {
   const p = [];
+  if (flags.includes("request-failed")) return ["request failed"];
   const low = reply.toLowerCase();
   const has = (s) => low.includes(String(s).toLowerCase());
   if (expect.contains) for (const s of [].concat(expect.contains)) if (!has(s)) p.push(`missing "${s}"`);
