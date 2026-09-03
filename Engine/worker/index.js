@@ -1,5 +1,5 @@
-import { CONFIG } from "../config.js";
-import { PROJECTS, getProject as folderProject, listProjects as folderList } from "../YourBots/index.js";
+import { CONFIG } from "../../config.js";
+import { PROJECTS, getProject as folderProject, listProjects as folderList } from "../../YourBots/index.js";
 import { buildSystemPrompt, PROMPT_FILES, ROOT_PROMPT_FILES } from "./prompt.js";
 import { complete } from "./gateway.js";
 import { screenInbound, screenOutbound, ensureHandoff, llamaGuard, redact, INJECTION_PATTERNS, SECRET_PATTERNS, LLAMA_GUARD_MODEL } from "./firewall.js";

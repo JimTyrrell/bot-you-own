@@ -34,7 +34,7 @@ authenticate anyone.
   known to flip on tiny prompt changes (NeMo issue #300). Add it as a fourth
   check in `screenInbound` if regex isn't enough for your traffic.
 - **promptfoo red-team:** `npx promptfoo@latest redteam init` pointed at your
-  `/api/chat`. The grown-up version of `tests/break-it.mjs`.
+  `/api/chat`. The grown-up version of `Engine/tests/break-it.mjs`.
 - **AI Gateway Guardrails:** Llama Guard at the edge, no code. `DEPLOY.md` §D.
 
 ## Put a hard ceiling on cost
@@ -61,7 +61,7 @@ When a project outgrows a few files — a whole website, hundreds of pages — b
 into the prompt stops working. AI Search does the chunking, indexing and retrieval.
 1. Create an AI Search instance in the dashboard; point it at your files / R2 / a crawl of your site.
 2. Bind it in `wrangler.jsonc`: `"ai_search": [{ "binding": "SEARCH", "instance_name": "my-instance" }]`
-3. In `engine/gateway.js`, replace the Workers AI call with
+3. In `Engine/worker/gateway.js`, replace the Workers AI call with
    `env.SEARCH.get("my-instance").chatCompletions({ messages, model, ai_search_options: { retrieval: { max_num_results: 5 } } })`.
 **Keep the guardrails.** Retrieval changes where the facts come from. It doesn't make the bot willing to say "I don't know."
 

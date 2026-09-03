@@ -23,7 +23,7 @@ YourBots/
 
 **Everything your bot knows is in `knowledge/`. In `strict` mode it is not allowed
 to say anything that isn't.** How every bot *behaves* (tone, refusals, the jobs)
-lives one folder up in `prompt/` — also plain Markdown. In `open` mode it behaves like ChatGPT and uses the
+lives one folder up in `YourBots/_prompt/` — also plain Markdown. In `open` mode it behaves like ChatGPT and uses the
 files as its first source.
 
 ## Make your own (five minutes, no code)
@@ -40,15 +40,15 @@ files as its first source.
 5. Set `defaultProject: "my-shop"` in `config.js`. Commit.
 
 That's the whole job. Nothing else registers it: the build finds every folder in
-`YourBots/`, every file in its `knowledge/`, and every override in its `prompt/`.
+`YourBots/`, every file in its `knowledge/`, and every override in its `YourBots/_prompt/`.
 
 **Adding more data later** = drop another file into `knowledge/` and commit.
 PDFs and Word files can't be dropped in as-is: open them, copy the text into a
 `.md` file. For a large library that's the AI Search upgrade in `CUSTOMIZE.md`.
 
-**Giving one bot its own voice** = copy a file from the root `prompt/` folder into
+**Giving one bot its own voice** = copy a file from the root `YourBots/_prompt/` folder into
 `YourBots/my-shop/prompt/` with the same name and edit it. Root is global, the
-bot's folder wins. Jobs cascade the same way: `YourBots/my-shop/prompt/jobs/answer.md`.
+bot's folder wins. Jobs cascade the same way: `YourBots/my-shop/YourBots/_prompt/jobs/answer.md`.
 
 ## The samples
 | Folder | Job | Grounding | What it's testing |

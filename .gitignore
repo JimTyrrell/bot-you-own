@@ -5,7 +5,7 @@ node_modules/
 *.log
 .DS_Store
 tests/results/
-public/engine/
-public/version.json
+Engine/public/engine/
+Engine/public/version.json
 YourBots/index.js
-engine/jobs.generated.js
+Engine/worker/jobs.generated.js

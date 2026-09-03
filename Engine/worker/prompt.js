@@ -13,22 +13,22 @@
 // ============================================================================
 
 import { modeBlock } from "./modes.js";
-import identityMd from "../prompt/1-identity.md";
-import capabilitiesMd from "../prompt/2-capabilities.md";
-import personalityMd from "../prompt/3-personality.md";
-import formattingMd from "../prompt/4-formatting.md";
-import ownerIntroMd from "../prompt/5-owner-instructions-intro.md";
-import filesStrictMd from "../prompt/6-files-strict.md";
-import filesOpenMd from "../prompt/6-files-open.md";
-import answeringStrictMd from "../prompt/7-answering-strict.md";
-import answeringOpenMd from "../prompt/7-answering-open.md";
-import linksMd from "../prompt/8-links.md";
-import boundariesMd from "../prompt/9-boundaries.md";
+import identityMd from "../../YourBots/_prompt/1-identity.md";
+import capabilitiesMd from "../../YourBots/_prompt/2-capabilities.md";
+import personalityMd from "../../YourBots/_prompt/3-personality.md";
+import formattingMd from "../../YourBots/_prompt/4-formatting.md";
+import ownerIntroMd from "../../YourBots/_prompt/5-owner-instructions-intro.md";
+import filesStrictMd from "../../YourBots/_prompt/6-files-strict.md";
+import filesOpenMd from "../../YourBots/_prompt/6-files-open.md";
+import answeringStrictMd from "../../YourBots/_prompt/7-answering-strict.md";
+import answeringOpenMd from "../../YourBots/_prompt/7-answering-open.md";
+import linksMd from "../../YourBots/_prompt/8-links.md";
+import boundariesMd from "../../YourBots/_prompt/9-boundaries.md";
 
 export const PROMPT_FILES = [
-  "prompt/1-identity.md", "prompt/2-capabilities.md", "prompt/3-personality.md", "prompt/4-formatting.md",
-  "prompt/jobs/<mode>.md", "prompt/5-owner-instructions-intro.md", "prompt/6-files-strict.md", "prompt/6-files-open.md",
-  "prompt/7-answering-strict.md", "prompt/7-answering-open.md", "prompt/8-links.md", "prompt/9-boundaries.md",
+  "YourBots/_prompt/1-identity.md", "YourBots/_prompt/2-capabilities.md", "YourBots/_prompt/3-personality.md", "YourBots/_prompt/4-formatting.md",
+  "YourBots/_prompt/jobs/<mode>.md", "YourBots/_prompt/5-owner-instructions-intro.md", "YourBots/_prompt/6-files-strict.md", "YourBots/_prompt/6-files-open.md",
+  "YourBots/_prompt/7-answering-strict.md", "YourBots/_prompt/7-answering-open.md", "YourBots/_prompt/8-links.md", "YourBots/_prompt/9-boundaries.md",
 ];
 
 // The root files as text, for the Configure screen ("use this bot's own copy").

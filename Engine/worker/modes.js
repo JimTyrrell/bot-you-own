@@ -24,7 +24,7 @@ const BLURBS = {
 };
 
 export const MODES = Object.fromEntries(
-  Object.entries(JOB_FILES).map(([id, md]) => [id, { id, label: id, blurb: BLURBS[id] || "", file: `prompt/jobs/${id}.md`, ...parseJob(md) }])
+  Object.entries(JOB_FILES).map(([id, md]) => [id, { id, label: id, blurb: BLURBS[id] || "", file: `YourBots/_prompt/jobs/${id}.md`, ...parseJob(md) }])
 );
 
 export function modeBlock(project) {

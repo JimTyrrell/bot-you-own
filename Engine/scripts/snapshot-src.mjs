@@ -11,11 +11,11 @@ import { execSync } from "node:child_process";
 let version = "0.0.0"; try { version = readFileSync("VERSION", "utf8").trim(); } catch {}
 let commit = ""; try { commit = execSync("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim(); } catch {}
 const stamp = { version, builtAt: new Date().toISOString(), commit };
-writeFileSync("public/version.json", JSON.stringify(stamp));
+writeFileSync("Engine/public/version.json", JSON.stringify(stamp));
 console.log(`version ${version} (${commit || "no git"}) built ${stamp.builtAt}`);
-const files = ["config.js", "engine/index.js", "engine/prompt.js", "engine/modes.js", "engine/firewall.js", "engine/gateway.js", "YourBots/index.js", "scripts/discover.mjs", "wrangler.jsonc", "public/index.html", "public/widget.js", "tests/break-it.mjs"];
-mkdirSync("public/engine", { recursive: true });
-for (const f of readdirSync("public/engine")) if (f.endsWith(".txt") || f === "index.json") { try { (await import("node:fs")).unlinkSync(join("public/engine", f)); } catch {} }
-for (const f of files) copyFileSync(f, join("public/engine", f.replace(/\//g, "__") + ".txt"));
-writeFileSync("public/engine/index.json", JSON.stringify(files));
+const files = ["config.js", "Engine/worker/index.js", "Engine/worker/prompt.js", "Engine/worker/modes.js", "Engine/worker/firewall.js", "Engine/worker/gateway.js", "YourBots/index.js", "Engine/scripts/discover.mjs", "wrangler.jsonc", "Engine/public/index.html", "Engine/public/widget.js", "Engine/tests/break-it.mjs"];
+mkdirSync("Engine/public/engine", { recursive: true });
+for (const f of readdirSync("Engine/public/engine")) if (f.endsWith(".txt") || f === "index.json") { try { (await import("node:fs")).unlinkSync(join("Engine/public/engine", f)); } catch {} }
+for (const f of files) copyFileSync(f, join("Engine/public/engine", f.replace(/\//g, "__") + ".txt"));
+writeFileSync("Engine/public/engine/index.json", JSON.stringify(files));
 console.log(`engine snapshot: ${files.length} files → public/engine/`);

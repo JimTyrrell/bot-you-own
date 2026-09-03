@@ -13,7 +13,7 @@ Every later change = edit a file in GitHub → Commit. Cloudflare rebuilds in ab
 npm install
 npx wrangler login              # once
 npx wrangler dev                # http://localhost:8787
-node tests/break-it.mjs         # in a second terminal — the break-it set
+node Engine/tests/break-it.mjs         # in a second terminal — the break-it set
 npx wrangler deploy             # → https://bot-you-own.<subdomain>.workers.dev
 ```
 
@@ -39,8 +39,8 @@ printf 'your admin code' | npx wrangler secret put ADMIN_PASSPHRASE
 ```
 Local: add `ADMIN_PASSPHRASE=…` to `.dev.vars`. An admin token also unlocks chat,
 so you don't need both codes. Endpoints: `POST /api/admin/unlock`,
-`GET /api/admin/engine?project=…`, `GET /api/admin/source?name=engine/prompt.js`.
-The source snapshot in `public/engine/` is produced by `scripts/snapshot-src.mjs`
+`GET /api/admin/engine?project=…`, `GET /api/admin/source?name=Engine/worker/prompt.js`.
+The source snapshot in `Engine/public/engine/` is produced by `Engine/scripts/snapshot-src.mjs`
 before every dev/deploy (`build.command` in `wrangler.jsonc`) and is git-ignored;
 `run_worker_first` keeps `/engine/*` behind the gate.
 

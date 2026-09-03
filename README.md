@@ -12,28 +12,23 @@ It is built from three layers, and the workshop teaches them in this order:
 
 | Layer | Where | What it is |
 |---|---|---|
-| **1. The Prompt** | `prompt/*.md` | A ChatGPT-grade system prompt in plain Markdown: identity, date, tone, formatting, honesty, boundaries, the jobs. Your project's instructions sit on top. `engine/prompt.js` only stitches the files together. |
+| **1. The Prompt** | `YourBots/_prompt/*.md` | A ChatGPT-grade system prompt in plain Markdown: identity, date, tone, formatting, honesty, boundaries, the jobs. Your project's instructions sit on top. `Engine/worker/prompt.js` only stitches the files together. |
 | **2. The Data** | `YourBots/` | **Projects** — the same shape as a ChatGPT Project or a custom GPT: `instructions.md` + `knowledge/` files + starter prompts. Four samples ship so you can test before you type. |
-| **3. The Firewall + Gateway** | `engine/firewall.js` · `engine/gateway.js` | What stops it doing what it shouldn't. Enforced in code (link allowlist, injection screen, leak detection, rate limit) and at the edge (AI Gateway: dollar spend cap, logs, Guardrails). |
+| **3. The Firewall + Gateway** | `Engine/worker/firewall.js` · `Engine/worker/gateway.js` | What stops it doing what it shouldn't. Enforced in code (link allowlist, injection screen, leak detection, rate limit) and at the edge (AI Gateway: dollar spend cap, logs, Guardrails). |
 
 ---
 
-## What you edit, and what you don't
-| | Folder / file | What's in it | Who touches it |
-|---|---|---|---|
-| **Yours** | `config.js` | model, who can use it, firewall switches, looks | you, once |
-| **Yours** | `YourBots/<name>/` | one bot: `project.json` + `instructions.md` + `knowledge/` (drop files in) | you, often |
-| **Yours** | `prompt/` | how every bot behaves: personality, formatting, boundaries, the jobs — plain Markdown | you, when the voice needs tuning |
-| Engine | `engine/` | the Worker, the prompt assembler, the firewall, the gateway | nobody, unless you want to |
-| Engine | `public/` `scripts/` `tests/` `wrangler.jsonc` | the page, the build stamp, the break-it set, Cloudflare config | nobody |
+## Two folders
+| | What's in it | Who touches it |
+|---|---|---|
+| **`YourBots/`** | one folder per bot (`project.json` + `instructions.md` + `knowledge/` + optional `prompt/`), plus `_prompt/` — the voice, rules and jobs every bot shares, in plain Markdown — and `_template/` to copy | you |
+| **`Engine/`** | `worker/` (the code), `public/` (the page), `scripts/` (the build), `tests/` (the break-it set) | nobody, unless you want to |
 
-Everything in **Yours** is text. Edit it in GitHub, commit, and the bot updates
-in about a minute. Nothing in **Engine** needs to change to launch a bot.
+At the root: `config.js` (the deployment: model, who can use it, firewall switches,
+GitHub target) and the files Cloudflare needs (`wrangler.jsonc`, `package.json`).
 
-**One rule to remember:** a file at the root is global; the same file inside a
-bot's folder applies to that bot only, and wins. `prompt/3-personality.md` is
-every bot's voice; `YourBots/brightside-dental/prompt/3-personality.md` is the
-dental bot's.
+**One rule to remember:** a file in `YourBots/_prompt/` is every bot's; the same
+file inside a bot's own `prompt/` folder is that bot's, and wins.
 
 ## Deploy it (three minutes, no card)
 
@@ -75,7 +70,7 @@ jobs? Make two projects; the sidebar shows both.
 - `"strict"` — it answers **only** from your files and hands off otherwise. For anything customer-facing.
 - `"open"` — it behaves like ChatGPT, using your files first when they apply. For yourself and your team.
 
-### 4. Put it on your website · `public/widget.js`
+### 4. Put it on your website · `Engine/public/widget.js`
 One script tag. Inline or bubble. See `https://YOUR-BOT-URL/embed-example`.
 ```html
 <div data-mybot style="height:640px"></div>
@@ -114,7 +109,7 @@ paste Instructions into one file, files into a folder, flip one switch.
 
 ## The part nobody else teaches: it has to be able to say no
 
-Open `engine/firewall.js` and read it. You don't have to change it — you have to
+Open `Engine/worker/firewall.js` and read it. You don't have to change it — you have to
 know it's there. Every check is tagged with the OWASP LLM Top 10 risk it covers.
 
 - **Before the model:** hidden characters stripped; "ignore your instructions"-style
@@ -128,7 +123,7 @@ know it's there. Every check is tagged with the OWASP LLM Top 10 risk it covers.
   Cloudflare's own Guardrails. See `DEPLOY.md`.
 
 The page shows a small chip under any answer the firewall touched, so you can
-watch it work. **Test it by trying to break it** — `tests/break-it.mjs` is the
+watch it work. **Test it by trying to break it** — `Engine/tests/break-it.mjs` is the
 set we run, in plain rules you can read.
 
 ---

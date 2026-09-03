@@ -44,9 +44,9 @@ Every mode's prompt is composed from four parts. Three come from the repo; **the
 fourth is yours, and it's the one almost nobody writes.**
 
 ```
-  [ BASE ]    the prompt + firewall — shared, never changes    engine/prompt.js · engine/firewall.js
-  [ ROLE ]    what this bot is FOR                           prompt/jobs/<mode>.md
-  [ SHAPE ]   what a good answer looks like                  prompt/jobs/<mode>.md
+  [ BASE ]    the prompt + firewall — shared, never changes    Engine/worker/prompt.js · Engine/worker/firewall.js
+  [ ROLE ]    what this bot is FOR                           YourBots/_prompt/jobs/<mode>.md
+  [ SHAPE ]   what a good answer looks like                  YourBots/_prompt/jobs/<mode>.md
   [ DONE ]    how you know it worked                         ← YOU
 ```
 
@@ -67,8 +67,8 @@ building yet, and no amount of prompt tinkering will fix it.
 
 ## Writing a mode of your own
 
-Copy a file in `prompt/jobs/`, change its three sections (Role · What a good answer looks like · Done when). Its file name is the new `mode`. Nothing to register.
-(Run the set with `node tests/break-it.mjs` — the cases are in `tests/cases/`.) That's the whole
+Copy a file in `YourBots/_prompt/jobs/`, change its three sections (Role · What a good answer looks like · Done when). Its file name is the new `mode`. Nothing to register.
+(Run the set with `node Engine/tests/break-it.mjs` — the cases are in `Engine/tests/cases/`.) That's the whole
 extension mechanism. Then:
 
 1. **Write DONE first.** Before the role, before anything.
