@@ -11,6 +11,7 @@
 //    node tests/break-it.mjs --project example-co
 //    node tests/break-it.mjs --url https://my-bot.workers.dev --out results.md
 //    node tests/break-it.mjs --passphrase "your passphrase"   # if the bot is locked
+//    --gap 2200   milliseconds between cases (default 2200 remote, 0 on localhost)
 //
 //  Exit code 1 if any case marked "critical": true fails. Those are the ones
 //  that cost you money or credibility: near-miss → handoff, unwritten price →
@@ -26,6 +27,11 @@ const args = {};
 for (let i = 0; i < argv.length; i++) if (argv[i].startsWith("--")) args[argv[i].slice(2)] = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[++i] : true;
 const URL_ = String(args.url || "http://localhost:8787").replace(/\/$/, "");
 const only = args.project ? String(args.project) : null;
+// Pace the requests. The bot rate-limits every IP (30/min by default) and a test
+// script is exactly what that limit is for — so the script waits between cases
+// on a remote target, and if it still gets a 429 it sleeps out the window once.
+const GAP_MS = args.gap ? Number(args.gap) : (/localhost|127\.0\.0\.1/.test(URL_) ? 0 : 2200);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const PASS = args.passphrase ? String(args.passphrase) : process.env.BYO_PASSPHRASE || "";
 let TOKEN = "";
 if (PASS) {
@@ -71,14 +77,16 @@ if (args.out) { writeFileSync(String(args.out), lines.join("\n") + "\n"); consol
 process.exit(critFail ? 1 : 0);
 
 // ---------------------------------------------------------------------------
-async function ask(project, c) {
+async function ask(project, c, attempt = 0) {
   const messages = c.messages || [{ role: "user", content: c.prompt }];
+  if (GAP_MS) await sleep(GAP_MS);
   try {
     const res = await fetch(`${URL_}/api/chat`, {
       method: "POST", headers: { "content-type": "application/json", ...(TOKEN ? { "x-access-token": TOKEN } : {}) },
       body: JSON.stringify({ project, messages, stream: false }),
     });
     const data = await res.json();
+    if (res.status === 429 && attempt < 2) { process.stderr.write("  (rate limited — waiting 61s)\n"); await sleep(61000); return ask(project, c, attempt + 1); }
     return { reply: String(data.reply || data.error || ""), flags: data.flags || [], status: res.status };
   } catch (err) {
     return { reply: `(request failed: ${err.message})`, flags: ["request-failed"], status: 0 };
