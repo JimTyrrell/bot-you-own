@@ -22,7 +22,7 @@ It is built from three layers, and the workshop teaches them in this order:
 | | Folder / file | What's in it | Who touches it |
 |---|---|---|---|
 | **Yours** | `config.js` | model, who can use it, firewall switches, looks | you, once |
-| **Yours** | `projects/<name>/` | one bot: `project.json` + `instructions.md` + `knowledge/` | you, often |
+| **Yours** | `projects/<name>/` | one bot: `project.json` + `instructions.md` + `knowledge/` (drop files in) | you, often |
 | **Yours** | `prompt/` | how every bot behaves: personality, formatting, boundaries, the jobs — plain Markdown | you, when the voice needs tuning |
 | Engine | `engine/` | the Worker, the prompt assembler, the firewall, the gateway | nobody, unless you want to |
 | Engine | `public/` `scripts/` `tests/` `wrangler.jsonc` | the page, the build stamp, the break-it set, Cloudflare config | nobody |
@@ -59,8 +59,8 @@ Copy `projects/_template/` to `projects/my-business/`. Fill in three things:
 - `instructions.md` — what you'd have typed into ChatGPT's Instructions box. Paste it raw.
 - `knowledge/` — what you'd have uploaded as files. Markdown or plain text.
 
-Then add it to `projects/index.js` (copy a block, change the folder name) and set
-`defaultProject: "my-business"` in `config.js`. **Read `projects/README.md`.**
+Then set `defaultProject: "my-business"` in `config.js`. Nothing to register: the
+build finds every folder in `projects/`. **Read `projects/README.md`.**
 
 > **The single highest-value hour you will spend on this:** go into your sent
 > folder and find the emails where you answered the same question for the tenth

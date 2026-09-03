@@ -13,7 +13,7 @@ let commit = ""; try { commit = execSync("git rev-parse --short HEAD", { stdio: 
 const stamp = { version, builtAt: new Date().toISOString(), commit };
 writeFileSync("public/version.json", JSON.stringify(stamp));
 console.log(`version ${version} (${commit || "no git"}) built ${stamp.builtAt}`);
-const files = ["config.js", "engine/index.js", "engine/prompt.js", "engine/modes.js", "engine/firewall.js", "engine/gateway.js", "projects/index.js", "wrangler.jsonc", "public/index.html", "public/widget.js", "tests/break-it.mjs"];
+const files = ["config.js", "engine/index.js", "engine/prompt.js", "engine/modes.js", "engine/firewall.js", "engine/gateway.js", "projects/index.js", "scripts/discover.mjs", "wrangler.jsonc", "public/index.html", "public/widget.js", "tests/break-it.mjs"];
 mkdirSync("public/engine", { recursive: true });
 for (const f of readdirSync("public/engine")) if (f.endsWith(".txt") || f === "index.json") { try { (await import("node:fs")).unlinkSync(join("public/engine", f)); } catch {} }
 for (const f of files) copyFileSync(f, join("public/engine", f.replace(/\//g, "__") + ".txt"));

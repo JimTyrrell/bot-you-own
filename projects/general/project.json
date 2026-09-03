@@ -1,4 +1,5 @@
 {
+  "order": 1,
   "name": "Assistant",
   "tagline": "A general assistant, ChatGPT-style, that you run yourself",
   "greeting": "What can I help with?",
@@ -12,7 +13,10 @@
   "grounding": "open",
   "handoffText": "I'm not able to help with that one.",
   "handoffContact": "",
-  "allowedLinks": ["https://developers.cloudflare.com", "https://github.com"],
+  "allowedLinks": [
+    "https://developers.cloudflare.com",
+    "https://github.com"
+  ],
   "intakeQuestions": [],
   "bookingUrl": "",
   "bookingFitRules": "",

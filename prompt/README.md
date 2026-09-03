@@ -30,8 +30,8 @@ handoff text + contact · `{{links}}` the allowed links as a bullet list ·
 
 ## The rule: root is global, the bot's folder wins
 Any file in this folder can be copied into `projects/<name>/prompt/` with the
-**same name**, and that copy replaces it for that bot only. Register it as the
-4th argument of `project(...)` in `projects/index.js`. Example in the repo:
+**same name**, and that copy replaces it for that bot only. Nothing to register —
+the build finds it. Example in the repo:
 `projects/brightside-dental/prompt/3-personality.md` gives the dental bot a
 calmer voice while the other bots keep the shared one. Jobs work the same way:
 `projects/<name>/prompt/jobs/<mode>.md`.

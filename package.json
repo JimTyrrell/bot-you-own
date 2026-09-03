@@ -5,6 +5,7 @@
   "description": "A ChatGPT-style assistant you own: your prompt, your files, your firewall, on Cloudflare.",
   "type": "module",
   "scripts": {
+    "discover": "node scripts/discover.mjs",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "test": "node tests/break-it.mjs",

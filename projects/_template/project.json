@@ -1,4 +1,5 @@
 {
+  "order": 50,
   "name": "My Business",
   "tagline": "One line about what you do",
   "greeting": "Hi — ask me anything about what we do. I'll only answer from what my team has actually written down.",

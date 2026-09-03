@@ -7,3 +7,5 @@ node_modules/
 tests/results/
 public/engine/
 public/version.json
+projects/index.js
+engine/jobs.generated.js

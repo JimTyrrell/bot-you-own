@@ -13,7 +13,7 @@ projects/
       faq.md
       pricing.md
     prompt/            ← optional: a copy of any root prompt/ file, for this bot only (root = global, here = this bot)
-  index.js             ← the list of projects the bot can see (3 lines per project)
+  index.js             ← GENERATED at build from the folders above. Never edit.
 ```
 
 **Everything your bot knows is in `knowledge/`. In `strict` mode it is not allowed
@@ -21,17 +21,29 @@ to say anything that isn't.** How every bot *behaves* (tone, refusals, the jobs)
 lives one folder up in `prompt/` — also plain Markdown. In `open` mode it behaves like ChatGPT and uses the
 files as its first source.
 
-## Make your own (five minutes)
-1. Copy `_template/` to a new folder, e.g. `my-shop/`.
-2. Fill in `project.json`. The important fields are `mode`, `grounding`,
-   `allowedLinks` and `handoffContact`. `thinkingWords` is the fun one: what the
-   page says while it waits for the first word ("Checking the files", "One moment"…).
-   Any number of them; leave it out to use the list in `config.js`.
-3. Paste your instructions into `instructions.md` — **raw**, don't tidy them.
-4. Put your material in `knowledge/`. The best material is the emails you've
-   already written answering the same question for the tenth time.
-5. Add it to `index.js` (copy an existing block, change the folder name).
-6. Set `defaultProject: "my-shop"` in `config.js`. Commit. Done.
+## Make your own (five minutes, no code)
+1. **Copy the `_template` folder** and rename it, e.g. `my-shop`. (GitHub: open
+   `_template`, use "Add file" to create `my-shop/project.json` and paste; or do it
+   on your computer and upload the folder.)
+2. Fill in `project.json`: the name, the greeting, `mode`, `grounding`, the links
+   it may share, where to send people when it can't help, and `order` (its place
+   in the sidebar; lowest first).
+3. Paste your instructions into `instructions.md` — raw, don't tidy them.
+4. **Drop your material into `knowledge/`.** Markdown, `.txt` or `.csv`. Any number
+   of files. The best material is the emails you've already written answering the
+   same question for the tenth time.
+5. Set `defaultProject: "my-shop"` in `config.js`. Commit.
+
+That's the whole job. Nothing else registers it: the build finds every folder in
+`projects/`, every file in its `knowledge/`, and every override in its `prompt/`.
+
+**Adding more data later** = drop another file into `knowledge/` and commit.
+PDFs and Word files can't be dropped in as-is: open them, copy the text into a
+`.md` file. For a large library that's the AI Search upgrade in `CUSTOMIZE.md`.
+
+**Giving one bot its own voice** = copy a file from the root `prompt/` folder into
+`projects/my-shop/prompt/` with the same name and edit it. Root is global, the
+bot's folder wins. Jobs cascade the same way: `projects/my-shop/prompt/jobs/answer.md`.
 
 ## The samples
 | Folder | Job | Grounding | What it's testing |
@@ -41,8 +53,8 @@ files as its first source.
 | `brightside-dental` | intake bot for a dental practice | `strict` | one question at a time, emergency routing, no invented prices |
 | `ledgerly-support` | concierge for a bookkeeping SaaS | `strict` | refund/discount traps, answer-before-pitch, link allowlist |
 
-Delete the ones you don't need from `index.js` before you go live. Leaving the
-folders costs nothing.
+Delete the sample folders you don't need before you go live (or leave them and
+set `singleProject: true` in `config.js` so customers see only yours).
 
 ⚠️ **Don't put anything in `knowledge/` you wouldn't put on your website.** Assume
 every word can be read by anyone who talks to the bot. Ownership changes who

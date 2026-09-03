@@ -67,7 +67,7 @@ building yet, and no amount of prompt tinkering will fix it.
 
 ## Writing a mode of your own
 
-Copy a file in `prompt/jobs/`, change its three sections (Role · What a good answer looks like · Done when), and add one import line in `engine/modes.js`.
+Copy a file in `prompt/jobs/`, change its three sections (Role · What a good answer looks like · Done when). Its file name is the new `mode`. Nothing to register.
 (Run the set with `node tests/break-it.mjs` — the cases are in `tests/cases/`.) That's the whole
 extension mechanism. Then:
 

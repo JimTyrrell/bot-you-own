@@ -6,18 +6,12 @@
 //  A project picks one with "mode" in its project.json. One project = one job.
 //  Want two jobs? Make two projects.
 //
-//  Adding a job: copy a file in prompt/jobs/, change the three sections, add an
-//  import line below. Mode-specific extras (intake questions, booking rules,
+//  Adding a job: add a file to prompt/jobs/. That's it — scripts/discover.mjs
+//  registers it at build. Mode-specific extras (intake questions, booking rules,
 //  next steps) come from the project's project.json.
 // ============================================================================
 
-import assistantMd from "../prompt/jobs/assistant.md";
-import answerMd from "../prompt/jobs/answer.md";
-import intakeMd from "../prompt/jobs/intake.md";
-import bookingMd from "../prompt/jobs/booking.md";
-import conciergeMd from "../prompt/jobs/concierge.md";
-import internalMd from "../prompt/jobs/internal.md";
-import importedMd from "../prompt/jobs/imported.md";
+import { JOB_FILES } from "./jobs.generated.js";
 
 const BLURBS = {
   assistant: "The ChatGPT-style clone. Helps with anything; uses the files first when they apply.",
@@ -30,8 +24,7 @@ const BLURBS = {
 };
 
 export const MODES = Object.fromEntries(
-  Object.entries({ assistant: assistantMd, answer: answerMd, intake: intakeMd, booking: bookingMd, concierge: conciergeMd, internal: internalMd, imported: importedMd })
-    .map(([id, md]) => [id, { id, label: id, blurb: BLURBS[id] || "", file: `prompt/jobs/${id}.md`, ...parseJob(md) }])
+  Object.entries(JOB_FILES).map(([id, md]) => [id, { id, label: id, blurb: BLURBS[id] || "", file: `prompt/jobs/${id}.md`, ...parseJob(md) }])
 );
 
 export function modeBlock(project) {
