@@ -94,7 +94,22 @@ set we run, in plain rules you can read.
 
 ---
 
-## Lock it (so the world can't run up your bill)
+## Who can use it · `config.js` → `access.mode`
+| Mode | What a visitor sees | Use it for |
+|---|---|---|
+| `open` | nothing, just the chat | a public website bot (rely on the rate limit and a spend cap) |
+| `key` ⭐ default | a passphrase screen | demos, internal bots, anything without a spend cap yet |
+| `email` | "enter your email to start" | a members' or clients' bot where you want to know who asked |
+| `key+email` | both | a private bot with a record of who used it |
+
+`email` is **identification, not authentication**: nobody verifies the address.
+It is stored in the visitor's browser, sent with every message, and logged with
+each turn (Workers Logs, and the D1 table's `visitor` column if logging is on).
+Questions and answers are still redacted; the email is kept on purpose. Say so in
+your privacy note. A **Sign out** button in the sidebar clears the key, the email,
+and the admin code.
+
+### The key
 Set one secret and the bot asks for a passphrase before it will talk:
 ```bash
 npx wrangler secret put ACCESS_PASSPHRASE      # or: dashboard → Worker → Settings → Variables & Secrets

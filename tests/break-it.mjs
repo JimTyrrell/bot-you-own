@@ -12,6 +12,7 @@
 //    node tests/break-it.mjs --url https://my-bot.workers.dev --out results.md
 //    node tests/break-it.mjs --passphrase "your passphrase"   # if the bot is locked
 //    --gap 2200   milliseconds between cases (default 2200 remote, 0 on localhost)
+//    --email you@example.com   if access.mode is "email" or "key+email"
 //
 //  Exit code 1 if any case marked "critical": true fails. Those are the ones
 //  that cost you money or credibility: near-miss → handoff, unwritten price →
@@ -33,6 +34,7 @@ const only = args.project ? String(args.project) : null;
 const GAP_MS = args.gap ? Number(args.gap) : (/localhost|127\.0\.0\.1/.test(URL_) ? 0 : 2200);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const PASS = args.passphrase ? String(args.passphrase) : process.env.BYO_PASSPHRASE || "";
+const EMAIL = args.email ? String(args.email) : process.env.BYO_EMAIL || "";   // for access.mode email / key+email
 let TOKEN = "";
 if (PASS) {
   const r = await fetch(`${URL_}/api/unlock`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ passphrase: PASS }) });
@@ -83,7 +85,7 @@ async function ask(project, c, attempt = 0) {
   try {
     const res = await fetch(`${URL_}/api/chat`, {
       method: "POST", headers: { "content-type": "application/json", ...(TOKEN ? { "x-access-token": TOKEN } : {}) },
-      body: JSON.stringify({ project, messages, stream: false }),
+      body: JSON.stringify({ project, messages, stream: false, visitor: EMAIL ? { email: EMAIL } : undefined }),
     });
     const data = await res.json();
     if (res.status === 429 && attempt < 2) { process.stderr.write("  (rate limited — waiting 61s)\n"); await sleep(61000); return ask(project, c, attempt + 1); }

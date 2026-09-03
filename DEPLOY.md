@@ -27,6 +27,12 @@ What it is: `/api/unlock` turns the passphrase into an HMAC token; `/api/chat` a
 the full `/api/config` require that token in an `x-access-token` header. It is a
 gate against strangers and scripts, not user accounts — everyone shares one phrase.
 
+## B2b. Access modes
+`config.js` → `access.mode`: `open` · `key` · `email` · `key+email`. `key` needs the
+secret from B2 (without it the bot runs open and logs a warning). `email` needs
+nothing; the runner takes `--email you@example.com`. If you already created the D1
+table before v2.2, add the column: `ALTER TABLE conversations ADD COLUMN visitor TEXT;`
+
 ## B3. The admin code (Under the hood)
 ```bash
 printf 'your admin code' | npx wrangler secret put ADMIN_PASSPHRASE

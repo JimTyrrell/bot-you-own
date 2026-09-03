@@ -22,7 +22,11 @@ export default {
     // --- THE DOOR. If the ACCESS_PASSPHRASE secret is set, the bot is locked:
     //     /api/config hides the projects and /api/chat refuses without a token.
     //     Unset = a public bot. See DEPLOY.md → "Lock it".
-    const locked = Boolean(env.ACCESS_PASSPHRASE);
+    // --- WHO CAN USE IT (config.access.mode): open | key | email | key+email ---
+    const wantKey = /key/.test(CONFIG.access?.mode || "key");
+    const wantEmail = /email/.test(CONFIG.access?.mode || "");
+    if (wantKey && !env.ACCESS_PASSPHRASE) console.warn("access.mode wants a key but ACCESS_PASSPHRASE is not set — running open");
+    const locked = wantKey && Boolean(env.ACCESS_PASSPHRASE);
     const token = locked ? await accessToken(env) : null;
 
     // --- THE ADMIN CODE. A second secret, ADMIN_PASSPHRASE, opens "Under the
@@ -63,12 +67,13 @@ export default {
     }
 
     if (url.pathname === "/api/config") {
-      if (locked && !authed) return json({ locked: true, siteName: CONFIG.siteName, accent: CONFIG.accent });
+      if (locked && !authed) return json({ locked: true, accessMode: accessMode(locked, wantEmail), siteName: CONFIG.siteName, accent: CONFIG.accent });
       const all = listProjects();
       const projects = CONFIG.singleProject ? all.filter((p) => p.id === CONFIG.defaultProject) : all;
       return json({
         version: await versionStamp(env),
         locked,
+        accessMode: accessMode(locked, wantEmail),
         adminEnabled,
         owner: CONFIG.owner,
         siteName: CONFIG.siteName,
@@ -84,7 +89,7 @@ export default {
     if (url.pathname === "/api/chat") {
       if (request.method !== "POST") return json({ error: "POST only" }, 405);
       if (!authed) return json({ error: "locked", reply: "This bot is locked. Enter the passphrase to continue." }, 401);
-      return handleChat(request, env, ctx);
+      return handleChat(request, env, ctx, { wantEmail, isAdmin });
     }
 
     return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Not found", { status: 404 });
@@ -121,13 +126,26 @@ function safeEqual(a, b) {
   return diff === 0;
 }
 
-async function handleChat(request, env, ctx) {
+function accessMode(locked, wantEmail) {
+  return (locked ? "key" : "open") + (wantEmail ? "+email" : "");
+}
+
+const EMAIL_SHAPE = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
+
+async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = false } = {}) {
   if (!(await allowed(env, request))) {
     return json({ reply: "You're sending messages faster than I can think. Give me a moment and try again.", flags: ["rate-limited"] }, 429);
   }
 
   let body;
   try { body = await request.json(); } catch { return json({ error: "bad request" }, 400); }
+
+  // --- email mode: who is asking. Logged with every turn; never verified. ------
+  const visitor = String(body.visitor?.email || "").trim().toLowerCase().slice(0, 254);
+  if (wantEmail && !isAdmin && !EMAIL_SHAPE.test(visitor)) {
+    return json({ error: "email", reply: "Please enter your email address to start." }, 401);
+  }
+  const who = visitor || (isAdmin ? "admin" : "");
 
   const project = getProject(String(body.project || ""), CONFIG.defaultProject);
   const stream = body.stream !== false;
@@ -156,7 +174,7 @@ async function handleChat(request, env, ctx) {
   if (screen.injection && fw.blockInjections !== false) {
     flags.push("injection-blocked");
     const reply = `I'm here to help with ${project.name}, so I'll skip that one. What can I help you with?`;
-    ctx.waitUntil(logTurn(env, project, last.content, reply, flags));
+    ctx.waitUntil(logTurn(env, project, last.content, reply, flags, who));
     return send(reply, flags);
   }
 
@@ -166,7 +184,7 @@ async function handleChat(request, env, ctx) {
     if (g.ran && !g.safe) {
       flags.push("guard-blocked:" + (g.categories.join(",") || "unspecified"));
       const reply = "I can't help with that. If you're in a difficult situation, please reach out to someone qualified to help.";
-      ctx.waitUntil(logTurn(env, project, last.content, reply, flags));
+      ctx.waitUntil(logTurn(env, project, last.content, reply, flags, who));
       return send(reply, flags);
     }
   }
@@ -182,14 +200,14 @@ async function handleChat(request, env, ctx) {
   } catch (err) {
     console.error("model call failed", err?.code || "", err?.message || err);
     const f = [...flags, err?.code === "gateway-blocked" ? "gateway-blocked" : err?.code === "rate-limited" ? "provider-rate-limited" : "model-error"];
-    ctx.waitUntil(logTurn(env, project, last.content, handoff, f));
+    ctx.waitUntil(logTurn(env, project, last.content, handoff, f, who));
     return send(handoff, f);
   }
 
   // --- Non-streaming path -----------------------------------------------------
   if (!stream) {
     const out = await finish(String(result), { env, fw, flags, handoff, outboundOpts });
-    ctx.waitUntil(logTurn(env, project, last.content, out.reply, out.flags));
+    ctx.waitUntil(logTurn(env, project, last.content, out.reply, out.flags, who));
     return json({ reply: out.reply, flags: out.flags });
   }
 
@@ -208,7 +226,7 @@ async function handleChat(request, env, ctx) {
         }
         const out = await finish(full, { env, fw, flags, handoff, outboundOpts });
         push({ type: "final", text: out.reply, flags: out.flags });
-        ctx.waitUntil(logTurn(env, project, last.content, out.reply, out.flags));
+        ctx.waitUntil(logTurn(env, project, last.content, out.reply, out.flags, who));
       } catch (err) {
         console.error("stream failed", err);
         push({ type: "final", text: handoff, flags: [...flags, "stream-error"] });
@@ -239,13 +257,16 @@ async function finish(raw, { env, fw, flags, handoff, outboundOpts }) {
 // --- Audit log (optional D1). Fail-open: no DB bound = no logging. ------------
 // The single most useful thing your bot produces is a record of what people
 // asked and what it couldn't answer. Every refusal is a page your site should have.
-async function logTurn(env, project, question, answer, flags) {
+async function logTurn(env, project, question, answer, flags, who = "") {
+  const refused = flags.some((f) => /blocked|error/.test(f)) || answer.includes("rather not guess") || answer.includes("don't have a solid answer");
+  // Always goes to Workers Logs (dashboard → Worker → Logs). The visitor email is
+  // kept on purpose in email mode; the question and answer are redacted.
+  console.log(JSON.stringify({ event: "turn", project: project.name, who, refused, flags, asked: redact(question).slice(0, 200) }));
   if (!env.DB) return;
   try {
-    const refused = flags.some((f) => /blocked|error/.test(f)) || answer.includes("rather not guess") || answer.includes("don't have a solid answer");
     await env.DB.prepare(
-      `INSERT INTO conversations (project, asked, answered, refused, flags, created_at) VALUES (?, ?, ?, ?, ?, ?)`
-    ).bind(project.name, redact(question), redact(answer), refused ? 1 : 0, flags.join(","), new Date().toISOString()).run();
+      `INSERT INTO conversations (project, visitor, asked, answered, refused, flags, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).bind(project.name, who, redact(question), redact(answer), refused ? 1 : 0, flags.join(","), new Date().toISOString()).run();
   } catch (err) {
     console.error("log failed (continuing)", err);
   }

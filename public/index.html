@@ -103,6 +103,9 @@
   .lockwrap.show { display:flex; }
   .lockwrap form { width:min(380px,100%); border:1px solid var(--edge); border-radius:16px; padding:24px; background:var(--side); display:flex; flex-direction:column; gap:12px; box-shadow:0 2px 12px rgba(0,0,0,.06); }
   .lockwrap h2 { margin:0; font-size:18px; } .lockwrap p { margin:0; color:var(--muted); font-size:13px; }
+  .lockwrap input[hidden] { display:none; }
+  #signout { display:flex; align-items:center; gap:8px; }
+  #signout span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .lockwrap input { padding:11px 12px; border:1px solid var(--edge); border-radius:10px; background:var(--bg); color:var(--text); font:inherit; }
   .lockwrap button { padding:10px; border:0; border-radius:10px; background:var(--text); color:var(--bg); font-weight:600; cursor:pointer; }
   .lockmsg, #lockmsg { color:var(--danger); min-height:18px; font-size:13px; }
@@ -142,10 +145,11 @@
   <div id="adminmsg" class="lockmsg"></div>
 </form></div>
 <div id="lock" class="lockwrap"><form id="lockform">
-  <h2 id="locktitle">This bot is locked</h2>
-  <p>Enter the passphrase to continue.</p>
+  <h2 id="locktitle">Before we start</h2>
+  <p id="lockhint">Enter the passphrase to continue.</p>
   <input id="pass" type="password" placeholder="Passphrase" autocomplete="current-password" />
-  <button type="submit">Unlock</button>
+  <input id="email" type="email" placeholder="Your email address" autocomplete="email" />
+  <button type="submit" id="lockgo">Continue</button>
   <div id="lockmsg"></div>
 </form></div>
 <div class="app">
@@ -157,6 +161,7 @@
     <div class="section">Chats</div>
     <div class="list chats" id="chats"></div>
     <div class="foot" id="foot"></div>
+    <div class="foot" id="signout" hidden><button class="iconbtn" id="signoutbtn">Sign out</button> <span id="whoami"></span></div>
   </aside>
 
   <main>
@@ -218,20 +223,49 @@ const store = {
   remove(pid, id) { this.save(pid, this.list(pid).filter((c) => c.id !== id)); },
 };
 
-// ---- the door ----
-let TOKEN = ''; try { TOKEN = localStorage.getItem('byo:token') || ''; } catch {}
+// ---- the door: key, email, both, or open (config.js → access.mode) ----
+let TOKEN = '', VISITOR = ''; try { TOKEN = localStorage.getItem('byo:token') || ''; VISITOR = localStorage.getItem('byo:visitor') || ''; } catch {}
 const authHeaders = () => TOKEN ? { 'x-access-token': TOKEN } : {};
-function showLock(msg) { $('lock').classList.add('show'); $('lockmsg').textContent = msg || ''; $('pass').focus(); }
+let needKey = false, needEmail = false;
+function showLock(msg) {
+  $('pass').hidden = !needKey; $('email').hidden = !needEmail;
+  $('lockhint').textContent = needKey && needEmail ? 'Enter the passphrase and your email address.' : needEmail ? 'Enter your email address to start. It is kept with your conversation so the owner knows who asked.' : 'Enter the passphrase to continue.';
+  $('lock').classList.add('show'); $('lockmsg').textContent = msg || ''; (needKey ? $('pass') : $('email')).focus();
+}
 $('lockform').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const res = await fetch('/api/unlock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ passphrase: $('pass').value }) });
-  const data = await res.json().catch(() => ({}));
-  if (res.ok && data.token) { TOKEN = data.token; try { localStorage.setItem('byo:token', TOKEN); } catch {} $('lock').classList.remove('show'); $('pass').value = ''; boot(); }
-  else $('lockmsg').textContent = res.status === 429 ? 'Too many attempts. Wait a minute.' : 'Wrong passphrase.';
+  const go = $('lockgo'); go.disabled = true; go.textContent = 'Checking…'; $('lockmsg').textContent = '';
+  try {
+    if (needKey) {
+      const res = await fetch('/api/unlock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ passphrase: $('pass').value }) });
+      const data = await res.json().catch(() => ({}));
+      if (!(res.ok && data.token)) { $('lockmsg').textContent = res.status === 429 ? 'Too many attempts. Wait a minute.' : 'Wrong passphrase.'; return; }
+      TOKEN = data.token; try { localStorage.setItem('byo:token', TOKEN); } catch {} $('pass').value = '';
+    }
+    if (needEmail) {
+      const em = $('email').value.trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(em)) { $('lockmsg').textContent = 'That doesn\'t look like an email address.'; return; }
+      VISITOR = em.toLowerCase(); try { localStorage.setItem('byo:visitor', VISITOR); } catch {}
+    }
+    $('lock').classList.remove('show'); boot();
+  } catch { $('lockmsg').textContent = 'Could not reach the server. Try again.'; }
+  finally { go.disabled = false; go.textContent = 'Continue'; }
 });
+function signOut() {
+  TOKEN = ''; VISITOR = ''; ADMIN = '';
+  try { localStorage.removeItem('byo:token'); localStorage.removeItem('byo:visitor'); localStorage.removeItem('byo:admin'); } catch {}
+  $('hood').classList.remove('show'); location.href = location.pathname;
+}
+$('signoutbtn').onclick = signOut;
 
 function boot() { fetch('/api/config', { headers: authHeaders() }).then((r) => r.json()).then((cfg) => {
-  if (cfg.locked && !cfg.projects) { $('brand').textContent = cfg.siteName || 'The Bot You Own'; return showLock(TOKEN ? 'Your key expired. Enter the passphrase again.' : ''); }
+  const mode = cfg.accessMode || (cfg.locked ? 'key' : 'open');
+  needKey = /key/.test(mode) && !!cfg.locked && !cfg.projects;   // projects present = key already accepted
+  needEmail = /email/.test(mode) && !VISITOR;
+  $('brand').textContent = cfg.siteName || 'The Bot You Own';
+  if (needKey || needEmail) return showLock(needKey && TOKEN ? 'Your key expired. Enter the passphrase again.' : '');
+  const gated = /key|email/.test(mode) || ADMIN;
+  $('signout').hidden = !gated; $('whoami').textContent = VISITOR ? VISITOR : (ADMIN ? 'admin' : '');
   state.cfg = cfg; state.projects = cfg.projects;
   document.title = cfg.siteName || 'The Bot You Own';
   $('brand').textContent = cfg.siteName || 'The Bot You Own';
@@ -376,9 +410,9 @@ async function send(text) {
   try {
     const res = await fetch('/api/chat', {
       method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, signal: state.abort.signal,
-      body: JSON.stringify({ project: state.project.id, messages: chat.messages.map(({ role, content }) => ({ role, content })), stream: true }),
+      body: JSON.stringify({ project: state.project.id, visitor: VISITOR ? { email: VISITOR } : undefined, messages: chat.messages.map(({ role, content }) => ({ role, content })), stream: true }),
     });
-    if (res.status === 401) { TOKEN = ''; try { localStorage.removeItem('byo:token'); } catch {} showLock('Enter the passphrase to continue.'); }
+    if (res.status === 401) { const d = await res.clone().json().catch(() => ({})); if (d.error === 'email') { VISITOR = ''; needEmail = true; showLock('Please enter your email address to start.'); } else { TOKEN = ''; try { localStorage.removeItem('byo:token'); } catch {} needKey = true; showLock('Enter the passphrase to continue.'); } }
     if (!(res.headers.get('content-type') || '').includes('event-stream')) {
       const data = await res.json().catch(() => ({}));
       finalText = data.reply || data.error || 'Sorry — something went wrong on our end.'; flags = data.flags || [];
@@ -422,6 +456,7 @@ $('adminform').addEventListener('submit', async (e) => {
     const d = await r.json().catch(() => ({}));
     if (!r.ok || !d.token) { $('adminmsg').textContent = r.status === 429 ? 'Too many attempts. Wait a minute.' : 'Wrong admin code.'; return; }
     ADMIN = d.token; try { localStorage.setItem('byo:admin', ADMIN); } catch {}
+    $('signout').hidden = false; if (!VISITOR) $('whoami').textContent = 'admin';
     $('adminlock').classList.remove('show'); openHood();
   } catch { $('adminmsg').textContent = 'Could not reach the server. Try again.'; }
   finally { btn.disabled = false; btn.textContent = 'Open'; }

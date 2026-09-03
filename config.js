@@ -45,7 +45,17 @@ export const CONFIG = {
     cacheTtl: 0,            // seconds; 0 = don't cache answers
   },
 
-  // ---- 5. THE FIREWALL ---------------------------------------------------------
+  // ---- 5. WHO CAN USE IT -----------------------------------------------------
+  // "open"      — anyone with the link. For a public website bot.
+  // "key"       — a shared passphrase (the ACCESS_PASSPHRASE secret). Demos, internal bots.
+  // "email"     — visitors type an email address before chatting; it is logged with
+  //               every turn. Identification, not authentication: nobody checks it.
+  // "key+email" — both: the passphrase to get in, then an email so you know who asked.
+  // If "key" is chosen but no ACCESS_PASSPHRASE secret exists, the bot falls back to
+  // open and says so in the logs. The admin code (ADMIN_PASSPHRASE) is separate.
+  access: { mode: "key" },
+
+  // ---- 6. THE FIREWALL ---------------------------------------------------------
   // All enforced in code (src/firewall.js). Each one fails OPEN: if it can't run,
   // the bot still answers. Read the file — you don't have to change it, you have
   // to know it's there.
@@ -58,7 +68,7 @@ export const CONFIG = {
     maxChars: 4000,          // per message
   },
 
-  // ---- 6. LOOKS --------------------------------------------------------------
+  // ---- 7. LOOKS --------------------------------------------------------------
   accent: "#10a37f",
 
   // What the page says while it waits for the first word of an answer (usually
