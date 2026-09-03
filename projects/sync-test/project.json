@@ -1,15 +1,13 @@
 {
   "order": 100,
   "name": "Sync Test",
-  "tagline": "round trip",
-  "greeting": "hi",
-  "starters": [
-    "a"
-  ],
+  "tagline": "",
+  "greeting": "",
+  "starters": [],
   "mode": "answer",
   "grounding": "strict",
-  "handoffText": "Not sure.",
-  "handoffContact": "Email x@example.com.",
+  "handoffText": "",
+  "handoffContact": "",
   "allowedLinks": [],
   "thinkingWords": [],
   "intakeQuestions": [],
