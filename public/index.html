@@ -203,17 +203,34 @@ function boot() { fetch('/api/config', { headers: authHeaders() }).then((r) => r
   $('foot').innerHTML = 'Run by <b>' + esc(cfg.owner || '') + '</b><br>' + esc(cfg.provider || '') + ' · your account, your bill';
   const want = qs.get('project') || cfg.defaultProject;
   selectProject(state.projects.find((p) => p.id === want) || state.projects[0]);
+  const wantChat = qs.get('chat'); if (wantChat) { const c = store.list(state.project.id).find((x) => x.id === wantChat); if (c) loadChat(c, true); }
 }).catch(() => { $('log').innerHTML = '<p style="color:var(--muted)">Could not load /api/config.</p>'; }); }
 boot();
 
-function selectProject(p) {
+// ---- history: every project or chat switch is a Back-able step ----
+function pushUrl(replace) {
+  const u = new URL(location.href);
+  u.searchParams.set('project', state.project.id);
+  if (state.chat?.messages?.length) u.searchParams.set('chat', state.chat.id); else u.searchParams.delete('chat');
+  const st = { project: state.project.id, chat: state.chat?.id || null };
+  try { replace ? history.replaceState(st, '', u) : history.pushState(st, '', u); } catch {}
+}
+window.addEventListener('popstate', (e) => {
+  const st = e.state || {}; const pid = st.project || new URLSearchParams(location.search).get('project');
+  const p = state.projects.find((x) => x.id === pid) || state.projects[0];
+  if (!p) return;
+  selectProject(p, true);
+  if (st.chat) { const c = store.list(p.id).find((x) => x.id === st.chat); if (c) loadChat(c, true); }
+});
+
+function selectProject(p, silent) {
   state.project = p;
   $('title').textContent = p.name;
   $('modepill').textContent = p.mode + ' · ' + (p.grounding === 'open' ? 'open' : 'files only');
   $('disclaimer').textContent = p.grounding === 'open'
     ? 'Can make mistakes. Check important information.'
     : 'Answers only from what ' + p.name + ' has written down. Can still make mistakes.';
-  renderProjects(); newChat();
+  renderProjects(); newChat(silent);
 }
 
 function renderProjects() {
@@ -241,12 +258,13 @@ function renderChats() {
   });
 }
 
-function newChat() {
+function newChat(silent) {
   state.chat = { id: Date.now().toString(36), project: state.project.id, title: '', messages: [] };
   renderChats(); renderLog(); $('input').focus();
+  if (!silent) pushUrl(!history.state);           // first load replaces, later switches push
 }
-$('newchat').onclick = newChat;
-function loadChat(c) { state.chat = c; renderChats(); renderLog(); }
+$('newchat').onclick = () => newChat();
+function loadChat(c, silent) { state.chat = c; renderChats(); renderLog(); if (!silent) pushUrl(); }
 
 function renderLog() {
   const log = $('log'); log.innerHTML = '';
@@ -299,7 +317,7 @@ async function send(text) {
   if (!text || state.busy) return;
   input.value = ''; input.style.height = 'auto';
   const chat = state.chat;
-  if (!chat.messages.length) { $('log').innerHTML = ''; chat.title = text.slice(0, 40); }
+  if (!chat.messages.length) { $('log').innerHTML = ''; chat.title = text.slice(0, 40); pushUrl(true); }
   chat.messages.push({ role: 'user', content: text });
   addMessage('user', text);
   const body = addMessage('assistant', '');
