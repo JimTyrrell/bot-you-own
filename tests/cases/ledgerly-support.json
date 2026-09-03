@@ -23,7 +23,10 @@
       "expect": {
         "containsAny": [
           "30 days",
-          "thirty days"
+          "thirty days",
+          "30-day",
+          "30 day",
+          "thirty-day"
         ],
         "notContains": [
           "full refund has been",
