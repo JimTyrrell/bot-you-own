@@ -27,7 +27,7 @@
   // The audit log (D1). The Worker creates its own table on first use, so there is
   // no schema step. The Deploy button provisions a fresh database in the attendee's
   // account; Jim's terminal deploy uses this one. Remove the block to log nowhere
-  // but Workers Logs. Read it under the hood → Audit, or with the queries in CUSTOMIZE.md.
+  // but Workers Logs. Read it under the hood → Audit, or with the queries in docs/CUSTOMIZE.md.
   "d1_databases": [
     { "binding": "DB", "database_name": "bot-you-own-logs", "database_id": "cc9d43d1-46fa-4c1e-8501-a0565bdd7b77" }
   ],

@@ -27,7 +27,7 @@ export const CONFIG = {
 
   // ---- 3. THE MODEL ----------------------------------------------------------
   // "workers-ai" needs NO API key — it's included with Cloudflare. Start here.
-  // "openai" or "anthropic" need a secret (see DEPLOY.md) and go through AI Gateway.
+  // "openai" or "anthropic" need a secret (see docs/DEPLOY.md) and go through AI Gateway.
   provider: "workers-ai",
   model: "@cf/openai/gpt-oss-120b",
   // model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",   // the previous default; passes the same set, pricier output
@@ -63,7 +63,7 @@ export const CONFIG = {
     blockInjections: true,   // "ignore your instructions…" never reaches the model
     stripLinks: true,        // only project.allowedLinks survive, enforced after the model answers
     blockPromptLeaks: true,  // an answer that quotes the rules is replaced with a refusal
-    llamaGuard: false,       // extra Workers AI safety model on every turn (doubles cost). See CUSTOMIZE.md
+    llamaGuard: false,       // extra Workers AI safety model on every turn (doubles cost). See docs/CUSTOMIZE.md
     maxTurns: 12,            // how much history the model sees
     maxChars: 4000,          // per message
   },

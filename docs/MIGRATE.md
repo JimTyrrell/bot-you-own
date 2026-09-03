@@ -22,12 +22,12 @@ the folder version in GitHub. The five steps below are the file-based route.
 2. **Bring the files.** Each file you uploaded becomes a file in
    `YourBots/my-project/knowledge/`. Text, Markdown, CSV: paste. PDFs and Word:
    copy the text out (fine for a handful) or use Cloudflare AI Search for the
-   real thing — `CUSTOMIZE.md`.
+   real thing — `docs/CUSTOMIZE.md`.
 3. **Bring the conversation starters** into `project.json` → `starters`.
 4. **Flip the switch:** `"mode": "imported"` in `project.json`, register the folder
-   in `YourBots/index.js`, set it as `defaultProject` in `config.js`.
+   in `YourBots/index.js`, set it as `defaultProject` in `YourBots/config.js`.
 5. **Test it before anyone else does.** Ask it the five things you always asked.
-   Then run the break-it set (`MODES.md`). Expect the voice to be slightly
+   Then run the break-it set (`docs/MODES.md`). Expect the voice to be slightly
    different — it's a different model underneath. If that matters, tune the
    instructions; that's now a file you control.
 

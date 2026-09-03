@@ -275,7 +275,7 @@ const store = {
   remove(pid, id) { this.save(pid, this.list(pid).filter((c) => c.id !== id)); },
 };
 
-// ---- the door: key, email, both, or open (config.js → access.mode) ----
+// ---- the door: key, email, both, or open (YourBots/config.js → access.mode) ----
 let TOKEN = '', VISITOR = ''; try { TOKEN = localStorage.getItem('byo:token') || ''; VISITOR = localStorage.getItem('byo:visitor') || ''; } catch {}
 const authHeaders = () => TOKEN ? { 'x-access-token': TOKEN } : {};
 let needKey = false, needEmail = false;
@@ -547,7 +547,7 @@ function renderHood() {
   if (hoodTab === 'prompt') box.innerHTML = '<h4>Edit these plain-text files to change it</h4><p style="color:var(--muted);margin:0 0 10px">' + (d.promptFiles || []).map((f) => '<code>' + esc(f) + '</code>').join(' · ') + ' · and this project\'s <code>instructions.md</code></p><h4>The exact system prompt sent to the model for this project · ' + d.promptChars + ' chars ≈ ' + d.promptTokensApprox + ' tokens</h4>' + pre(d.prompt) + '<h4>Job (mode: ' + esc(d.project.mode) + ')</h4><div class="kv"><b>Role</b><span>' + esc(d.mode.role) + '</span><b>Done when</b><span>' + esc(d.mode.done) + '</span></div>';
   if (hoodTab === 'files') box.innerHTML = '<h4>instructions.md</h4>' + pre(d.project.instructions || '(none)') + Object.entries(d.files || {}).map(([n, t]) => '<h4>knowledge/' + esc(n) + ' · ' + t.length + ' chars</h4>' + pre(t)).join('') + '<h4>project.json</h4>' + pre(JSON.stringify({ ...d.project, instructions: undefined }, null, 2));
   if (hoodTab === 'firewall') { const f = d.firewall; box.innerHTML = '<h4>Switches (YourBots/config.js → firewall)</h4>' + pre(JSON.stringify(f.config, null, 2)) + '<div class="kv"><b>Door</b><span>' + esc(f.door) + '</span><b>Rate limit</b><span>' + esc(f.rateLimit) + '</span><b>Logging</b><span>' + esc(f.logging) + '</span><b>Llama Guard model</b><span>' + esc(f.llamaGuardModel) + '</span></div><h4>Injection patterns (' + f.injectionPatterns.length + ') — a hit never reaches the model</h4>' + pre(f.injectionPatterns.join('\n')) + '<h4>Secret shapes</h4>' + pre(f.secretPatterns.join('\n')) + '<h4>What the chips mean</h4><div class="kv">' + Object.entries(f.flags).map(([k, v]) => '<b>' + esc(k) + '</b><span>' + esc(v) + '</span>').join('') + '</div>'; }
-  if (hoodTab === 'gateway') box.innerHTML = '<h4>Version</h4>' + pre(JSON.stringify(d.version, null, 2)) + '<h4>Provider &amp; model</h4>' + pre(JSON.stringify(d.gateway, null, 2)) + '<p style="color:var(--muted)">gateway.id empty = calls go straight to the model. Set it to route through Cloudflare AI Gateway: spend cap, logs, caching, edge Guardrails. See DEPLOY.md.</p>';
+  if (hoodTab === 'gateway') box.innerHTML = '<h4>Version</h4>' + pre(JSON.stringify(d.version, null, 2)) + '<h4>Provider &amp; model</h4>' + pre(JSON.stringify(d.gateway, null, 2)) + '<p style="color:var(--muted)">gateway.id empty = calls go straight to the model. Set it to route through Cloudflare AI Gateway: spend cap, logs, caching, edge Guardrails. See docs/DEPLOY.md.</p>';
   if (hoodTab === 'audit') { renderAudit(); return; }
   if (hoodTab === 'source') { box.innerHTML = '<h4>Engine source (snapshot taken at deploy)</h4><select id="srcsel">' + (d.sources || []).map((n) => '<option>' + esc(n) + '</option>').join('') + '</select><div id="srcbox"></div>'; const load = async () => { const n = $('srcsel').value; $('srcbox').innerHTML = '<p class="thinking"><span>Loading ' + esc(n) + '</span></p>'; try { const t = await (await fetch('/api/admin/source?name=' + encodeURIComponent(n), { headers: { 'x-admin-token': ADMIN } })).text(); $('srcbox').innerHTML = pre(t); } catch { $('srcbox').innerHTML = '<p style="color:var(--danger)">Could not load ' + esc(n) + '.</p>'; } }; $('srcsel').onchange = load; load(); }
 }
@@ -568,7 +568,7 @@ async function openConfigure(id) {
   $('cfgsource').textContent = r.source === 'saved' ? 'saved copy (overrides the folder)' : r.source === 'folder' ? 'from the folder' : 'new';
   $('cfgdelete').hidden = r.source !== 'saved'; $('pmodel').textContent = (m.model || '').replace(/^@cf\//, '');
   $('cfgsave').disabled = !m.canSave; if (!m.canSave) $('cfgmsg').textContent = 'No database bound: Export instead of Save.';
-  $('cfggit').disabled = !(m.github && m.github.ready); $('cfggit').title = m.github?.ready ? 'Commit YourBots/' + pid + '/ to ' + m.github.repo : (m.github?.repo ? 'Set the GITHUB_TOKEN secret to enable (see DEPLOY.md)' : 'Set github.repo in config.js to enable');
+  $('cfggit').disabled = !(m.github && m.github.ready); $('cfggit').title = m.github?.ready ? 'Commit YourBots/' + pid + '/ to ' + m.github.repo : (m.github?.repo ? 'Set the GITHUB_TOKEN secret to enable (see docs/DEPLOY.md)' : 'Set github.repo in YourBots/config.js to enable');
   previewMsgs = []; renderPreview(); renderConfigForm();
 }
 function field(label, hint, inner, file) { return '<label>' + label + (file ? ' <code style="font-weight:400;font-size:11.5px;margin-left:6px">' + esc(file) + '</code>' : '') + (hint ? '<small>' + hint + '</small>' : '') + '</label>' + inner; }

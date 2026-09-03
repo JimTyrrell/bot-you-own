@@ -7,7 +7,7 @@ actually hit the limit, not before.
 Drop a `.md`, `.txt` or `.csv` into `YourBots/<name>/knowledge/` and commit. Done.
 (The build scans the folder; there is no list to update.)
 
-## Turn the firewall knobs · `config.js` → `firewall`
+## Turn the firewall knobs · `YourBots/config.js` → `firewall`
 | Switch | Default | What it does | OWASP |
 |---|---|---|---|
 | `blockInjections` | on | "ignore your instructions…" phrasings get a canned reply and **never reach the model** (saves neurons too) | LLM01, LLM07 |
@@ -18,7 +18,7 @@ Drop a `.md`, `.txt` or `.csv` into `YourBots/<name>/knowledge/` and commit. Don
 | `maxTurns` / `maxChars` | 12 / 4000 | how much history the model sees | LLM10 |
 
 Rate limiting per visitor lives in `wrangler.jsonc` (`ratelimits`), on by default at 30/min.
-The passphrase gate (`ACCESS_PASSPHRASE` secret, `DEPLOY.md` §B2) sits in front of all of it.
+The passphrase gate (`ACCESS_PASSPHRASE` secret, `docs/DEPLOY.md` §B2) sits in front of all of it.
 The paraphrase detector (`paraphrasesRules`) is the second half of `blockPromptLeaks`: it
 withholds an answer that talks *about* its rules and names three or more of their ideas —
 the case the live test run caught on 2026-09-03.
@@ -35,15 +35,15 @@ authenticate anyone.
   check in `screenInbound` if regex isn't enough for your traffic.
 - **promptfoo red-team:** `npx promptfoo@latest redteam init` pointed at your
   `/api/chat`. The grown-up version of `Engine/tests/break-it.mjs`.
-- **AI Gateway Guardrails:** Llama Guard at the edge, no code. `DEPLOY.md` §D.
+- **AI Gateway Guardrails:** Llama Guard at the edge, no code. `docs/DEPLOY.md` §D.
 
 ## Put a hard ceiling on cost
 Free plan: 10,000 neurons/day, then it stops. No surprise bill, no config.
-Paid plan: create an AI Gateway and set a **spend limit** — `DEPLOY.md` §D.
+Paid plan: create an AI Gateway and set a **spend limit** — `docs/DEPLOY.md` §D.
 Budget *alerts* are informational and arrive a day late. Use limits for the ceiling.
 
 ## Read what your bot has been saying (audit log)
-On by default (`DEPLOY.md` §F); the friendly view is under the hood → Audit. Raw SQL:
+On by default (`docs/DEPLOY.md` §F); the friendly view is under the hood → Audit. Raw SQL:
 ```sql
 -- Who asked, in email mode.
 SELECT visitor, COUNT(*) n FROM conversations WHERE visitor != '' GROUP BY visitor ORDER BY n DESC;
@@ -70,5 +70,5 @@ into the prompt stops working. AI Search does the chunking, indexing and retriev
 2. Don't build cookie sessions into it. Third-party cookies are blocked inside cross-origin iframes. Chats live in the page's localStorage, which works.
 
 ## Hide the sidebar for customers
-`singleProject: true` in `config.js` shows only the default project, no sidebar. The
+`singleProject: true` in `YourBots/config.js` shows only the default project, no sidebar. The
 embed widget always behaves this way.

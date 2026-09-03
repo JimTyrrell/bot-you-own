@@ -24,8 +24,9 @@ It is built from three layers, and the workshop teaches them in this order:
 | **`YourBots/`** | one folder per bot (`project.json` + `instructions.md` + `knowledge/` + optional `prompt/`), plus `_prompt/` — the voice, rules and jobs every bot shares, in plain Markdown — and `_template/` to copy | you |
 | **`Engine/`** | `worker/` (the code), `public/` (the page), `scripts/` (the build), `tests/` (the break-it set) | nobody, unless you want to |
 
-At the root: `config.js` (the deployment: model, who can use it, firewall switches,
-GitHub target) and the files Cloudflare needs (`wrangler.jsonc`, `package.json`).
+`YourBots/config.js` is the deployment (model, who can use it, firewall switches, GitHub
+target). The guides live in `docs/`. At the root: only this README and the files
+Cloudflare and npm need (`wrangler.jsonc`, `package.json`).
 
 **One rule to remember:** a file in `YourBots/_prompt/` is every bot's; the same
 file inside a bot's own `prompt/` folder is that bot's, and wins.
@@ -54,7 +55,7 @@ Copy `YourBots/_template/` to `YourBots/my-business/`. Fill in three things:
 - `instructions.md` — what you'd have typed into ChatGPT's Instructions box. Paste it raw.
 - `knowledge/` — what you'd have uploaded as files. Markdown or plain text.
 
-Then set `defaultProject: "my-business"` in `config.js`. Nothing to register: the
+Then set `defaultProject: "my-business"` in `YourBots/config.js`. Nothing to register: the
 build finds every folder in `YourBots/`. **Read `YourBots/README.md`.**
 
 > **The single highest-value hour you will spend on this:** go into your sent
@@ -63,7 +64,7 @@ build finds every folder in `YourBots/`. **Read `YourBots/README.md`.**
 
 ### 2. Pick the job · `project.json` → `mode`
 `assistant` · `answer` ⭐ · `intake` · `booking` · `concierge` · `internal` · `imported`.
-**Read `MODES.md`, then start with `answer`.** One project = one job. Want two
+**Read `docs/MODES.md`, then start with `answer`.** One project = one job. Want two
 jobs? Make two projects; the sidebar shows both.
 
 ### 3. Pick how much it's allowed to know · `project.json` → `grounding`
@@ -85,7 +86,7 @@ has: Name, Description, Instructions, Conversation starters, Knowledge (Upload
 files), Capabilities — with a live **Preview** chat on the right that talks to
 your unsaved draft. **Save** stores it in your bot's database and it is live at
 once. **Commit to GitHub** writes the bot's folder into your repo for you (one secret to
-set up, `DEPLOY.md` §B5); **Export files** shows the same files if you'd rather
+set up, `docs/DEPLOY.md` §B5); **Export files** shows the same files if you'd rather
 paste. A saved copy overrides the folder with the same
 name; remove it and the folder is live again. **✎ New bot** in the sidebar starts
 a blank one.
@@ -94,7 +95,7 @@ a blank one.
 |---|---|
 | Name · Description · Instructions · Conversation starters | the same fields |
 | Knowledge → Upload files | Upload files (text: .md .txt .csv) or write one in place |
-| Recommended model | one model for the deployment, in `config.js` |
+| Recommended model | one model for the deployment, in `YourBots/config.js` |
 | Capabilities: web search, images, code interpreter | not in this bot — shown unticked so nobody has to guess |
 | Actions | not in this bot |
 | Create tab (describe it and the builder writes it) | not yet |
@@ -102,7 +103,7 @@ a blank one.
 | — | Job, strict/open grounding, the handoff line, allowed links, thinking words: the things ChatGPT doesn't let you set |
 
 ## Coming from ChatGPT?
-**Read `MIGRATE.md`.** A custom GPT or a Project moves across in about ten minutes:
+**Read `docs/MIGRATE.md`.** A custom GPT or a Project moves across in about ten minutes:
 paste Instructions into one file, files into a folder, flip one switch.
 
 ---
@@ -120,7 +121,7 @@ know it's there. Every check is tagged with the OWASP LLM Top 10 risk it covers.
 - **After the model:** links not on your allowlist are removed in code; an answer
   that quotes the rules is withheld; optional Llama Guard on both sides.
 - **At the edge (optional):** AI Gateway — a dollar spend cap, logs, caching, and
-  Cloudflare's own Guardrails. See `DEPLOY.md`.
+  Cloudflare's own Guardrails. See `docs/DEPLOY.md`.
 
 The page shows a small chip under any answer the firewall touched, so you can
 watch it work. **Test it by trying to break it** — `Engine/tests/break-it.mjs` is the
@@ -128,7 +129,7 @@ set we run, in plain rules you can read.
 
 ---
 
-## Who can use it · `config.js` → `access.mode`
+## Who can use it · `YourBots/config.js` → `access.mode`
 | Mode | What a visitor sees | Use it for |
 |---|---|---|
 | `open` | nothing, just the chat | a public website bot (rely on the rate limit and a spend cap) |
@@ -170,12 +171,12 @@ Every turn is written to a small database in your account: time, project, who
 (in email mode), the question, the answer, whether it was refused, and what the
 firewall did. The Worker creates the table itself; the Deploy button provisions
 the database. Read it under the hood → **Audit** (filters: refused, flagged, this
-project / all) or with the SQL in `CUSTOMIZE.md`. Emails, phone numbers and dates
+project / all) or with the SQL in `docs/CUSTOMIZE.md`. Emails, phone numbers and dates
 inside questions and answers are redacted before storage; names are not. The
 most-refused questions are the pages your business hasn't written yet.
 
 ## Version
-`VERSION` holds the number you bump (`2.1.0`). Every dev run and deploy stamps
+`package.json` → `"version"` holds the number you bump. Every dev run and deploy stamps
 `version.json` with that number, the build time and the git commit; it shows in the
 page footer, at `/health`, and under the hood. When someone asks "which version is
 live?", the answer is in the footer.
@@ -186,8 +187,8 @@ live?", the answer is in the footer.
 - No per-message plan. No per-seat pricing. No badge to pay to remove.
 
 ## Where this stops being enough (honest version)
-- **A lot of documents.** This bundles your files into the prompt — right for an FAQ, wrong for two hundred PDFs. That's Cloudflare **AI Search**; see `CUSTOMIZE.md`.
-- **Browsing, images, code execution, file upload at runtime.** Not included. `MIGRATE.md` says exactly what doesn't come across.
+- **A lot of documents.** This bundles your files into the prompt — right for an FAQ, wrong for two hundred PDFs. That's Cloudflare **AI Search**; see `docs/CUSTOMIZE.md`.
+- **Browsing, images, code execution, file upload at runtime.** Not included. `docs/MIGRATE.md` says exactly what doesn't come across.
 - **Sign-in / private bots.** Rate limiting is what a public bot needs; access control is a different build.
 - **Regulated data.** Health, financial, legal — the requirements are paperwork, not code. Know that before you point a bot at them.
 

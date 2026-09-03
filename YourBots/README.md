@@ -37,14 +37,14 @@ files as its first source.
 4. **Drop your material into `knowledge/`.** Markdown, `.txt` or `.csv`. Any number
    of files. The best material is the emails you've already written answering the
    same question for the tenth time.
-5. Set `defaultProject: "my-shop"` in `config.js`. Commit.
+5. Set `defaultProject: "my-shop"` in `YourBots/config.js`. Commit.
 
 That's the whole job. Nothing else registers it: the build finds every folder in
 `YourBots/`, every file in its `knowledge/`, and every override in its `YourBots/_prompt/`.
 
 **Adding more data later** = drop another file into `knowledge/` and commit.
 PDFs and Word files can't be dropped in as-is: open them, copy the text into a
-`.md` file. For a large library that's the AI Search upgrade in `CUSTOMIZE.md`.
+`.md` file. For a large library that's the AI Search upgrade in `docs/CUSTOMIZE.md`.
 
 **Giving one bot its own voice** = copy a file from the root `YourBots/_prompt/` folder into
 `YourBots/my-shop/prompt/` with the same name and edit it. Root is global, the
@@ -59,7 +59,7 @@ bot's folder wins. Jobs cascade the same way: `YourBots/my-shop/prompt/jobs/answ
 | `ledgerly-support` | concierge for a bookkeeping SaaS | `strict` | refund/discount traps, answer-before-pitch, link allowlist |
 
 Delete the sample folders you don't need before you go live (or leave them and
-set `singleProject: true` in `config.js` so customers see only yours).
+set `singleProject: true` in `YourBots/config.js` so customers see only yours).
 
 ⚠️ **Don't put anything in `knowledge/` you wouldn't put on your website.** Assume
 every word can be read by anyone who talks to the bot. Ownership changes who

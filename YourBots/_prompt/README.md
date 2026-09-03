@@ -39,7 +39,7 @@ calmer voice while the other bots keep the shared one. Jobs work the same way:
 ## What's per bot, and what's shared
 - **Shared by every project** (this folder): personality, formatting, boundaries, answering rules, the job descriptions.
 - **Per project** (`YourBots/<name>/`): `project.json` (name, greeting, starters, `mode`, `grounding`, allowed links, handoff, thinking words), `instructions.md` (the owner's own words, on top), `knowledge/` (the files).
-- **Per deployment** (`config.js`): model, access mode, firewall switches, gateway, looks.
+- **Per deployment** (`YourBots/config.js`): model, access mode, firewall switches, gateway, looks.
 - **Secrets** (never in files): `ACCESS_PASSPHRASE`, `ADMIN_PASSPHRASE`, API keys.
 
 Read the assembled result any time: under the hood → Prompt.
