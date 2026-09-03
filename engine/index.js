@@ -1,5 +1,5 @@
 import { CONFIG } from "../config.js";
-import { PROJECTS, getProject as folderProject, listProjects as folderList } from "../projects/index.js";
+import { PROJECTS, getProject as folderProject, listProjects as folderList } from "../YourBots/index.js";
 import { buildSystemPrompt, PROMPT_FILES, ROOT_PROMPT_FILES } from "./prompt.js";
 import { complete } from "./gateway.js";
 import { screenInbound, screenOutbound, ensureHandoff, llamaGuard, redact, INJECTION_PATTERNS, SECRET_PATTERNS, LLAMA_GUARD_MODEL } from "./firewall.js";
@@ -391,9 +391,9 @@ async function auditView(env, q) {
 //     GITHUB_TOKEN secret (fine-grained, Contents read/write, this repo only).
 function exportFiles(p, id) {
   const { instructions, files, prompt, id: _i, ...meta } = p;
-  const out = { [`projects/${id}/project.json`]: JSON.stringify(meta, null, 2) + "\n", [`projects/${id}/instructions.md`]: (instructions || "") + "\n" };
-  for (const [n, t] of Object.entries(files || {})) out[`projects/${id}/knowledge/${n}`] = t + "\n";
-  for (const [n, t] of Object.entries(prompt || {})) out[`projects/${id}/prompt/${n}`] = t + "\n";
+  const out = { [`YourBots/${id}/project.json`]: JSON.stringify(meta, null, 2) + "\n", [`YourBots/${id}/instructions.md`]: (instructions || "") + "\n" };
+  for (const [n, t] of Object.entries(files || {})) out[`YourBots/${id}/knowledge/${n}`] = t + "\n";
+  for (const [n, t] of Object.entries(prompt || {})) out[`YourBots/${id}/prompt/${n}`] = t + "\n";
   return out;
 }
 async function syncToGitHub(env, id) {
@@ -415,7 +415,7 @@ async function syncToGitHub(env, id) {
     if (!r.ok || !Array.isArray(r.body)) return;
     for (const e of r.body) { if (e.type === "file") existing[e.path] = e.sha; else if (e.type === "dir") await walk(e.path); }
   };
-  await walk(`projects/${id}`);
+  await walk(`YourBots/${id}`);
   const b64 = (s) => btoa(unescape(encodeURIComponent(s)));
   const committed = [], unchanged = [], deleted = [], errors = [];
   let lastCommit = "";

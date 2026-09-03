@@ -13,7 +13,7 @@ It is built from three layers, and the workshop teaches them in this order:
 | Layer | Where | What it is |
 |---|---|---|
 | **1. The Prompt** | `prompt/*.md` | A ChatGPT-grade system prompt in plain Markdown: identity, date, tone, formatting, honesty, boundaries, the jobs. Your project's instructions sit on top. `engine/prompt.js` only stitches the files together. |
-| **2. The Data** | `projects/` | **Projects** — the same shape as a ChatGPT Project or a custom GPT: `instructions.md` + `knowledge/` files + starter prompts. Four samples ship so you can test before you type. |
+| **2. The Data** | `YourBots/` | **Projects** — the same shape as a ChatGPT Project or a custom GPT: `instructions.md` + `knowledge/` files + starter prompts. Four samples ship so you can test before you type. |
 | **3. The Firewall + Gateway** | `engine/firewall.js` · `engine/gateway.js` | What stops it doing what it shouldn't. Enforced in code (link allowlist, injection screen, leak detection, rate limit) and at the edge (AI Gateway: dollar spend cap, logs, Guardrails). |
 
 ---
@@ -22,7 +22,7 @@ It is built from three layers, and the workshop teaches them in this order:
 | | Folder / file | What's in it | Who touches it |
 |---|---|---|---|
 | **Yours** | `config.js` | model, who can use it, firewall switches, looks | you, once |
-| **Yours** | `projects/<name>/` | one bot: `project.json` + `instructions.md` + `knowledge/` (drop files in) | you, often |
+| **Yours** | `YourBots/<name>/` | one bot: `project.json` + `instructions.md` + `knowledge/` (drop files in) | you, often |
 | **Yours** | `prompt/` | how every bot behaves: personality, formatting, boundaries, the jobs — plain Markdown | you, when the voice needs tuning |
 | Engine | `engine/` | the Worker, the prompt assembler, the firewall, the gateway | nobody, unless you want to |
 | Engine | `public/` `scripts/` `tests/` `wrangler.jsonc` | the page, the build stamp, the break-it set, Cloudflare config | nobody |
@@ -32,7 +32,7 @@ in about a minute. Nothing in **Engine** needs to change to launch a bot.
 
 **One rule to remember:** a file at the root is global; the same file inside a
 bot's folder applies to that bot only, and wins. `prompt/3-personality.md` is
-every bot's voice; `projects/brightside-dental/prompt/3-personality.md` is the
+every bot's voice; `YourBots/brightside-dental/prompt/3-personality.md` is the
 dental bot's.
 
 ## Deploy it (three minutes, no card)
@@ -52,15 +52,15 @@ break them — that's the point of the samples.
 
 ## Make it yours — four steps
 
-### 1. Make a project · `projects/`
-Copy `projects/_template/` to `projects/my-business/`. Fill in three things:
+### 1. Make a project · `YourBots/`
+Copy `YourBots/_template/` to `YourBots/my-business/`. Fill in three things:
 - `project.json` — name, greeting, starter prompts, which job it does (`mode`), the
   links it's allowed to share, and where to send people when it can't help.
 - `instructions.md` — what you'd have typed into ChatGPT's Instructions box. Paste it raw.
 - `knowledge/` — what you'd have uploaded as files. Markdown or plain text.
 
 Then set `defaultProject: "my-business"` in `config.js`. Nothing to register: the
-build finds every folder in `projects/`. **Read `projects/README.md`.**
+build finds every folder in `YourBots/`. **Read `YourBots/README.md`.**
 
 > **The single highest-value hour you will spend on this:** go into your sent
 > folder and find the emails where you answered the same question for the tenth

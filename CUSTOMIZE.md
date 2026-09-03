@@ -4,7 +4,7 @@ Everything here is optional. The bot works without any of it. Come back when you
 actually hit the limit, not before.
 
 ## Add a knowledge file to a project
-Drop a `.md`, `.txt` or `.csv` into `projects/<name>/knowledge/` and commit. Done.
+Drop a `.md`, `.txt` or `.csv` into `YourBots/<name>/knowledge/` and commit. Done.
 (The build scans the folder; there is no list to update.)
 
 ## Turn the firewall knobs · `config.js` → `firewall`

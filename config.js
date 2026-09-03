@@ -4,7 +4,7 @@
 //  "Commit changes". Your bot updates itself in about a minute.
 //
 //  Everything about WHAT the bot knows and HOW it behaves for one job lives in
-//  projects/<name>/  (instructions.md + knowledge/ + project.json).
+//  YourBots/<name>/  (instructions.md + knowledge/ + project.json).
 //  This file is the things that are true for ALL projects.
 // ============================================================================
 
@@ -14,11 +14,11 @@ export const CONFIG = {
   siteName: "The Bot You Own",         // browser tab title
 
   // ---- 2. WHICH PROJECT OPENS FIRST ------------------------------------------
-  // Every folder in projects/ that is listed in projects/index.js is available in
+  // Every folder in YourBots/ that is listed in YourBots/index.js is available in
   // the sidebar. This one is selected when someone opens the page.
   // Ship ONE project to customers. The samples exist so you can test the machine
-  // before you feed it your own material — delete them from projects/index.js
-  // when you go live (see projects/README.md).
+  // before you feed it your own material — delete them from YourBots/index.js
+  // when you go live (see YourBots/README.md).
   defaultProject: "example-co",
 
   // Hide the sidebar and show only the default project (for a customer-facing

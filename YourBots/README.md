@@ -1,4 +1,4 @@
-# Projects — this folder is your bot's brain
+# YourBots — this folder is your bots
 
 **Two ways to make one.** In the browser: admin code → ✎ Configure / ✎ New bot
 (ChatGPT's builder form, with a live preview; Save makes it live, Export gives you
@@ -9,7 +9,7 @@ A **project** is exactly what ChatGPT calls a Project (and what a custom GPT was
 a set of **instructions**, some **files**, and a few **starter prompts**. One folder each.
 
 ```
-projects/
+YourBots/
   your-project/
     project.json       ← name, greeting, starters, which job it does, the links it may share
     instructions.md    ← what you'd have typed into the Instructions box in ChatGPT
@@ -40,15 +40,15 @@ files as its first source.
 5. Set `defaultProject: "my-shop"` in `config.js`. Commit.
 
 That's the whole job. Nothing else registers it: the build finds every folder in
-`projects/`, every file in its `knowledge/`, and every override in its `prompt/`.
+`YourBots/`, every file in its `knowledge/`, and every override in its `prompt/`.
 
 **Adding more data later** = drop another file into `knowledge/` and commit.
 PDFs and Word files can't be dropped in as-is: open them, copy the text into a
 `.md` file. For a large library that's the AI Search upgrade in `CUSTOMIZE.md`.
 
 **Giving one bot its own voice** = copy a file from the root `prompt/` folder into
-`projects/my-shop/prompt/` with the same name and edit it. Root is global, the
-bot's folder wins. Jobs cascade the same way: `projects/my-shop/prompt/jobs/answer.md`.
+`YourBots/my-shop/prompt/` with the same name and edit it. Root is global, the
+bot's folder wins. Jobs cascade the same way: `YourBots/my-shop/prompt/jobs/answer.md`.
 
 ## The samples
 | Folder | Job | Grounding | What it's testing |

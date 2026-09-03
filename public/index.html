@@ -188,8 +188,8 @@
     <div class="brand"><span id="brand">The Bot You Own</span><button class="iconbtn" id="theme" title="Toggle theme">◐</button></div>
     <button class="newchat" id="newchat">＋ New chat</button>
     <button class="newchat" id="newbot" hidden>✎ New bot</button>
-    <div class="section">Projects</div>
-    <div class="list" id="projects"></div>
+    <div class="section">Your bots</div>
+    <div class="list" id="YourBots"></div>
     <div class="section">Chats</div>
     <div class="list chats" id="chats"></div>
     <div class="foot" id="foot"></div>
@@ -568,7 +568,7 @@ async function openConfigure(id) {
   $('cfgsource').textContent = r.source === 'saved' ? 'saved copy (overrides the folder)' : r.source === 'folder' ? 'from the folder' : 'new';
   $('cfgdelete').hidden = r.source !== 'saved'; $('pmodel').textContent = (m.model || '').replace(/^@cf\//, '');
   $('cfgsave').disabled = !m.canSave; if (!m.canSave) $('cfgmsg').textContent = 'No database bound: Export instead of Save.';
-  $('cfggit').disabled = !(m.github && m.github.ready); $('cfggit').title = m.github?.ready ? 'Commit projects/' + pid + '/ to ' + m.github.repo : (m.github?.repo ? 'Set the GITHUB_TOKEN secret to enable (see DEPLOY.md)' : 'Set github.repo in config.js to enable');
+  $('cfggit').disabled = !(m.github && m.github.ready); $('cfggit').title = m.github?.ready ? 'Commit YourBots/' + pid + '/ to ' + m.github.repo : (m.github?.repo ? 'Set the GITHUB_TOKEN secret to enable (see DEPLOY.md)' : 'Set github.repo in config.js to enable');
   previewMsgs = []; renderPreview(); renderConfigForm();
 }
 function field(label, hint, inner, file) { return '<label>' + label + (file ? ' <code style="font-weight:400;font-size:11.5px;margin-left:6px">' + esc(file) + '</code>' : '') + (hint ? '<small>' + hint + '</small>' : '') + '</label>' + inner; }
@@ -577,7 +577,7 @@ function renderConfigForm() {
   const jobs = (m.jobs || []).map((j) => '<option value="' + esc(j.id) + '"' + (d.mode === j.id ? ' selected' : '') + '>' + esc(j.id) + ' — ' + esc(j.blurb) + '</option>').join('');
   $('cfgtitle').textContent = d.name || 'New bot';
   $('cfgform').innerHTML =
-    '<p style="color:var(--muted);font-size:13px;margin:6px 0 0">This form <b>is</b> the folder <code>projects/' + esc(d.id) + '/</code>. Each section names the file it lives in; Export gives you exactly those files.</p>' +
+    '<p style="color:var(--muted);font-size:13px;margin:6px 0 0">This form <b>is</b> the folder <code>YourBots/' + esc(d.id) + '/</code>. Each section names the file it lives in; Export gives you exactly those files.</p>' +
     field('Name', '', '<input type="text" id="f_name" value="' + esc(d.name || '') + '" placeholder="Name your bot" />', 'project.json → name') +
     field('Description', 'One line under the name in the sidebar.', '<input type="text" id="f_tagline" value="' + esc(d.tagline || '') + '" placeholder="Add a short description about what this bot does" />', 'project.json → tagline') +
     field('Instructions', 'What does this bot do? How does it behave? What should it avoid doing? Conversations can potentially reveal part or all of this — the firewall makes that hard, not impossible.', '<textarea id="f_instructions" class="big" placeholder="What does this bot do? How does it behave? What should it avoid doing?">' + esc(d.instructions || '') + '</textarea>', 'instructions.md') +
@@ -621,7 +621,7 @@ $('cfgsave').onclick = async () => {
     const r = await fetch('/api/admin/project?id=' + encodeURIComponent(id), { method: 'PUT', headers: { 'content-type': 'application/json', 'x-admin-token': ADMIN }, body: JSON.stringify({ ...draft, id }) });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || r.status);
-    draft.id = d.id; $('cfgmsg').textContent = 'Saved. Live now as projects/' + d.id + ' (saved copy).'; $('cfgsource').textContent = 'saved copy (overrides the folder)'; $('cfgdelete').hidden = false;
+    draft.id = d.id; $('cfgmsg').textContent = 'Saved. Live now as YourBots/' + d.id + ' (saved copy).'; $('cfgsource').textContent = 'saved copy (overrides the folder)'; $('cfgdelete').hidden = false;
   } catch (err) { $('cfgmsg').textContent = 'Not saved: ' + err.message; } finally { $('cfgsave').disabled = false; }
 };
 $('cfgdelete').onclick = async () => {
@@ -642,9 +642,9 @@ $('cfggit').onclick = async () => {
 $('cfgexport').onclick = () => {
   syncDraft(); const id = (draft.name || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || draft.id;
   const { instructions, files, prompt, id: _i, ...meta } = draft;
-  const out = { ['projects/' + id + '/project.json']: JSON.stringify(meta, null, 2) + '\n', ['projects/' + id + '/instructions.md']: (instructions || '') + '\n' };
-  for (const [n, t] of Object.entries(files || {})) out['projects/' + id + '/knowledge/' + n] = t + '\n';
-  for (const [n, t] of Object.entries(prompt || {})) out['projects/' + id + '/prompt/' + n] = t + '\n';
+  const out = { ['YourBots/' + id + '/project.json']: JSON.stringify(meta, null, 2) + '\n', ['YourBots/' + id + '/instructions.md']: (instructions || '') + '\n' };
+  for (const [n, t] of Object.entries(files || {})) out['YourBots/' + id + '/knowledge/' + n] = t + '\n';
+  for (const [n, t] of Object.entries(prompt || {})) out['YourBots/' + id + '/prompt/' + n] = t + '\n';
   $('plog').innerHTML = '<div><h4 style="margin:0 0 8px">Files to put in GitHub — the folder is the version you own</h4>' + Object.entries(out).map(([n, t]) => '<div style="margin:10px 0"><div style="display:flex;justify-content:space-between;align-items:center"><code>' + esc(n) + '</code><button class="btn" data-copy="' + esc(n) + '">Copy</button></div><pre style="white-space:pre-wrap;background:var(--code);border:1px solid var(--edge);border-radius:8px;padding:10px;font-size:12px;max-height:220px;overflow:auto">' + esc(t) + '</pre></div>').join('') + '</div>';
   $('plog').onclick = (e) => { const b = e.target.closest('button[data-copy]'); if (!b) return; navigator.clipboard?.writeText(out[b.dataset.copy]); b.textContent = 'Copied'; setTimeout(() => (b.textContent = 'Copy'), 1200); };
 };

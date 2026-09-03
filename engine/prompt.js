@@ -55,8 +55,8 @@ export function buildSystemPrompt({ config, project, now = new Date() }) {
     handoff,
     links: (project.allowedLinks || []).map((l) => `- ${l}`).join("\n") || "- (none)",
   };
-  // Root file = global default. A copy in projects/<name>/prompt/ overrides it
-  // for that bot only (registered in projects/index.js). Same name, same placeholders.
+  // Root file = global default. A copy in YourBots/<name>/prompt/ overrides it
+  // for that bot only (registered in YourBots/index.js). Same name, same placeholders.
   const overrides = project.prompt || {};
   const pick = (name, md) => overrides[name] ?? md;
   const t = (name, md) => fill(pick(name, md), vars);

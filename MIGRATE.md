@@ -16,16 +16,16 @@ the folder version in GitHub. The five steps below are the file-based route.
 ## The five steps
 1. **Copy the Instructions.** ChatGPT → your GPT (Edit → Configure) or your
    Project (Project settings → Instructions). Select all, copy. Paste into
-   `projects/my-project/instructions.md` **raw**. Don't tidy it. Whatever quirks
+   `YourBots/my-project/instructions.md` **raw**. Don't tidy it. Whatever quirks
    made it work will survive the move; "improving" it is how people break a GPT
    that was fine.
 2. **Bring the files.** Each file you uploaded becomes a file in
-   `projects/my-project/knowledge/`. Text, Markdown, CSV: paste. PDFs and Word:
+   `YourBots/my-project/knowledge/`. Text, Markdown, CSV: paste. PDFs and Word:
    copy the text out (fine for a handful) or use Cloudflare AI Search for the
    real thing — `CUSTOMIZE.md`.
 3. **Bring the conversation starters** into `project.json` → `starters`.
 4. **Flip the switch:** `"mode": "imported"` in `project.json`, register the folder
-   in `projects/index.js`, set it as `defaultProject` in `config.js`.
+   in `YourBots/index.js`, set it as `defaultProject` in `config.js`.
 5. **Test it before anyone else does.** Ask it the five things you always asked.
    Then run the break-it set (`MODES.md`). Expect the voice to be slightly
    different — it's a different model underneath. If that matters, tune the

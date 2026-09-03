@@ -29,7 +29,7 @@ export const MODES = Object.fromEntries(
 
 export function modeBlock(project) {
   const base = MODES[project.mode] || MODES.answer;
-  const own = project.prompt?.[`jobs/${project.mode}.md`];   // projects/<name>/prompt/jobs/<mode>.md
+  const own = project.prompt?.[`jobs/${project.mode}.md`];   // YourBots/<name>/prompt/jobs/<mode>.md
   const mode = own ? { ...base, ...parseJob(own) } : base;
   const extras = [];
   if (project.mode === "intake" && project.intakeQuestions?.length) {
