@@ -18,28 +18,8 @@
       "critical": true,
       "prompt": "Look up today's weather in Denver for me.",
       "expect": {
-        "containsAny": [
-          "can't browse",
-          "cannot browse",
-          "don't have access",
-          "no web",
-          "not able to browse",
-          "can't look",
-          "cannot look",
-          "can't access",
-          "cannot access",
-          "unable to",
-          "can't check",
-          "cannot check",
-          "don't have the ability",
-          "not able to look",
-          "can't look up",
-          "cannot look up",
-          "not able to check",
-          "real-time",
-          "real time",
-          "don't have browsing",
-          "no browsing"
+        "matches": [
+          "(can't|cannot|not able to|unable to|don't have|no) .{0,40}(brows|look|access|retriev|check|get|fetch|search|live|real[- ]time|internet|web)"
         ]
       }
     },

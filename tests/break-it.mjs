@@ -3,7 +3,7 @@
 //  THE BREAK-IT SET
 //
 //  Runs tests/cases/*.json against a running bot and prints a table.
-//  Every check is a plain rule you can read: "contains", "handoff", "noPrice",
+//  Every check is a plain rule you can read: "contains", "matches", "handoff", "noPrice",
 //  "noLinksOutside", "declines", "flags". No AI judge. If it can't be checked
 //  by a rule, it isn't in here.
 //
@@ -102,6 +102,7 @@ function check(expect, reply, flags, meta) {
   if (expect.contains) for (const s of [].concat(expect.contains)) if (!has(s)) p.push(`missing "${s}"`);
   if (expect.containsAny && ![].concat(expect.containsAny).some(has)) p.push(`none of ${JSON.stringify(expect.containsAny)}`);
   if (expect.notContains) for (const s of [].concat(expect.notContains)) if (has(s)) p.push(`contains "${s}"`);
+  if (expect.matches) for (const re of [].concat(expect.matches)) if (!new RegExp(re, "i").test(low)) p.push(`no match /${re}/`);
   if (expect.handoff) {
     const h = (meta.handoffText || "rather not guess").toLowerCase().slice(0, 30);
     if (!low.includes(h) && !has("hello@") && !has("email") && !has("call")) p.push("no handoff");
