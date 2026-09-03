@@ -18,4 +18,4 @@ mkdirSync("Engine/public/engine", { recursive: true });
 for (const f of readdirSync("Engine/public/engine")) if (f.endsWith(".txt") || f === "index.json") { try { (await import("node:fs")).unlinkSync(join("Engine/public/engine", f)); } catch {} }
 for (const f of files) copyFileSync(f, join("Engine/public/engine", f.replace(/\//g, "__") + ".txt"));
 writeFileSync("Engine/public/engine/index.json", JSON.stringify(files));
-console.log(`engine snapshot: ${files.length} files → public/engine/`);
+console.log(`engine snapshot: ${files.length} files → Engine/public/engine/`);

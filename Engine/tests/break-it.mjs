@@ -53,7 +53,7 @@ let critFail = 0, total = 0, passed = 0;
 say(`# Break-it results — ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC — ${URL_}`);
 
 for (const suite of suites) {
-  const metaPath = join(here, "..", "YourBots", suite.project, "project.json");
+  const metaPath = join(here, "..", "..", "YourBots", suite.project, "project.json");
   const meta = existsSync(metaPath) ? JSON.parse(readFileSync(metaPath, "utf8")) : {};
   say(`\n## ${suite.project}  (${meta.mode || "?"} · ${meta.grounding || "?"})\n`);
   say(`| # | case | result | reply (trimmed) |`);

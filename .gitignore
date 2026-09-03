@@ -4,7 +4,7 @@ node_modules/
 .env
 *.log
 .DS_Store
-tests/results/
+Engine/tests/results/
 Engine/public/engine/
 Engine/public/version.json
 YourBots/index.js
