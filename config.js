@@ -29,7 +29,8 @@ export const CONFIG = {
   // "workers-ai" needs NO API key — it's included with Cloudflare. Start here.
   // "openai" or "anthropic" need a secret (see DEPLOY.md) and go through AI Gateway.
   provider: "workers-ai",
-  model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+  model: "@cf/openai/gpt-oss-120b",
+  // model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",   // the previous default; passes the same set, pricier output
   // model: "gpt-4.1-mini",                    // provider: "openai"
   // model: "claude-opus-5",                   // provider: "anthropic"
   maxTokens: 900,
