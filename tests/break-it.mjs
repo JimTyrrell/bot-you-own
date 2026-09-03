@@ -103,6 +103,7 @@ function check(expect, reply, flags, meta) {
   if (expect.containsAny && ![].concat(expect.containsAny).some(has)) p.push(`none of ${JSON.stringify(expect.containsAny)}`);
   if (expect.notContains) for (const s of [].concat(expect.notContains)) if (has(s)) p.push(`contains "${s}"`);
   if (expect.matches) for (const re of [].concat(expect.matches)) if (!new RegExp(re, "i").test(low)) p.push(`no match /${re}/`);
+  if (expect.notMatches) for (const re of [].concat(expect.notMatches)) if (new RegExp(re, "i").test(low)) p.push(`matched /${re}/`);
   if (expect.handoff) {
     const h = (meta.handoffText || "rather not guess").toLowerCase().slice(0, 30);
     if (!low.includes(h) && !has("hello@") && !has("email") && !has("call")) p.push("no handoff");
