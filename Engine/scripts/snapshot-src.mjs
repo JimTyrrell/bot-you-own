@@ -6,14 +6,14 @@ import { mkdirSync, copyFileSync, writeFileSync, readdirSync, readFileSync } fro
 import { join } from "node:path";
 import { execSync } from "node:child_process";
 
-// --- version stamp: VERSION file (you bump it) + build time + git commit ------
+// --- version stamp: package.json "version" (you bump it) + build time + git commit ------
 // Written to public/version.json, shown in the page footer and at /health.
-let version = "0.0.0"; try { version = readFileSync("VERSION", "utf8").trim(); } catch {}
+let version = "0.0.0"; try { version = JSON.parse(readFileSync("package.json", "utf8")).version || version; } catch {}
 let commit = ""; try { commit = execSync("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim(); } catch {}
 const stamp = { version, builtAt: new Date().toISOString(), commit };
 writeFileSync("Engine/public/version.json", JSON.stringify(stamp));
 console.log(`version ${version} (${commit || "no git"}) built ${stamp.builtAt}`);
-const files = ["config.js", "Engine/worker/index.js", "Engine/worker/prompt.js", "Engine/worker/modes.js", "Engine/worker/firewall.js", "Engine/worker/gateway.js", "YourBots/index.js", "Engine/scripts/discover.mjs", "wrangler.jsonc", "Engine/public/index.html", "Engine/public/widget.js", "Engine/tests/break-it.mjs"];
+const files = ["YourBots/config.js", "Engine/worker/index.js", "Engine/worker/prompt.js", "Engine/worker/modes.js", "Engine/worker/firewall.js", "Engine/worker/gateway.js", "YourBots/index.js", "Engine/scripts/discover.mjs", "wrangler.jsonc", "Engine/public/index.html", "Engine/public/widget.js", "Engine/tests/break-it.mjs"];
 mkdirSync("Engine/public/engine", { recursive: true });
 for (const f of readdirSync("Engine/public/engine")) if (f.endsWith(".txt") || f === "index.json") { try { (await import("node:fs")).unlinkSync(join("Engine/public/engine", f)); } catch {} }
 for (const f of files) copyFileSync(f, join("Engine/public/engine", f.replace(/\//g, "__") + ".txt"));

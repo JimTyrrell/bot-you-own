@@ -1,4 +1,4 @@
-import { CONFIG } from "../../config.js";
+import { CONFIG } from "../../YourBots/config.js";
 import { PROJECTS, getProject as folderProject, listProjects as folderList } from "../../YourBots/index.js";
 import { buildSystemPrompt, PROMPT_FILES, ROOT_PROMPT_FILES } from "./prompt.js";
 import { complete } from "./gateway.js";
