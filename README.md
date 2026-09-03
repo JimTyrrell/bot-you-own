@@ -1,0 +1,109 @@
+# The Bot You Own
+
+A ChatGPT-style assistant that runs **on your own domain, in your own Cloudflare
+account, from code you can read** — for a few dollars a month, usually zero.
+
+Not a custom GPT. Not a $99-a-month rental. Yours.
+
+**You will not open a terminal. You will not install anything.** If you can use
+a browser and edit a document, you can do this.
+
+It is built from three layers, and the workshop teaches them in this order:
+
+| Layer | Where | What it is |
+|---|---|---|
+| **1. The Prompt** | `src/prompt.js` | A ChatGPT-grade system prompt: identity, date, tone, formatting, honesty, boundaries. Your project's instructions sit on top. |
+| **2. The Data** | `projects/` | **Projects** — the same shape as a ChatGPT Project or a custom GPT: `instructions.md` + `knowledge/` files + starter prompts. Four samples ship so you can test before you type. |
+| **3. The Firewall + Gateway** | `src/firewall.js` · `src/gateway.js` | What stops it doing what it shouldn't. Enforced in code (link allowlist, injection screen, leak detection, rate limit) and at the edge (AI Gateway: dollar spend cap, logs, Guardrails). |
+
+---
+
+## Deploy it (three minutes, no card)
+
+<!-- TODO Jim: replace USER/REPO once the GitHub repo exists, then check the button renders. -->
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/USER/REPO)
+
+Click it. You need two free accounts — **GitHub** (where your copy of this code
+lives) and **Cloudflare** (where it runs). Cloudflare copies this project into
+your GitHub, builds it, and puts it on the internet.
+
+You'll get a URL like `bot-you-own.your-name.workers.dev`. Open it. You'll see a
+ChatGPT-style page with four projects in the sidebar. Try each one. Then try to
+break them — that's the point of the samples.
+
+---
+
+## Make it yours — four steps
+
+### 1. Make a project · `projects/`
+Copy `projects/_template/` to `projects/my-business/`. Fill in three things:
+- `project.json` — name, greeting, starter prompts, which job it does (`mode`), the
+  links it's allowed to share, and where to send people when it can't help.
+- `instructions.md` — what you'd have typed into ChatGPT's Instructions box. Paste it raw.
+- `knowledge/` — what you'd have uploaded as files. Markdown or plain text.
+
+Then add it to `projects/index.js` (copy a block, change the folder name) and set
+`defaultProject: "my-business"` in `config.js`. **Read `projects/README.md`.**
+
+> **The single highest-value hour you will spend on this:** go into your sent
+> folder and find the emails where you answered the same question for the tenth
+> time. Paste those in. Your words, already tested on real customers.
+
+### 2. Pick the job · `project.json` → `mode`
+`assistant` · `answer` ⭐ · `intake` · `booking` · `concierge` · `internal` · `imported`.
+**Read `MODES.md`, then start with `answer`.** One project = one job. Want two
+jobs? Make two projects; the sidebar shows both.
+
+### 3. Pick how much it's allowed to know · `project.json` → `grounding`
+- `"strict"` — it answers **only** from your files and hands off otherwise. For anything customer-facing.
+- `"open"` — it behaves like ChatGPT, using your files first when they apply. For yourself and your team.
+
+### 4. Put it on your website · `public/widget.js`
+One script tag. Inline or bubble. See `https://YOUR-BOT-URL/embed-example`.
+```html
+<div data-mybot style="height:640px"></div>
+<script src="https://YOUR-BOT-URL/widget.js" async data-project="my-business"></script>
+```
+
+---
+
+## Coming from ChatGPT?
+**Read `MIGRATE.md`.** A custom GPT or a Project moves across in about ten minutes:
+paste Instructions into one file, files into a folder, flip one switch.
+
+---
+
+## The part nobody else teaches: it has to be able to say no
+
+Open `src/firewall.js` and read it. You don't have to change it — you have to
+know it's there. Every check is tagged with the OWASP LLM Top 10 risk it covers.
+
+- **Before the model:** hidden characters stripped; "ignore your instructions"-style
+  attempts never reach the model at all; rate limit per visitor.
+- **Inside the model:** the prompt's `<boundaries>` — the two rules that matter most,
+  from OpenAI's own Model Spec: *ignore untrusted data by default* and *do not
+  reveal privileged information.*
+- **After the model:** links not on your allowlist are removed in code; an answer
+  that quotes the rules is withheld; optional Llama Guard on both sides.
+- **At the edge (optional):** AI Gateway — a dollar spend cap, logs, caching, and
+  Cloudflare's own Guardrails. See `DEPLOY.md`.
+
+The page shows a small chip under any answer the firewall touched, so you can
+watch it work. **Test it by trying to break it** — `tests/break-it.mjs` is the
+set we run, in plain rules you can read.
+
+---
+
+## What it costs
+- **Nothing to start.** Free tier: 100,000 requests a day, 10,000 AI neurons a day. The free tier is a hard ceiling with no surprise bill.
+- **$5/month** for the Workers paid plan when you outgrow it, plus metered AI usage — small. Put an AI Gateway spend limit on it the day you go paid.
+- No per-message plan. No per-seat pricing. No badge to pay to remove.
+
+## Where this stops being enough (honest version)
+- **A lot of documents.** This bundles your files into the prompt — right for an FAQ, wrong for two hundred PDFs. That's Cloudflare **AI Search**; see `CUSTOMIZE.md`.
+- **Browsing, images, code execution, file upload at runtime.** Not included. `MIGRATE.md` says exactly what doesn't come across.
+- **Sign-in / private bots.** Rate limiting is what a public bot needs; access control is a different build.
+- **Regulated data.** Health, financial, legal — the requirements are paperwork, not code. Know that before you point a bot at them.
+
+---
+*Built as part of **The Bot You Own** — Designatic. thedesignatic.com*
