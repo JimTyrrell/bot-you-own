@@ -14,6 +14,7 @@ actually hit the limit, not before.
 | `blockInjections` | on | "ignore your instructions…" phrasings get a canned reply and **never reach the model** (saves neurons too) | LLM01, LLM07 |
 | `stripLinks` | on | any URL not in the project's `allowedLinks` becomes `[link removed]`, after the model answers | LLM05 |
 | `blockPromptLeaks` | on | if the answer contains an 8-word run from the protected part of the prompt, the answer is withheld | LLM07 |
+| handoff enforcement (always on in `strict` projects) | on | a decline that doesn't include your `handoffContact` gets it appended, flagged `handoff-appended`. Models paraphrase the contact away about one time in three; code doesn't | LLM09 |
 | `llamaGuard` | **off** | runs `@cf/meta/llama-guard-3-8b` on the user's turn and on the answer. Doubles model calls. Turn on for anything public-facing with real risk | content safety |
 | `maxTurns` / `maxChars` | 12 / 4000 | how much history the model sees | LLM10 |
 
