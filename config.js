@@ -56,7 +56,7 @@ export const CONFIG = {
   access: { mode: "key" },
 
   // ---- 6. THE FIREWALL ---------------------------------------------------------
-  // All enforced in code (src/firewall.js). Each one fails OPEN: if it can't run,
+  // All enforced in code (engine/firewall.js). Each one fails OPEN: if it can't run,
   // the bot still answers. Read the file — you don't have to change it, you have
   // to know it's there.
   firewall: {

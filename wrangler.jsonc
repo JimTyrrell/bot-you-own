@@ -3,7 +3,7 @@
   // You do NOT need to understand this file. The deploy button reads it.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "bot-you-own",
-  "main": "src/index.js",
+  "main": "engine/index.js",
   "compatibility_date": "2026-08-01",
 
   // Workers AI — this is what actually answers. No API key. It's included.

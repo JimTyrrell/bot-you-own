@@ -39,7 +39,7 @@ printf 'your admin code' | npx wrangler secret put ADMIN_PASSPHRASE
 ```
 Local: add `ADMIN_PASSPHRASE=…` to `.dev.vars`. An admin token also unlocks chat,
 so you don't need both codes. Endpoints: `POST /api/admin/unlock`,
-`GET /api/admin/engine?project=…`, `GET /api/admin/source?name=src/prompt.js`.
+`GET /api/admin/engine?project=…`, `GET /api/admin/source?name=engine/prompt.js`.
 The source snapshot in `public/engine/` is produced by `scripts/snapshot-src.mjs`
 before every dev/deploy (`build.command` in `wrangler.jsonc`) and is git-ignored;
 `run_worker_first` keeps `/engine/*` behind the gate.

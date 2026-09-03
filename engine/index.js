@@ -1,6 +1,6 @@
 import { CONFIG } from "../config.js";
 import { getProject, listProjects } from "../projects/index.js";
-import { buildSystemPrompt } from "./prompt.js";
+import { buildSystemPrompt, PROMPT_FILES } from "./prompt.js";
 import { complete } from "./gateway.js";
 import { screenInbound, screenOutbound, ensureHandoff, llamaGuard, redact, INJECTION_PATTERNS, SECRET_PATTERNS, LLAMA_GUARD_MODEL } from "./firewall.js";
 import { MODES } from "./modes.js";
@@ -326,6 +326,7 @@ async function engineView(env, projectId) {
   return {
     project: { id: projectId, ...meta, instructions },
     prompt: prompt.text,
+    promptFiles: PROMPT_FILES.map((f) => f.replace("<mode>", project.mode || "answer")),
     promptChars: prompt.text.length,
     promptTokensApprox: Math.round(prompt.text.length / 4),
     files,

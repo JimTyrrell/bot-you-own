@@ -44,9 +44,9 @@ Every mode's prompt is composed from four parts. Three come from the repo; **the
 fourth is yours, and it's the one almost nobody writes.**
 
 ```
-  [ BASE ]    the prompt + firewall — shared, never changes    src/prompt.js · src/firewall.js
-  [ ROLE ]    what this bot is FOR                           src/modes.js
-  [ SHAPE ]   what a good answer looks like                  src/modes.js
+  [ BASE ]    the prompt + firewall — shared, never changes    engine/prompt.js · engine/firewall.js
+  [ ROLE ]    what this bot is FOR                           prompt/jobs/<mode>.md
+  [ SHAPE ]   what a good answer looks like                  prompt/jobs/<mode>.md
   [ DONE ]    how you know it worked                         ← YOU
 ```
 
@@ -67,7 +67,7 @@ building yet, and no amount of prompt tinkering will fix it.
 
 ## Writing a mode of your own
 
-Copy a block in `src/modes.js` and change the four fields.
+Copy a file in `prompt/jobs/`, change its three sections (Role · What a good answer looks like · Done when), and add one import line in `engine/modes.js`.
 (Run the set with `node tests/break-it.mjs` — the cases are in `tests/cases/`.) That's the whole
 extension mechanism. Then:
 

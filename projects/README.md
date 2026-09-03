@@ -16,7 +16,8 @@ projects/
 ```
 
 **Everything your bot knows is in `knowledge/`. In `strict` mode it is not allowed
-to say anything that isn't.** In `open` mode it behaves like ChatGPT and uses the
+to say anything that isn't.** How every bot *behaves* (tone, refusals, the jobs)
+lives one folder up in `prompt/` — also plain Markdown. In `open` mode it behaves like ChatGPT and uses the
 files as its first source.
 
 ## Make your own (five minutes)

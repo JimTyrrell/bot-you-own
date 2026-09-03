@@ -62,7 +62,7 @@ When a project outgrows a few files — a whole website, hundreds of pages — b
 into the prompt stops working. AI Search does the chunking, indexing and retrieval.
 1. Create an AI Search instance in the dashboard; point it at your files / R2 / a crawl of your site.
 2. Bind it in `wrangler.jsonc`: `"ai_search": [{ "binding": "SEARCH", "instance_name": "my-instance" }]`
-3. In `src/gateway.js`, replace the Workers AI call with
+3. In `engine/gateway.js`, replace the Workers AI call with
    `env.SEARCH.get("my-instance").chatCompletions({ messages, model, ai_search_options: { retrieval: { max_num_results: 5 } } })`.
 **Keep the guardrails.** Retrieval changes where the facts come from. It doesn't make the bot willing to say "I don't know."
 
