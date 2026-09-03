@@ -27,6 +27,21 @@ What it is: `/api/unlock` turns the passphrase into an HMAC token; `/api/chat` a
 the full `/api/config` require that token in an `x-access-token` header. It is a
 gate against strangers and scripts, not user accounts — everyone shares one phrase.
 
+## B3. The admin code (Under the hood)
+```bash
+printf 'your admin code' | npx wrangler secret put ADMIN_PASSPHRASE
+```
+Local: add `ADMIN_PASSPHRASE=…` to `.dev.vars`. An admin token also unlocks chat,
+so you don't need both codes. Endpoints: `POST /api/admin/unlock`,
+`GET /api/admin/engine?project=…`, `GET /api/admin/source?name=src/prompt.js`.
+The source snapshot in `public/engine/` is produced by `scripts/snapshot-src.mjs`
+before every dev/deploy (`build.command` in `wrangler.jsonc`) and is git-ignored;
+`run_worker_first` keeps `/engine/*` behind the gate.
+
+## B4. Versioning
+Bump `VERSION`, commit, deploy. `public/version.json` is generated at build with
+`{version, builtAt, commit}`; `/health` returns `ok 2.1.0 <commit> <builtAt>`.
+
 ## C. Your own domain
 Dashboard → Workers & Pages → the Worker → Settings → Domains & Routes → Add →
 Custom Domain → `chat.yourdomain.com`. The domain has to be on Cloudflare. Pick

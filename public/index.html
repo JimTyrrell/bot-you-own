@@ -101,6 +101,22 @@
   #lock button { padding:10px; border:0; border-radius:10px; background:var(--text); color:var(--bg); font-weight:600; cursor:pointer; }
   #lockmsg { color:var(--danger); min-height:18px; font-size:13px; }
 
+  /* ---- under the hood ---- */
+  #hood { position:fixed; top:0; right:0; bottom:0; width:min(680px,100%); background:var(--side); border-left:1px solid var(--edge); z-index:40; display:none; flex-direction:column; box-shadow:-10px 0 40px rgba(0,0,0,.15); }
+  #hood.show { display:flex; }
+  #hood header { border-bottom:1px solid var(--edge); }
+  .tabs { display:flex; gap:4px; padding:8px 12px; border-bottom:1px solid var(--edge); flex-wrap:wrap; }
+  .tabs button { border:1px solid transparent; background:transparent; color:var(--muted); padding:6px 10px; border-radius:8px; cursor:pointer; font-size:13px; }
+  .tabs button.on { background:var(--bg); color:var(--text); border-color:var(--edge); }
+  #hoodbody { flex:1; overflow:auto; padding:14px 16px; font-size:13px; }
+  #hoodbody pre { white-space:pre-wrap; word-break:break-word; background:var(--bg); border:1px solid var(--edge); border-radius:10px; padding:12px; margin:0 0 12px; font-size:12.5px; line-height:1.5; }
+  #hoodbody h4 { margin:14px 0 6px; font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); }
+  #hoodbody .kv { display:grid; grid-template-columns:max-content 1fr; gap:4px 14px; }
+  #hoodbody .kv b { font-weight:600; }
+  #hoodbody select { font:inherit; padding:6px 8px; border:1px solid var(--edge); border-radius:8px; background:var(--bg); color:var(--text); margin-bottom:10px; }
+  .tag-xml { color:var(--accent); font-weight:600; }
+  .copy { float:right; font-size:11px; }
+
   @media (max-width: 760px) {
     .app { grid-template-columns:1fr; }
     aside { position:fixed; inset:0 30% 0 0; z-index:20; transform:translateX(-100%); transition:transform .2s; box-shadow:0 0 40px rgba(0,0,0,.3); }
@@ -137,7 +153,15 @@
       <span class="pill" id="modepill"></span>
       <span class="spacer"></span>
       <span class="pill" id="modelpill"></span>
+      <button class="iconbtn" id="hoodbtn" title="Under the hood (admin)" hidden>⚙ Under the hood</button>
     </header>
+    <aside id="hood">
+      <header><h1>Under the hood</h1><span class="pill" id="hoodproj"></span><span class="spacer"></span><button class="iconbtn" id="hoodclose">✕</button></header>
+      <div class="tabs" id="hoodtabs">
+        <button data-tab="prompt" class="on">Prompt</button><button data-tab="files">Files</button><button data-tab="firewall">Firewall</button><button data-tab="gateway">Gateway &amp; model</button><button data-tab="source">Source</button>
+      </div>
+      <div id="hoodbody"></div>
+    </aside>
     <div id="scroll">
       <div id="log"></div>
     </div>
@@ -200,7 +224,9 @@ function boot() { fetch('/api/config', { headers: authHeaders() }).then((r) => r
   $('brand').textContent = cfg.siteName || 'The Bot You Own';
   if (cfg.accent) document.documentElement.style.setProperty('--accent', cfg.accent);
   $('modelpill').textContent = (cfg.model || '').replace(/^@cf\//, '');
-  $('foot').innerHTML = 'Run by <b>' + esc(cfg.owner || '') + '</b><br>' + esc(cfg.provider || '') + ' · your account, your bill';
+  $('hoodbtn').hidden = !cfg.adminEnabled;
+  const v = cfg.version || {}; const built = v.builtAt ? new Date(v.builtAt).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '';
+  $('foot').innerHTML = 'Run by <b>' + esc(cfg.owner || '') + '</b><br>' + esc(cfg.provider || '') + ' · your account, your bill<br><span title="' + esc(built) + '">v' + esc(v.version || '?') + (v.commit ? ' · ' + esc(v.commit) : '') + (built ? ' · ' + esc(built) : '') + '</span>';
   const want = qs.get('project') || cfg.defaultProject;
   selectProject(state.projects.find((p) => p.id === want) || state.projects[0]);
   const wantChat = qs.get('chat'); if (wantChat) { const c = store.list(state.project.id).find((x) => x.id === wantChat); if (c) loadChat(c, true); }
@@ -231,6 +257,7 @@ function selectProject(p, silent) {
     ? 'Can make mistakes. Check important information.'
     : 'Answers only from what ' + p.name + ' has written down. Can still make mistakes.';
   renderProjects(); newChat(silent);
+  if ($('hood').classList.contains('show')) openHood();
 }
 
 function renderProjects() {
@@ -367,6 +394,37 @@ async function send(text) {
   store.upsert(chat); renderChats();
   state.busy = false; sendBtn.classList.remove('stop'); sendBtn.textContent = '↑'; sendBtn.title = 'Send';
   scrollDown(); input.focus();
+}
+
+// ---- under the hood (admin) ----
+let ADMIN = ''; try { ADMIN = localStorage.getItem('byo:admin') || ''; } catch {}
+let hoodData = null, hoodTab = 'prompt';
+$('hoodbtn').onclick = async () => {
+  if (!ADMIN) {
+    const code = prompt('Admin code'); if (!code) return;
+    const r = await fetch('/api/admin/unlock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ passphrase: code }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.token) { alert(r.status === 429 ? 'Too many attempts. Wait a minute.' : 'Wrong admin code.'); return; }
+    ADMIN = d.token; try { localStorage.setItem('byo:admin', ADMIN); } catch {}
+  }
+  await openHood();
+};
+$('hoodclose').onclick = () => $('hood').classList.remove('show');
+$('hoodtabs').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; hoodTab = b.dataset.tab; renderHood(); };
+async function openHood() {
+  const r = await fetch('/api/admin/engine?project=' + encodeURIComponent(state.project.id), { headers: { 'x-admin-token': ADMIN } });
+  if (r.status === 401) { ADMIN = ''; try { localStorage.removeItem('byo:admin'); } catch {} return $('hoodbtn').click(); }
+  hoodData = await r.json(); $('hoodproj').textContent = state.project.name; $('hood').classList.add('show'); renderHood();
+}
+function renderHood() {
+  const d = hoodData; if (!d) return;
+  [...$('hoodtabs').children].forEach((b) => b.classList.toggle('on', b.dataset.tab === hoodTab));
+  const box = $('hoodbody'); const pre = (t) => '<pre>' + esc(t).replace(/&lt;(\/?[a-z_]+)&gt;/g, '<span class="tag-xml">&lt;$1&gt;</span>') + '</pre>';
+  if (hoodTab === 'prompt') box.innerHTML = '<h4>The exact system prompt sent to the model for this project · ' + d.promptChars + ' chars ≈ ' + d.promptTokensApprox + ' tokens</h4>' + pre(d.prompt) + '<h4>Job (mode: ' + esc(d.project.mode) + ')</h4><div class="kv"><b>Role</b><span>' + esc(d.mode.role) + '</span><b>Done when</b><span>' + esc(d.mode.done) + '</span></div>';
+  if (hoodTab === 'files') box.innerHTML = '<h4>instructions.md</h4>' + pre(d.project.instructions || '(none)') + Object.entries(d.files || {}).map(([n, t]) => '<h4>knowledge/' + esc(n) + ' · ' + t.length + ' chars</h4>' + pre(t)).join('') + '<h4>project.json</h4>' + pre(JSON.stringify({ ...d.project, instructions: undefined }, null, 2));
+  if (hoodTab === 'firewall') { const f = d.firewall; box.innerHTML = '<h4>Switches (config.js → firewall)</h4>' + pre(JSON.stringify(f.config, null, 2)) + '<div class="kv"><b>Door</b><span>' + esc(f.door) + '</span><b>Rate limit</b><span>' + esc(f.rateLimit) + '</span><b>Logging</b><span>' + esc(f.logging) + '</span><b>Llama Guard model</b><span>' + esc(f.llamaGuardModel) + '</span></div><h4>Injection patterns (' + f.injectionPatterns.length + ') — a hit never reaches the model</h4>' + pre(f.injectionPatterns.join('\n')) + '<h4>Secret shapes</h4>' + pre(f.secretPatterns.join('\n')) + '<h4>What the chips mean</h4><div class="kv">' + Object.entries(f.flags).map(([k, v]) => '<b>' + esc(k) + '</b><span>' + esc(v) + '</span>').join('') + '</div>'; }
+  if (hoodTab === 'gateway') box.innerHTML = '<h4>Version</h4>' + pre(JSON.stringify(d.version, null, 2)) + '<h4>Provider &amp; model</h4>' + pre(JSON.stringify(d.gateway, null, 2)) + '<p style="color:var(--muted)">gateway.id empty = calls go straight to the model. Set it to route through Cloudflare AI Gateway: spend cap, logs, caching, edge Guardrails. See DEPLOY.md.</p>';
+  if (hoodTab === 'source') { box.innerHTML = '<h4>Engine source (snapshot taken at deploy)</h4><select id="srcsel">' + (d.sources || []).map((n) => '<option>' + esc(n) + '</option>').join('') + '</select><div id="srcbox"></div>'; const load = async () => { const n = $('srcsel').value; const t = await (await fetch('/api/admin/source?name=' + encodeURIComponent(n), { headers: { 'x-admin-token': ADMIN } })).text(); $('srcbox').innerHTML = pre(t); }; $('srcsel').onchange = load; load(); }
 }
 
 // Tiny markdown. Everything is HTML-escaped FIRST, so nothing the model writes can run.

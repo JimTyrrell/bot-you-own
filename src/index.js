@@ -2,7 +2,8 @@ import { CONFIG } from "../config.js";
 import { getProject, listProjects } from "../projects/index.js";
 import { buildSystemPrompt } from "./prompt.js";
 import { complete } from "./gateway.js";
-import { screenInbound, screenOutbound, ensureHandoff, llamaGuard, redact } from "./firewall.js";
+import { screenInbound, screenOutbound, ensureHandoff, llamaGuard, redact, INJECTION_PATTERNS, SECRET_PATTERNS, LLAMA_GUARD_MODEL } from "./firewall.js";
+import { MODES } from "./modes.js";
 
 // ============================================================================
 //  THE WORKER. Three routes and a static folder.
@@ -16,14 +17,41 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    if (url.pathname === "/health") return new Response("ok");
+    if (url.pathname === "/health") { const v = await versionStamp(env); return new Response(`ok ${v.version} ${v.commit} ${v.builtAt}`.trim()); }
 
     // --- THE DOOR. If the ACCESS_PASSPHRASE secret is set, the bot is locked:
     //     /api/config hides the projects and /api/chat refuses without a token.
     //     Unset = a public bot. See DEPLOY.md → "Lock it".
     const locked = Boolean(env.ACCESS_PASSPHRASE);
     const token = locked ? await accessToken(env) : null;
-    const authed = !locked || safeEqual(request.headers.get("x-access-token") || "", token);
+
+    // --- THE ADMIN CODE. A second secret, ADMIN_PASSPHRASE, opens "Under the
+    //     hood": the exact prompt, the files, the firewall rules, the source.
+    //     Visitors never see it. An admin token also counts as a visitor token.
+    const adminEnabled = Boolean(env.ADMIN_PASSPHRASE);
+    const adminToken = adminEnabled ? await accessToken({ ACCESS_PASSPHRASE: env.ADMIN_PASSPHRASE }, "bot-you-own/admin/v1") : null;
+    const isAdmin = adminEnabled && safeEqual(request.headers.get("x-admin-token") || "", adminToken);
+    const authed = !locked || isAdmin || safeEqual(request.headers.get("x-access-token") || "", token);
+
+    if (url.pathname === "/api/admin/unlock") {
+      if (request.method !== "POST") return json({ error: "POST only" }, 405);
+      if (!adminEnabled) return json({ error: "no admin code is set" }, 404);
+      if (!(await allowed(env, request))) return json({ error: "too many attempts" }, 429);
+      let b; try { b = await request.json(); } catch { return json({ error: "bad request" }, 400); }
+      const given = await accessToken({ ACCESS_PASSPHRASE: String(b.passphrase || "") }, "bot-you-own/admin/v1");
+      return safeEqual(given, adminToken) ? json({ token: adminToken }) : json({ error: "wrong admin code" }, 401);
+    }
+
+    if (url.pathname.startsWith("/api/admin/") || url.pathname.startsWith("/engine/")) {
+      if (!isAdmin) return json({ error: "admin only" }, adminEnabled ? 401 : 404);
+      if (url.pathname === "/api/admin/engine") return json(await engineView(env, url.searchParams.get("project")));
+      if (url.pathname === "/api/admin/source") {
+        const name = String(url.searchParams.get("name") || "");
+        const res = await env.ASSETS.fetch(new Request(`${url.origin}/engine/${name.replace(/\//g, "__")}.txt`));
+        return new Response(await res.text(), { status: res.status, headers: { "content-type": "text/plain; charset=utf-8" } });
+      }
+      return env.ASSETS.fetch(request);
+    }
 
     if (url.pathname === "/api/unlock") {
       if (request.method !== "POST") return json({ error: "POST only" }, 405);
@@ -39,7 +67,9 @@ export default {
       const all = listProjects();
       const projects = CONFIG.singleProject ? all.filter((p) => p.id === CONFIG.defaultProject) : all;
       return json({
+        version: await versionStamp(env),
         locked,
+        adminEnabled,
         owner: CONFIG.owner,
         siteName: CONFIG.siteName,
         accent: CONFIG.accent,
@@ -77,9 +107,9 @@ async function allowed(env, request) {
 // --- The door: a token derived from the passphrase, never the passphrase itself.
 //     The page stores the token in localStorage and sends it as a header, which
 //     also works inside the embed iframe (cookies don't — see CUSTOMIZE.md).
-async function accessToken(env) {
+async function accessToken(env, label = "bot-you-own/access/v1") {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(String(env.ACCESS_PASSPHRASE || "")), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode("bot-you-own/access/v1"));
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(label));
   return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
@@ -219,6 +249,56 @@ async function logTurn(env, project, question, answer, flags) {
   } catch (err) {
     console.error("log failed (continuing)", err);
   }
+}
+
+// The version stamp written by scripts/snapshot-src.mjs at build time.
+let VERSION_CACHE = null;
+async function versionStamp(env) {
+  if (VERSION_CACHE) return VERSION_CACHE;
+  try { VERSION_CACHE = await (await env.ASSETS.fetch(new Request("https://x/version.json"))).json(); }
+  catch { VERSION_CACHE = { version: "dev", builtAt: "", commit: "" }; }
+  return VERSION_CACHE;
+}
+
+// "Under the hood": everything the admin view shows, for one project.
+async function engineView(env, projectId) {
+  const project = getProject(String(projectId || ""), CONFIG.defaultProject);
+  const prompt = buildSystemPrompt({ config: CONFIG, project });
+  let sources = [];
+  try { sources = await (await env.ASSETS.fetch(new Request("https://x/engine/index.json"))).json(); } catch {}
+  const { files, instructions, ...meta } = project;
+  return {
+    project: { id: projectId, ...meta, instructions },
+    prompt: prompt.text,
+    promptChars: prompt.text.length,
+    promptTokensApprox: Math.round(prompt.text.length / 4),
+    files,
+    mode: MODES[project.mode] || MODES.answer,
+    firewall: {
+      config: CONFIG.firewall,
+      rateLimit: env.RATE_LIMITER ? "on (wrangler.jsonc → ratelimits)" : "off (no binding)",
+      door: env.ACCESS_PASSPHRASE ? "locked (ACCESS_PASSPHRASE set)" : "open",
+      injectionPatterns: INJECTION_PATTERNS.map(String),
+      secretPatterns: SECRET_PATTERNS.map(String),
+      llamaGuardModel: LLAMA_GUARD_MODEL,
+      logging: env.DB ? "on (D1 bound)" : "off (no D1 binding)",
+      flags: {
+        "injection-blocked": "matched an injection pattern; model never called",
+        "invisible-text-stripped": "zero-width / bidi characters removed",
+        "secret-detected": "looks like a key, card or SSN was pasted (logged only)",
+        "link-stripped": "a URL not in allowedLinks was removed after the answer",
+        "leak-blocked": "answer repeated the protected prompt; withheld",
+        "leak-blocked:paraphrase": "answer described its rules in its own words; withheld",
+        "handoff-appended": "a decline in a strict project was missing the contact; added",
+        "guard-blocked:S#": "Llama Guard flagged the user turn (category S1–S14)",
+        "gateway-blocked": "AI Gateway Guardrails blocked it at the edge",
+        "rate-limited": "over the per-visitor limit",
+      },
+    },
+    gateway: { provider: CONFIG.provider, model: CONFIG.model, maxTokens: CONFIG.maxTokens, gateway: CONFIG.gateway },
+    version: await versionStamp(env),
+    sources,
+  };
 }
 
 function sseOnce(reply, flags) {

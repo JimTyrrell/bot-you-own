@@ -107,6 +107,21 @@ public again. **Use this for demos, internal bots and anything you haven't put a
 spend cap on yet.** A public website bot stays open and relies on the rate limit
 plus an AI Gateway spend limit.
 
+## Look under the hood (admin code)
+Set a second secret, `ADMIN_PASSPHRASE`, and a **⚙ Under the hood** button appears
+in the header. Enter the admin code and you get, for the project you're looking at:
+the exact system prompt being sent to the model (with a token count), every file
+it was given, the firewall switches and the injection patterns, what each chip
+means, the model and gateway settings, the version stamp, and the engine's source
+files themselves. Visitors with the ordinary passphrase never see any of it.
+This is the workshop's "open the bonnet" moment: nothing is hidden from the owner.
+
+## Version
+`VERSION` holds the number you bump (`2.1.0`). Every dev run and deploy stamps
+`version.json` with that number, the build time and the git commit; it shows in the
+page footer, at `/health`, and under the hood. When someone asks "which version is
+live?", the answer is in the footer.
+
 ## What it costs
 - **Nothing to start.** Free tier: 100,000 requests a day, 10,000 AI neurons a day. The free tier is a hard ceiling with no surprise bill.
 - **$5/month** for the Workers paid plan when you outgrow it, plus metered AI usage — small. Put an AI Gateway spend limit on it the day you go paid.
