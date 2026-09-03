@@ -411,18 +411,39 @@ $('hoodbtn').onclick = () => { if (ADMIN) return openHood(); $('adminlock').clas
 $('admincancel').onclick = () => $('adminlock').classList.remove('show');
 $('adminform').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const r = await fetch('/api/admin/unlock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ passphrase: $('adminpass').value }) });
-  const d = await r.json().catch(() => ({}));
-  if (!r.ok || !d.token) { $('adminmsg').textContent = r.status === 429 ? 'Too many attempts. Wait a minute.' : 'Wrong admin code.'; return; }
-  ADMIN = d.token; try { localStorage.setItem('byo:admin', ADMIN); } catch {}
-  $('adminlock').classList.remove('show'); openHood();
+  const btn = $('adminform').querySelector('button[type=submit]'); btn.disabled = true; btn.textContent = 'Checking…'; $('adminmsg').textContent = '';
+  try {
+    const r = await fetch('/api/admin/unlock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ passphrase: $('adminpass').value }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.token) { $('adminmsg').textContent = r.status === 429 ? 'Too many attempts. Wait a minute.' : 'Wrong admin code.'; return; }
+    ADMIN = d.token; try { localStorage.setItem('byo:admin', ADMIN); } catch {}
+    $('adminlock').classList.remove('show'); openHood();
+  } catch { $('adminmsg').textContent = 'Could not reach the server. Try again.'; }
+  finally { btn.disabled = false; btn.textContent = 'Open'; }
 });
 $('hoodclose').onclick = () => $('hood').classList.remove('show');
 $('hoodtabs').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; hoodTab = b.dataset.tab; renderHood(); };
+let hoodTicker = null;
+function hoodLoading(what) {
+  // Open the drawer at once and say what's happening; the engine view is a server round-trip.
+  const words = ['Opening the engine', 'Building the prompt', 'Reading the files', 'Collecting the firewall rules'];
+  let i = 0; const box = $('hoodbody');
+  const tick = () => { box.innerHTML = '<p class="thinking" style="padding:8px 0"><span>' + esc(words[i % words.length]) + '</span></p><p style="color:var(--muted)">' + esc(what || '') + '</p>'; i++; };
+  clearInterval(hoodTicker); tick(); hoodTicker = setInterval(tick, 1200);
+  $('hoodproj').textContent = state.project.name; $('hood').classList.add('show');
+}
 async function openHood() {
-  const r = await fetch('/api/admin/engine?project=' + encodeURIComponent(state.project.id), { headers: { 'x-admin-token': ADMIN } });
-  if (r.status === 401) { ADMIN = ''; try { localStorage.removeItem('byo:admin'); } catch {} return $('hoodbtn').click(); }
-  hoodData = await r.json(); $('hoodproj').textContent = state.project.name; $('hood').classList.add('show'); renderHood();
+  const btn = $('hoodbtn'); btn.disabled = true; btn.textContent = '⚙ Opening…';
+  hoodLoading('Fetching the exact prompt, files and rules for ' + state.project.name + ' from the server.');
+  try {
+    const r = await fetch('/api/admin/engine?project=' + encodeURIComponent(state.project.id), { headers: { 'x-admin-token': ADMIN } });
+    if (r.status === 401) { ADMIN = ''; try { localStorage.removeItem('byo:admin'); } catch {} clearInterval(hoodTicker); $('hood').classList.remove('show'); return $('hoodbtn').click(); }
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    hoodData = await r.json(); clearInterval(hoodTicker); renderHood();
+  } catch (err) {
+    clearInterval(hoodTicker);
+    $('hoodbody').innerHTML = '<p style="color:var(--danger)">Could not load the engine view (' + esc(err.message) + '). Close and try again.</p>';
+  } finally { btn.disabled = false; btn.textContent = '⚙ Under the hood'; }
 }
 function renderHood() {
   const d = hoodData; if (!d) return;
@@ -432,7 +453,7 @@ function renderHood() {
   if (hoodTab === 'files') box.innerHTML = '<h4>instructions.md</h4>' + pre(d.project.instructions || '(none)') + Object.entries(d.files || {}).map(([n, t]) => '<h4>knowledge/' + esc(n) + ' · ' + t.length + ' chars</h4>' + pre(t)).join('') + '<h4>project.json</h4>' + pre(JSON.stringify({ ...d.project, instructions: undefined }, null, 2));
   if (hoodTab === 'firewall') { const f = d.firewall; box.innerHTML = '<h4>Switches (config.js → firewall)</h4>' + pre(JSON.stringify(f.config, null, 2)) + '<div class="kv"><b>Door</b><span>' + esc(f.door) + '</span><b>Rate limit</b><span>' + esc(f.rateLimit) + '</span><b>Logging</b><span>' + esc(f.logging) + '</span><b>Llama Guard model</b><span>' + esc(f.llamaGuardModel) + '</span></div><h4>Injection patterns (' + f.injectionPatterns.length + ') — a hit never reaches the model</h4>' + pre(f.injectionPatterns.join('\n')) + '<h4>Secret shapes</h4>' + pre(f.secretPatterns.join('\n')) + '<h4>What the chips mean</h4><div class="kv">' + Object.entries(f.flags).map(([k, v]) => '<b>' + esc(k) + '</b><span>' + esc(v) + '</span>').join('') + '</div>'; }
   if (hoodTab === 'gateway') box.innerHTML = '<h4>Version</h4>' + pre(JSON.stringify(d.version, null, 2)) + '<h4>Provider &amp; model</h4>' + pre(JSON.stringify(d.gateway, null, 2)) + '<p style="color:var(--muted)">gateway.id empty = calls go straight to the model. Set it to route through Cloudflare AI Gateway: spend cap, logs, caching, edge Guardrails. See DEPLOY.md.</p>';
-  if (hoodTab === 'source') { box.innerHTML = '<h4>Engine source (snapshot taken at deploy)</h4><select id="srcsel">' + (d.sources || []).map((n) => '<option>' + esc(n) + '</option>').join('') + '</select><div id="srcbox"></div>'; const load = async () => { const n = $('srcsel').value; const t = await (await fetch('/api/admin/source?name=' + encodeURIComponent(n), { headers: { 'x-admin-token': ADMIN } })).text(); $('srcbox').innerHTML = pre(t); }; $('srcsel').onchange = load; load(); }
+  if (hoodTab === 'source') { box.innerHTML = '<h4>Engine source (snapshot taken at deploy)</h4><select id="srcsel">' + (d.sources || []).map((n) => '<option>' + esc(n) + '</option>').join('') + '</select><div id="srcbox"></div>'; const load = async () => { const n = $('srcsel').value; $('srcbox').innerHTML = '<p class="thinking"><span>Loading ' + esc(n) + '</span></p>'; try { const t = await (await fetch('/api/admin/source?name=' + encodeURIComponent(n), { headers: { 'x-admin-token': ADMIN } })).text(); $('srcbox').innerHTML = pre(t); } catch { $('srcbox').innerHTML = '<p style="color:var(--danger)">Could not load ' + esc(n) + '.</p>'; } }; $('srcsel').onchange = load; load(); }
 }
 
 // Tiny markdown. Everything is HTML-escaped FIRST, so nothing the model writes can run.
