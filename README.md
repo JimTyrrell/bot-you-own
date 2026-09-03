@@ -89,8 +89,9 @@ With the admin code, **✎ Configure** opens the same screen ChatGPT's GPT build
 has: Name, Description, Instructions, Conversation starters, Knowledge (Upload
 files), Capabilities — with a live **Preview** chat on the right that talks to
 your unsaved draft. **Save** stores it in your bot's database and it is live at
-once. **Export files** shows the folder to put in GitHub when you want the
-version you own in the repo. A saved copy overrides the folder with the same
+once. **Commit to GitHub** writes the bot's folder into your repo for you (one secret to
+set up, `DEPLOY.md` §B5); **Export files** shows the same files if you'd rather
+paste. A saved copy overrides the folder with the same
 name; remove it and the folder is live again. **✎ New bot** in the sidebar starts
 a blank one.
 

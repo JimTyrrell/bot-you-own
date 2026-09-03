@@ -48,6 +48,19 @@ before every dev/deploy (`build.command` in `wrangler.jsonc`) and is git-ignored
 Bump `VERSION`, commit, deploy. `public/version.json` is generated at build with
 `{version, builtAt, commit}`; `/health` returns `ok 2.1.0 <commit> <builtAt>`.
 
+## B5. Commit to GitHub from the Configure screen (the round trip)
+1. `config.js` → `github: { repo: "you/your-repo", branch: "main" }`.
+2. GitHub → Settings → Developer settings → Fine-grained tokens → one token, **only
+   this repo**, permission **Contents: Read and write**. Then:
+   ```bash
+   printf 'github_pat_…' | npx wrangler secret put GITHUB_TOKEN
+   ```
+3. Connect the repo to Cloudflare Workers Builds (the Deploy button does this;
+   otherwise Worker → Settings → Builds → connect). Now: Configure → Save (live at
+   once from the database) → **Commit to GitHub** (the bot's folder lands in the
+   repo) → Workers Builds redeploys → the folder is the deployed version. Remove
+   the saved copy afterwards so the folder is the single source.
+
 ## C. Your own domain
 Dashboard → Workers & Pages → the Worker → Settings → Domains & Routes → Add →
 Custom Domain → `chat.yourdomain.com`. The domain has to be on Cloudflare. Pick

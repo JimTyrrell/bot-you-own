@@ -50,7 +50,7 @@ export default {
       if (!isAdmin) return json({ error: "admin only" }, adminEnabled ? 401 : 404);
       if (url.pathname === "/api/admin/engine") return json(await engineView(env, url.searchParams.get("project")));
       if (url.pathname === "/api/admin/audit") return json(await auditView(env, url.searchParams));
-      if (url.pathname === "/api/admin/projects") return json({ projects: await resolveList(env), jobs: Object.values(MODES).map((m) => ({ id: m.id, blurb: m.blurb, role: m.role, shape: m.shape, done: m.done })), model: CONFIG.model, canSave: Boolean(env.DB), rootPrompt: ROOT_PROMPT_FILES });
+      if (url.pathname === "/api/admin/projects") return json({ projects: await resolveList(env), jobs: Object.values(MODES).map((m) => ({ id: m.id, blurb: m.blurb, role: m.role, shape: m.shape, done: m.done })), model: CONFIG.model, canSave: Boolean(env.DB), rootPrompt: ROOT_PROMPT_FILES, github: { repo: CONFIG.github?.repo || "", branch: CONFIG.github?.branch || "main", ready: Boolean(CONFIG.github?.repo && env.GITHUB_TOKEN) } });
       if (url.pathname === "/api/admin/project") {
         const id = String(url.searchParams.get("id") || "").toLowerCase();
         if (request.method === "GET") { const p = await resolveProject(env, id); return json({ project: { ...p, id: p.id || id }, source: (await savedProjects(env))[id] ? "saved" : (PROJECTS[id] ? "folder" : "new") }); }
@@ -68,14 +68,13 @@ export default {
         if (request.method === "DELETE") { await ensureSchema(env); await env.DB.prepare(`DELETE FROM projects WHERE id = ?`).bind(id).run(); SAVED_CACHE.at = 0; return json({ ok: true, fallsBackToFolder: Boolean(PROJECTS[id]) }); }
         return json({ error: "method" }, 405);
       }
+      if (url.pathname === "/api/admin/project/sync") {
+        if (request.method !== "POST") return json({ error: "POST only" }, 405);
+        return json(await syncToGitHub(env, String(url.searchParams.get("id") || "")));
+      }
       if (url.pathname === "/api/admin/project/export") {
         const id = String(url.searchParams.get("id") || "");
-        const p = await resolveProject(env, id);
-        const { instructions, files, prompt, id: _i, ...meta } = p;
-        const out = { [`projects/${id}/project.json`]: JSON.stringify(meta, null, 2) + "\n", [`projects/${id}/instructions.md`]: (instructions || "") + "\n" };
-        for (const [n, t] of Object.entries(files || {})) out[`projects/${id}/knowledge/${n}`] = t + "\n";
-        for (const [n, t] of Object.entries(prompt || {})) out[`projects/${id}/prompt/${n}`] = t + "\n";
-        return json({ files: out });
+        return json({ files: exportFiles(await resolveProject(env, id), id) });
       }
       if (url.pathname === "/api/admin/source") {
         const name = String(url.searchParams.get("name") || "");
@@ -385,6 +384,53 @@ async function auditView(env, q) {
   const stats = (await env.DB.prepare(`SELECT COUNT(*) turns, SUM(refused) refused, SUM(CASE WHEN flags != '' THEN 1 ELSE 0 END) flagged, COUNT(DISTINCT visitor) visitors FROM conversations WHERE created_at >= ?`).bind(since).first()) || {};
   const top = (await env.DB.prepare(`SELECT asked, COUNT(*) n FROM conversations WHERE refused = 1 AND created_at >= ? GROUP BY asked ORDER BY n DESC LIMIT 10`).bind(since).all()).results || [];
   return { enabled: true, rows, stats: { ...stats, since }, topRefused: top, note: "Emails, phone numbers and dates inside questions and answers are redacted before storage. Names are not. The visitor column is kept on purpose in email mode." };
+}
+
+// --- Commit a bot's folder to GitHub (Contents API). One commit per file; files
+//     that no longer exist in the bot are deleted from the folder. Needs the
+//     GITHUB_TOKEN secret (fine-grained, Contents read/write, this repo only).
+function exportFiles(p, id) {
+  const { instructions, files, prompt, id: _i, ...meta } = p;
+  const out = { [`projects/${id}/project.json`]: JSON.stringify(meta, null, 2) + "\n", [`projects/${id}/instructions.md`]: (instructions || "") + "\n" };
+  for (const [n, t] of Object.entries(files || {})) out[`projects/${id}/knowledge/${n}`] = t + "\n";
+  for (const [n, t] of Object.entries(prompt || {})) out[`projects/${id}/prompt/${n}`] = t + "\n";
+  return out;
+}
+async function syncToGitHub(env, id) {
+  const repo = CONFIG.github?.repo, branch = CONFIG.github?.branch || "main";
+  if (!repo) return { error: "config.js → github.repo is empty" };
+  if (!env.GITHUB_TOKEN) return { error: "GITHUB_TOKEN secret is not set (fine-grained token, Contents: read & write, only this repo)" };
+  const p = await resolveProject(env, id);
+  if (!p || (p.id && p.id !== id && !PROJECTS[id])) return { error: "unknown bot" };
+  const want = exportFiles(p, id);
+  const gh = async (path, init = {}) => {
+    const r = await fetch(`https://api.github.com/repos/${repo}/${path}`, { ...init, headers: { authorization: `Bearer ${env.GITHUB_TOKEN}`, accept: "application/vnd.github+json", "user-agent": "bot-you-own", "content-type": "application/json", ...(init.headers || {}) } });
+    const body = await r.json().catch(() => ({}));
+    return { ok: r.ok, status: r.status, body };
+  };
+  // existing files in the folder → sha map (and what to delete)
+  const existing = {};
+  const walk = async (dir) => {
+    const r = await gh(`contents/${dir}?ref=${encodeURIComponent(branch)}`);
+    if (!r.ok || !Array.isArray(r.body)) return;
+    for (const e of r.body) { if (e.type === "file") existing[e.path] = e.sha; else if (e.type === "dir") await walk(e.path); }
+  };
+  await walk(`projects/${id}`);
+  const b64 = (s) => btoa(unescape(encodeURIComponent(s)));
+  const committed = [], unchanged = [], deleted = [], errors = [];
+  let lastCommit = "";
+  for (const [path, content] of Object.entries(want)) {
+    const r = await gh(`contents/${path}`, { method: "PUT", body: JSON.stringify({ message: `${existing[path] ? "update" : "add"} ${path} (from Configure)`, content: b64(content), branch, ...(existing[path] ? { sha: existing[path] } : {}) }) });
+    if (r.ok) { committed.push(path); lastCommit = r.body?.commit?.html_url || lastCommit; }
+    else if (r.status === 422 && /same/i.test(JSON.stringify(r.body))) unchanged.push(path);
+    else errors.push(`${path}: ${r.status} ${r.body?.message || ""}`);
+  }
+  for (const path of Object.keys(existing)) {
+    if (want[path]) continue;
+    const r = await gh(`contents/${path}`, { method: "DELETE", body: JSON.stringify({ message: `remove ${path} (from Configure)`, sha: existing[path], branch }) });
+    if (r.ok) { deleted.push(path); lastCommit = r.body?.commit?.html_url || lastCommit; } else errors.push(`delete ${path}: ${r.status}`);
+  }
+  return { ok: errors.length === 0, repo, branch, committed, deleted, unchanged, errors, commitUrl: lastCommit, note: "The folder is now in the repo. If the repo is connected to Cloudflare Workers Builds, this commit redeploys the bot in about a minute. The saved copy stays live meanwhile; remove it once the deploy lands so the folder is the single source." };
 }
 
 // The version stamp written by scripts/snapshot-src.mjs at build time.

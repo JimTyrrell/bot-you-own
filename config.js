@@ -68,6 +68,13 @@ export const CONFIG = {
     maxChars: 4000,          // per message
   },
 
+  // ---- 6b. GITHUB (for "Commit to GitHub" on the Configure screen) --------------
+  // The repo this bot deploys from. With the GITHUB_TOKEN secret set (a fine-grained
+  // token with Contents: read & write on ONLY this repo), the Configure screen can
+  // write a bot's folder straight into the repo. If the repo is connected to
+  // Cloudflare Workers Builds, that commit redeploys the bot: the round trip.
+  github: { repo: "JimTyrrell/bot-you-own", branch: "main" },
+
   // ---- 7. LOOKS --------------------------------------------------------------
   accent: "#10a37f",
 
