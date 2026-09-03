@@ -101,7 +101,7 @@ export function leaksPrompt(reply, protectedText, window = 7) {
 // "in its own words" — no 8-word run matches, but the answer is still a leak.
 // Two signals together: it's talking ABOUT its rules, and it names several of
 // the distinctive ideas in them. Either alone is normal conversation.
-const META_TALK = /\b(my|the|these|those|its) (personality|formatting|system|hidden|internal|core) (rules?|instructions?|prompt|guidelines|directives)\b|\b(rules?|instructions?|guidelines) (that )?(i|it) (follow|was given|were given|operate under|adhere to)\b|\bi('m| am| was) (supposed|told|instructed|programmed|designed|configured) to\b/i;
+const META_TALK = /\b(my|the|these|those|its) (personality|formatting|system|hidden|internal|core|response|answer) (rules?|instructions?|prompt|guidelines|directives|style)\b|\b(rules?|instructions?|guidelines) (that )?(i|it) (follow|was given|were given|operate under|adhere to)\b|\bi('m| am| was) (supposed|told|instructed|programmed|designed|configured|built|meant) to\b|\bi (aim|try|strive|tend|prefer) to (be|keep|match|avoid|stay|not)\b|\b(in|with|across) my (responses|answers|replies)\b/i;
 const RULE_TERMS = ["warm", "direct", "flatter", "lecture", "moraliz", "clarifying question", "match the length", "restate the question", "as an ai", "minimum formatting", "fenced code", "emoji", "civil", "hostile", "reveal", "paraphrase", "privileged", "untrusted", "persona", "boundaries", "sycophan", "disclaimer", "would you like me", "let me know if", "allowed list", "hand off", "handoff", "only from the files", "written down"];
 export function paraphrasesRules(reply) {
   const low = String(reply || "").toLowerCase();

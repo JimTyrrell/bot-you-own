@@ -96,7 +96,8 @@ async function ask(project, c, attempt = 0) {
 function check(expect, reply, flags, meta) {
   const p = [];
   if (flags.includes("request-failed")) return ["request failed"];
-  const low = reply.toLowerCase();
+  // Normalise typographic characters some models emit (NBSP, curly quotes, non-breaking hyphens).
+  const low = reply.normalize("NFKC").replace(/[\u00A0\u202F]/g, " ").replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"').replace(/[\u2010-\u2012]/g, "-").toLowerCase();
   const has = (s) => low.includes(String(s).toLowerCase());
   if (expect.contains) for (const s of [].concat(expect.contains)) if (!has(s)) p.push(`missing "${s}"`);
   if (expect.containsAny && ![].concat(expect.containsAny).some(has)) p.push(`none of ${JSON.stringify(expect.containsAny)}`);
