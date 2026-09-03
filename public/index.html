@@ -93,13 +93,14 @@
   .disclaimer { text-align:center; font-size:11px; color:var(--muted); padding:6px 0 4px; }
 
   /* ---- the door ---- */
-  #lock { position:fixed; inset:0; background:var(--bg); z-index:50; display:none; align-items:center; justify-content:center; padding:20px; }
-  #lock.show { display:flex; }
-  #lock form { width:min(380px,100%); border:1px solid var(--edge); border-radius:16px; padding:24px; background:var(--side); display:flex; flex-direction:column; gap:12px; box-shadow:0 2px 12px rgba(0,0,0,.06); }
-  #lock h2 { margin:0; font-size:18px; } #lock p { margin:0; color:var(--muted); font-size:13px; }
-  #lock input { padding:11px 12px; border:1px solid var(--edge); border-radius:10px; background:var(--bg); color:var(--text); font:inherit; }
-  #lock button { padding:10px; border:0; border-radius:10px; background:var(--text); color:var(--bg); font-weight:600; cursor:pointer; }
-  #lockmsg { color:var(--danger); min-height:18px; font-size:13px; }
+  .lockwrap { position:fixed; inset:0; background:var(--bg); z-index:50; display:none; align-items:center; justify-content:center; padding:20px; }
+  #adminlock { background:rgba(0,0,0,.35); z-index:60; }
+  .lockwrap.show { display:flex; }
+  .lockwrap form { width:min(380px,100%); border:1px solid var(--edge); border-radius:16px; padding:24px; background:var(--side); display:flex; flex-direction:column; gap:12px; box-shadow:0 2px 12px rgba(0,0,0,.06); }
+  .lockwrap h2 { margin:0; font-size:18px; } .lockwrap p { margin:0; color:var(--muted); font-size:13px; }
+  .lockwrap input { padding:11px 12px; border:1px solid var(--edge); border-radius:10px; background:var(--bg); color:var(--text); font:inherit; }
+  .lockwrap button { padding:10px; border:0; border-radius:10px; background:var(--text); color:var(--bg); font-weight:600; cursor:pointer; }
+  .lockmsg, #lockmsg { color:var(--danger); min-height:18px; font-size:13px; }
 
   /* ---- under the hood ---- */
   #hood { position:fixed; top:0; right:0; bottom:0; width:min(680px,100%); background:var(--side); border-left:1px solid var(--edge); z-index:40; display:none; flex-direction:column; box-shadow:-10px 0 40px rgba(0,0,0,.15); }
@@ -128,7 +129,14 @@
 </style>
 </head>
 <body>
-<div id="lock"><form id="lockform">
+<div id="adminlock" class="lockwrap"><form id="adminform">
+  <h2>Admin code</h2>
+  <p>Opens "Under the hood": the prompt, the files, the firewall rules and the source for this project.</p>
+  <input id="adminpass" type="password" placeholder="Admin code" autocomplete="off" />
+  <div style="display:flex;gap:8px"><button type="submit" style="flex:1">Open</button><button type="button" id="admincancel" style="flex:1;background:var(--panel);color:var(--text)">Cancel</button></div>
+  <div id="adminmsg" class="lockmsg"></div>
+</form></div>
+<div id="lock" class="lockwrap"><form id="lockform">
   <h2 id="locktitle">This bot is locked</h2>
   <p>Enter the passphrase to continue.</p>
   <input id="pass" type="password" placeholder="Passphrase" autocomplete="current-password" />
@@ -399,16 +407,16 @@ async function send(text) {
 // ---- under the hood (admin) ----
 let ADMIN = ''; try { ADMIN = localStorage.getItem('byo:admin') || ''; } catch {}
 let hoodData = null, hoodTab = 'prompt';
-$('hoodbtn').onclick = async () => {
-  if (!ADMIN) {
-    const code = prompt('Admin code'); if (!code) return;
-    const r = await fetch('/api/admin/unlock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ passphrase: code }) });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok || !d.token) { alert(r.status === 429 ? 'Too many attempts. Wait a minute.' : 'Wrong admin code.'); return; }
-    ADMIN = d.token; try { localStorage.setItem('byo:admin', ADMIN); } catch {}
-  }
-  await openHood();
-};
+$('hoodbtn').onclick = () => { if (ADMIN) return openHood(); $('adminlock').classList.add('show'); $('adminmsg').textContent = ''; $('adminpass').value = ''; $('adminpass').focus(); };
+$('admincancel').onclick = () => $('adminlock').classList.remove('show');
+$('adminform').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const r = await fetch('/api/admin/unlock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ passphrase: $('adminpass').value }) });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok || !d.token) { $('adminmsg').textContent = r.status === 429 ? 'Too many attempts. Wait a minute.' : 'Wrong admin code.'; return; }
+  ADMIN = d.token; try { localStorage.setItem('byo:admin', ADMIN); } catch {}
+  $('adminlock').classList.remove('show'); openHood();
+});
 $('hoodclose').onclick = () => $('hood').classList.remove('show');
 $('hoodtabs').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; hoodTab = b.dataset.tab; renderHood(); };
 async function openHood() {
