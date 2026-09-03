@@ -1,5 +1,10 @@
 # Projects — this folder is your bot's brain
 
+**Two ways to make one.** In the browser: admin code → ✎ Configure / ✎ New bot
+(ChatGPT's builder form, with a live preview; Save makes it live, Export gives you
+these files). Or in files, as below. A saved copy and a folder with the same name:
+the saved copy wins until you remove it.
+
 A **project** is exactly what ChatGPT calls a Project (and what a custom GPT was):
 a set of **instructions**, some **files**, and a few **starter prompts**. One folder each.
 

@@ -67,7 +67,7 @@ export function getProject(id, fallbackId) {
 
 export function listProjects() {
   return Object.entries(PROJECTS).map(([id, p]) => ({
-    id, name: p.name, tagline: p.tagline || "", greeting: p.greeting || "", starters: p.starters, mode: p.mode, grounding: p.grounding,
+    id, order: Number(p.order ?? 100), name: p.name, tagline: p.tagline || "", greeting: p.greeting || "", starters: p.starters, mode: p.mode, grounding: p.grounding,
     thinkingWords: Array.isArray(p.thinkingWords) && p.thinkingWords.length ? p.thinkingWords : undefined,
   }));
 }

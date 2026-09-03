@@ -1,6 +1,6 @@
 import { CONFIG } from "../config.js";
-import { getProject, listProjects } from "../projects/index.js";
-import { buildSystemPrompt, PROMPT_FILES } from "./prompt.js";
+import { PROJECTS, getProject as folderProject, listProjects as folderList } from "../projects/index.js";
+import { buildSystemPrompt, PROMPT_FILES, ROOT_PROMPT_FILES } from "./prompt.js";
 import { complete } from "./gateway.js";
 import { screenInbound, screenOutbound, ensureHandoff, llamaGuard, redact, INJECTION_PATTERNS, SECRET_PATTERNS, LLAMA_GUARD_MODEL } from "./firewall.js";
 import { MODES } from "./modes.js";
@@ -50,6 +50,33 @@ export default {
       if (!isAdmin) return json({ error: "admin only" }, adminEnabled ? 401 : 404);
       if (url.pathname === "/api/admin/engine") return json(await engineView(env, url.searchParams.get("project")));
       if (url.pathname === "/api/admin/audit") return json(await auditView(env, url.searchParams));
+      if (url.pathname === "/api/admin/projects") return json({ projects: await resolveList(env), jobs: Object.values(MODES).map((m) => ({ id: m.id, blurb: m.blurb, role: m.role, shape: m.shape, done: m.done })), model: CONFIG.model, canSave: Boolean(env.DB), rootPrompt: ROOT_PROMPT_FILES });
+      if (url.pathname === "/api/admin/project") {
+        const id = String(url.searchParams.get("id") || "").toLowerCase();
+        if (request.method === "GET") { const p = await resolveProject(env, id); return json({ project: { ...p, id: p.id || id }, source: (await savedProjects(env))[id] ? "saved" : (PROJECTS[id] ? "folder" : "new") }); }
+        if (!env.DB) return json({ error: "Saving needs the D1 database (wrangler.jsonc → d1_databases). Export the files instead." }, 400);
+        if (request.method === "PUT") {
+          let b; try { b = await request.json(); } catch { return json({ error: "bad request" }, 400); }
+          const pid = String(b.id || id || "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+          if (!pid) return json({ error: "give the bot a name" }, 400);
+          const p = normaliseProject(b, pid);
+          await ensureSchema(env);
+          await env.DB.prepare(`INSERT INTO projects (id, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at`).bind(pid, JSON.stringify(p), new Date().toISOString()).run();
+          SAVED_CACHE.at = 0;
+          return json({ ok: true, id: pid, project: p });
+        }
+        if (request.method === "DELETE") { await ensureSchema(env); await env.DB.prepare(`DELETE FROM projects WHERE id = ?`).bind(id).run(); SAVED_CACHE.at = 0; return json({ ok: true, fallsBackToFolder: Boolean(PROJECTS[id]) }); }
+        return json({ error: "method" }, 405);
+      }
+      if (url.pathname === "/api/admin/project/export") {
+        const id = String(url.searchParams.get("id") || "");
+        const p = await resolveProject(env, id);
+        const { instructions, files, prompt, id: _i, ...meta } = p;
+        const out = { [`projects/${id}/project.json`]: JSON.stringify(meta, null, 2) + "\n", [`projects/${id}/instructions.md`]: (instructions || "") + "\n" };
+        for (const [n, t] of Object.entries(files || {})) out[`projects/${id}/knowledge/${n}`] = t + "\n";
+        for (const [n, t] of Object.entries(prompt || {})) out[`projects/${id}/prompt/${n}`] = t + "\n";
+        return json({ files: out });
+      }
       if (url.pathname === "/api/admin/source") {
         const name = String(url.searchParams.get("name") || "");
         const res = await env.ASSETS.fetch(new Request(`${url.origin}/engine/${name.replace(/\//g, "__")}.txt`));
@@ -69,7 +96,7 @@ export default {
 
     if (url.pathname === "/api/config") {
       if (locked && !authed) return json({ locked: true, accessMode: accessMode(locked, wantEmail), siteName: CONFIG.siteName, accent: CONFIG.accent });
-      const all = listProjects();
+      const all = await resolveList(env);
       const projects = CONFIG.singleProject ? all.filter((p) => p.id === CONFIG.defaultProject) : all;
       return json({
         version: await versionStamp(env),
@@ -148,7 +175,9 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
   }
   const who = visitor || (isAdmin ? "admin" : "");
 
-  const project = getProject(String(body.project || ""), CONFIG.defaultProject);
+  const project = (isAdmin && body.draft && typeof body.draft === "object")
+    ? normaliseProject(body.draft, String(body.draft.id || "draft"))            // Configure → Preview: unsaved draft
+    : await resolveProject(env, String(body.project || ""));
   const stream = body.stream !== false;
   const fw = CONFIG.firewall || {};
 
@@ -274,6 +303,56 @@ async function logTurn(env, project, question, answer, flags, who = "") {
   }
 }
 
+// --- Saved projects: the Configure screen writes to D1; a saved bot with the same
+//     id overrides the folder version. Folders remain what you commit to GitHub.
+const OVERRIDABLE = ["1-identity.md", "2-capabilities.md", "3-personality.md", "4-formatting.md", "5-owner-instructions-intro.md", "6-files-strict.md", "6-files-open.md", "7-answering-strict.md", "7-answering-open.md", "8-links.md", "9-boundaries.md"];
+let SAVED_CACHE = { at: 0, map: {} };
+async function savedProjects(env) {
+  if (!env.DB) return {};
+  if (Date.now() - SAVED_CACHE.at < 15000) return SAVED_CACHE.map;
+  try {
+    await ensureSchema(env);
+    const rows = (await env.DB.prepare(`SELECT id, json FROM projects`).all()).results || [];
+    const map = {};
+    for (const r of rows) { try { map[r.id] = normaliseProject(JSON.parse(r.json), r.id); } catch {} }
+    SAVED_CACHE = { at: Date.now(), map };
+  } catch (err) { console.error("saved projects read failed", err); }
+  return SAVED_CACHE.map;
+}
+function normaliseProject(p, id) {
+  const clean = (t) => String(t || "").replace(/<!--[\s\S]*?-->/g, "").trim();
+  return {
+    id, order: Number(p.order ?? 100),
+    name: String(p.name || id).slice(0, 80), tagline: String(p.tagline || "").slice(0, 200), greeting: String(p.greeting || "").slice(0, 400),
+    starters: (Array.isArray(p.starters) ? p.starters : []).map((x) => String(x).slice(0, 120)).filter(Boolean).slice(0, 4),
+    mode: MODES[p.mode] ? p.mode : "answer", grounding: p.grounding === "open" ? "open" : "strict",
+    handoffText: String(p.handoffText || "").slice(0, 300), handoffContact: String(p.handoffContact || "").slice(0, 300),
+    allowedLinks: (Array.isArray(p.allowedLinks) ? p.allowedLinks : []).map((x) => String(x).trim()).filter((x) => /^https?:\/\//.test(x)).slice(0, 40),
+    thinkingWords: (Array.isArray(p.thinkingWords) ? p.thinkingWords : []).map((x) => String(x).slice(0, 60)).filter(Boolean).slice(0, 40),
+    intakeQuestions: (Array.isArray(p.intakeQuestions) ? p.intakeQuestions : []).map((x) => String(x).slice(0, 200)).slice(0, 10),
+    bookingUrl: String(p.bookingUrl || ""), bookingFitRules: String(p.bookingFitRules || "").slice(0, 2000),
+    nextSteps: (Array.isArray(p.nextSteps) ? p.nextSteps : []).slice(0, 10),
+    instructions: clean(p.instructions).slice(0, 20000),
+    files: Object.fromEntries(Object.entries(p.files || {}).filter(([n]) => /^[\w. -]{1,80}\.(md|txt|csv)$/i.test(n)).map(([n, t]) => [n, clean(t).slice(0, 200000)]).slice(0, 40)),
+    // this bot's own copies of root prompt/ files (same names) — the folder-wins rule, from the form
+    prompt: Object.fromEntries(Object.entries(p.prompt || {}).filter(([n]) => OVERRIDABLE.includes(n) || /^jobs\/[a-z-]+\.md$/.test(n)).map(([n, t]) => [n, clean(t).slice(0, 20000)]).filter(([, t]) => t.length > 0)),
+  };
+}
+async function resolveProject(env, id) {
+  const saved = await savedProjects(env);
+  if (id && saved[id]) return saved[id];
+  if (id && PROJECTS[id]) return folderProject(id, CONFIG.defaultProject);
+  return saved[CONFIG.defaultProject] || folderProject(CONFIG.defaultProject, CONFIG.defaultProject);
+}
+async function resolveList(env) {
+  const saved = await savedProjects(env);
+  const folder = folderList().map((p) => ({ ...p, source: saved[p.id] ? "saved (overrides folder)" : "folder" }));
+  const extra = Object.values(saved).filter((p) => !PROJECTS[p.id]).map((p) => ({ id: p.id, name: p.name, tagline: p.tagline, greeting: p.greeting, starters: p.starters, mode: p.mode, grounding: p.grounding, thinkingWords: p.thinkingWords.length ? p.thinkingWords : undefined, order: p.order, source: "saved" }));
+  const merged = [...folder.map((p) => saved[p.id] ? { ...p, ...pickPublic(saved[p.id]), source: p.source } : p), ...extra];
+  return merged.sort((a, b) => (a.order ?? 100) - (b.order ?? 100) || String(a.name).localeCompare(String(b.name)));
+}
+function pickPublic(p) { return { name: p.name, tagline: p.tagline, greeting: p.greeting, starters: p.starters, mode: p.mode, grounding: p.grounding, thinkingWords: p.thinkingWords.length ? p.thinkingWords : undefined, order: p.order }; }
+
 // The audit table creates itself the first time it's needed (no schema step for
 // attendees). Same DDL as schema.sql, kept in one place here.
 let SCHEMA_OK = false;
@@ -283,6 +362,7 @@ async function ensureSchema(env) {
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS conversations (id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT, visitor TEXT, asked TEXT, answered TEXT, refused INTEGER DEFAULT 0, flags TEXT, created_at TEXT NOT NULL)`),
     env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_conv_created ON conversations(created_at)`),
     env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_conv_refused ON conversations(refused)`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at TEXT NOT NULL)`),
   ]);
   SCHEMA_OK = true;
 }
@@ -295,7 +375,7 @@ async function auditView(env, q) {
   const filter = String(q.get("filter") || "all");           // all | refused | flagged | visitor:<email>
   const limit = Math.min(Math.max(parseInt(q.get("limit") || "50", 10) || 50, 1), 200);
   const where = []; const args = [];
-  if (project && project !== "*") { const meta = getProject(project, CONFIG.defaultProject); where.push("project = ?"); args.push(meta.name); }
+  if (project && project !== "*") { const meta = await resolveProject(env, project); where.push("project = ?"); args.push(meta.name); }
   if (filter === "refused") where.push("refused = 1");
   if (filter === "flagged") where.push("flags != ''");
   if (filter.startsWith("visitor:")) { where.push("visitor = ?"); args.push(filter.slice(8).toLowerCase()); }
@@ -318,7 +398,7 @@ async function versionStamp(env) {
 
 // "Under the hood": everything the admin view shows, for one project.
 async function engineView(env, projectId) {
-  const project = getProject(String(projectId || ""), CONFIG.defaultProject);
+  const project = await resolveProject(env, String(projectId || ""));
   const prompt = buildSystemPrompt({ config: CONFIG, project });
   let sources = [];
   try { sources = await (await env.ASSETS.fetch(new Request("https://x/engine/index.json"))).json(); } catch {}

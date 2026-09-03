@@ -31,6 +31,13 @@ export const PROMPT_FILES = [
   "prompt/7-answering-strict.md", "prompt/7-answering-open.md", "prompt/8-links.md", "prompt/9-boundaries.md",
 ];
 
+// The root files as text, for the Configure screen ("use this bot's own copy").
+export const ROOT_PROMPT_FILES = {
+  "1-identity.md": identityMd, "2-capabilities.md": capabilitiesMd, "3-personality.md": personalityMd, "4-formatting.md": formattingMd,
+  "5-owner-instructions-intro.md": ownerIntroMd, "6-files-strict.md": filesStrictMd, "6-files-open.md": filesOpenMd,
+  "7-answering-strict.md": answeringStrictMd, "7-answering-open.md": answeringOpenMd, "8-links.md": linksMd, "9-boundaries.md": boundariesMd,
+};
+
 export function buildSystemPrompt({ config, project, now = new Date() }) {
   const strict = project.grounding !== "open";
   const owner = config.owner || "";

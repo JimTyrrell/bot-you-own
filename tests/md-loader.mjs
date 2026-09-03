@@ -4,7 +4,7 @@ import { register } from "node:module";
 import { pathToFileURL } from "node:url";
 register("data:text/javascript," + encodeURIComponent(`
   export async function load(url, context, next) {
-    if (url.endsWith(".md")) { const { readFileSync } = await import("node:fs"); const { fileURLToPath } = await import("node:url");
+    if (/\.(md|txt|csv)$/.test(url)) { const { readFileSync } = await import("node:fs"); const { fileURLToPath } = await import("node:url");
       return { format: "module", shortCircuit: true, source: "export default " + JSON.stringify(readFileSync(fileURLToPath(url), "utf8")) + ";" }; }
     if (url.endsWith(".json")) return next(url, { ...context, importAttributes: { type: "json" } });
     return next(url, context);

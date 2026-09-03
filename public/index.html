@@ -54,7 +54,7 @@
   /* Header controls are laid out from first paint and never appear/disappear later:
      disabled until config arrives, then enabled or made invisible (space kept). */
   .iconbtn:disabled { opacity:.45; cursor:default; }
-  #hoodbtn.off { visibility:hidden; }
+  #hoodbtn.off, #cfgbtn.off { visibility:hidden; }
   #modelpill { min-width:120px; text-align:right; }
 
   #scroll { flex:1; overflow-y:auto; }
@@ -126,6 +126,37 @@
   .tag-xml { color:var(--accent); font-weight:600; }
   .copy { float:right; font-size:11px; }
 
+  /* ---- Configure: ChatGPT-builder layout (form left, live preview right) ---- */
+  #cfg { position:fixed; inset:0; background:var(--bg); z-index:45; display:none; grid-template-columns:1fr 1fr; grid-template-rows:auto 1fr; }
+  #cfg.show { display:grid; }
+  #cfg > header { grid-column:1 / -1; }
+  #cfgform { overflow:auto; padding:18px 24px 40px; border-right:1px solid var(--edge); }
+  #cfgform label { display:block; font-weight:600; font-size:13.5px; margin:16px 0 6px; }
+  #cfgform label small { display:block; font-weight:400; color:var(--muted); font-size:12px; margin-top:2px; }
+  #cfgform input[type=text], #cfgform input[type=url], #cfgform textarea, #cfgform select { width:100%; padding:10px 12px; border:1px solid var(--edge); border-radius:10px; background:var(--bg); color:var(--text); font:inherit; }
+  #cfgform textarea { min-height:120px; resize:vertical; }
+  #cfgform textarea.big { min-height:200px; }
+  .starters-edit input { margin-bottom:6px; }
+  .kfile { border:1px solid var(--edge); border-radius:10px; padding:10px 12px; margin:8px 0; background:var(--side); }
+  .kfile .kh { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+  .kfile .kh input { flex:1; }
+  .kfile textarea { min-height:90px; font-family:ui-monospace, Menlo, monospace; font-size:12.5px; }
+  .caps label { display:flex; align-items:center; gap:8px; font-weight:400; margin:6px 0; }
+  .caps .na { color:var(--muted); }
+  .row2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  #cfgpreview { display:flex; flex-direction:column; min-width:0; }
+  #cfgpreview .ptitle { padding:10px 16px; border-bottom:1px solid var(--edge); font-weight:600; font-size:14px; display:flex; gap:10px; align-items:center; }
+  #plog { flex:1; overflow:auto; padding:18px; display:flex; flex-direction:column; gap:14px; }
+  #plog .empty { margin:auto; }
+  #pform { display:flex; gap:8px; padding:12px 16px; border-top:1px solid var(--edge); }
+  #pform input { flex:1; padding:10px 14px; border:1px solid var(--edge); border-radius:20px; background:var(--bg); color:var(--text); font:inherit; }
+  .btnrow { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .btn { padding:8px 14px; border:1px solid var(--edge); border-radius:10px; background:var(--bg); color:var(--text); cursor:pointer; font:inherit; font-size:13.5px; }
+  .btn.primary { background:var(--text); color:var(--bg); border-color:var(--text); }
+  .btn:disabled { opacity:.5; cursor:default; }
+  #cfgmsg { font-size:13px; color:var(--muted); }
+  @media (max-width: 900px) { #cfg { grid-template-columns:1fr; grid-template-rows:auto 1fr 1fr; } #cfgform { border-right:0; border-bottom:1px solid var(--edge); } }
+
   @media (max-width: 760px) {
     .app { grid-template-columns:1fr; }
     aside { position:fixed; inset:0 30% 0 0; z-index:20; transform:translateX(-100%); transition:transform .2s; box-shadow:0 0 40px rgba(0,0,0,.3); }
@@ -156,6 +187,7 @@
   <aside id="side">
     <div class="brand"><span id="brand">The Bot You Own</span><button class="iconbtn" id="theme" title="Toggle theme">◐</button></div>
     <button class="newchat" id="newchat">＋ New chat</button>
+    <button class="newchat" id="newbot" hidden>✎ New bot</button>
     <div class="section">Projects</div>
     <div class="list" id="projects"></div>
     <div class="section">Chats</div>
@@ -171,8 +203,27 @@
       <span class="pill" id="modepill"></span>
       <span class="spacer"></span>
       <span class="pill" id="modelpill"></span>
+      <button class="iconbtn" id="cfgbtn" title="Configure this bot (admin)" disabled>✎ Configure</button>
       <button class="iconbtn" id="hoodbtn" title="Under the hood (admin)" disabled>⚙ Under the hood</button>
     </header>
+    <section id="cfg" aria-label="Configure">
+      <header>
+        <button class="iconbtn" id="cfgback">‹ Back</button>
+        <h1 id="cfgtitle">Configure</h1>
+        <span class="pill" id="cfgsource"></span>
+        <span class="spacer"></span>
+        <span id="cfgmsg"></span>
+        <button class="btn" id="cfgexport">Export files</button>
+        <button class="btn" id="cfgdelete" hidden>Remove saved copy</button>
+        <button class="btn primary" id="cfgsave">Save</button>
+      </header>
+      <div id="cfgform"></div>
+      <div id="cfgpreview">
+        <div class="ptitle">Preview <span class="pill">talks to your unsaved draft</span><span class="spacer"></span><span class="pill" id="pmodel"></span></div>
+        <div id="plog"><div class="empty"><p style="color:var(--muted)">Change something on the left, then ask it a question here.</p></div></div>
+        <form id="pform" autocomplete="off"><input id="pinput" placeholder="Try your bot…" /><button class="send" type="submit">↑</button></form>
+      </div>
+    </section>
     <aside id="hood">
       <header><h1>Under the hood</h1><span class="pill" id="hoodproj"></span><span class="spacer"></span><button class="iconbtn" id="hoodclose">✕</button></header>
       <div class="tabs" id="hoodtabs">
@@ -272,6 +323,9 @@ function boot() { fetch('/api/config', { headers: authHeaders() }).then((r) => r
   if (cfg.accent) document.documentElement.style.setProperty('--accent', cfg.accent);
   $('modelpill').textContent = (cfg.model || '').replace(/^@cf\//, '');
   $('hoodbtn').disabled = !cfg.adminEnabled; $('hoodbtn').classList.toggle('off', !cfg.adminEnabled);
+  $('cfgbtn').disabled = !cfg.adminEnabled; $('cfgbtn').classList.toggle('off', !cfg.adminEnabled);
+  $('newbot').hidden = !(cfg.adminEnabled && ADMIN);
+  $('newbot').onclick = () => openConfigure('new-bot').then(() => { draft = { id: 'new-bot', name: '', tagline: '', greeting: 'Hi — ask me anything.', starters: [], mode: 'answer', grounding: 'strict', handoffText: "I don't have a solid answer for that one, and I'd rather not guess.", handoffContact: '', allowedLinks: [], thinkingWords: [], instructions: '', files: {} }; $('cfgsource').textContent = 'new'; $('cfgdelete').hidden = true; renderConfigForm(); });
   const v = cfg.version || {}; const built = v.builtAt ? new Date(v.builtAt).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '';
   $('foot').innerHTML = 'Run by <b>' + esc(cfg.owner || '') + '</b><br>' + esc(cfg.provider || '') + ' · your account, your bill<br><span title="' + esc(built) + '">v' + esc(v.version || '?') + (v.commit ? ' · ' + esc(v.commit) : '') + (built ? ' · ' + esc(built) : '') + '</span>';
   const want = qs.get('project') || cfg.defaultProject;
@@ -457,7 +511,7 @@ $('adminform').addEventListener('submit', async (e) => {
     if (!r.ok || !d.token) { $('adminmsg').textContent = r.status === 429 ? 'Too many attempts. Wait a minute.' : 'Wrong admin code.'; return; }
     ADMIN = d.token; try { localStorage.setItem('byo:admin', ADMIN); } catch {}
     $('signout').hidden = false; if (!VISITOR) $('whoami').textContent = 'admin';
-    $('adminlock').classList.remove('show'); openHood();
+    $('adminlock').classList.remove('show'); const next = pendingAfterAdmin || openHood; pendingAfterAdmin = null; next();
   } catch { $('adminmsg').textContent = 'Could not reach the server. Try again.'; }
   finally { btn.disabled = false; btn.textContent = 'Open'; }
 });
@@ -496,6 +550,108 @@ function renderHood() {
   if (hoodTab === 'audit') { renderAudit(); return; }
   if (hoodTab === 'source') { box.innerHTML = '<h4>Engine source (snapshot taken at deploy)</h4><select id="srcsel">' + (d.sources || []).map((n) => '<option>' + esc(n) + '</option>').join('') + '</select><div id="srcbox"></div>'; const load = async () => { const n = $('srcsel').value; $('srcbox').innerHTML = '<p class="thinking"><span>Loading ' + esc(n) + '</span></p>'; try { const t = await (await fetch('/api/admin/source?name=' + encodeURIComponent(n), { headers: { 'x-admin-token': ADMIN } })).text(); $('srcbox').innerHTML = pre(t); } catch { $('srcbox').innerHTML = '<p style="color:var(--danger)">Could not load ' + esc(n) + '.</p>'; } }; $('srcsel').onchange = load; load(); }
 }
+
+// ---- Configure: the ChatGPT-builder screen. Form on the left, live preview on the right. ----
+let draft = null, cfgMeta = null, previewMsgs = [];
+$('cfgbtn').onclick = () => { if (!ADMIN) { $('adminlock').classList.add('show'); $('adminpass').focus(); pendingAfterAdmin = openConfigure; return; } openConfigure(); };
+let pendingAfterAdmin = null;
+$('cfgback').onclick = () => { $('cfg').classList.remove('show'); boot(); };
+async function openConfigure(id) {
+  const pid = id || state.project?.id;
+  $('cfg').classList.add('show'); $('cfgform').innerHTML = '<p class="thinking"><span>Loading</span></p>'; $('cfgmsg').textContent = '';
+  const [m, r] = await Promise.all([
+    fetch('/api/admin/projects', { headers: { 'x-admin-token': ADMIN } }).then((x) => x.json()),
+    fetch('/api/admin/project?id=' + encodeURIComponent(pid), { headers: { 'x-admin-token': ADMIN } }).then((x) => x.json()),
+  ]);
+  cfgMeta = m; draft = { ...r.project, id: pid, files: { ...(r.project.files || {}) } };
+  $('cfgsource').textContent = r.source === 'saved' ? 'saved copy (overrides the folder)' : r.source === 'folder' ? 'from the folder' : 'new';
+  $('cfgdelete').hidden = r.source !== 'saved'; $('pmodel').textContent = (m.model || '').replace(/^@cf\//, '');
+  $('cfgsave').disabled = !m.canSave; if (!m.canSave) $('cfgmsg').textContent = 'No database bound: Export instead of Save.';
+  previewMsgs = []; renderPreview(); renderConfigForm();
+}
+function field(label, hint, inner, file) { return '<label>' + label + (file ? ' <code style="font-weight:400;font-size:11.5px;margin-left:6px">' + esc(file) + '</code>' : '') + (hint ? '<small>' + hint + '</small>' : '') + '</label>' + inner; }
+function renderConfigForm() {
+  const d = draft; const m = cfgMeta;
+  const jobs = (m.jobs || []).map((j) => '<option value="' + esc(j.id) + '"' + (d.mode === j.id ? ' selected' : '') + '>' + esc(j.id) + ' — ' + esc(j.blurb) + '</option>').join('');
+  $('cfgtitle').textContent = d.name || 'New bot';
+  $('cfgform').innerHTML =
+    '<p style="color:var(--muted);font-size:13px;margin:6px 0 0">This form <b>is</b> the folder <code>projects/' + esc(d.id) + '/</code>. Each section names the file it lives in; Export gives you exactly those files.</p>' +
+    field('Name', '', '<input type="text" id="f_name" value="' + esc(d.name || '') + '" placeholder="Name your bot" />', 'project.json → name') +
+    field('Description', 'One line under the name in the sidebar.', '<input type="text" id="f_tagline" value="' + esc(d.tagline || '') + '" placeholder="Add a short description about what this bot does" />', 'project.json → tagline') +
+    field('Instructions', 'What does this bot do? How does it behave? What should it avoid doing? Conversations can potentially reveal part or all of this — the firewall makes that hard, not impossible.', '<textarea id="f_instructions" class="big" placeholder="What does this bot do? How does it behave? What should it avoid doing?">' + esc(d.instructions || '') + '</textarea>', 'instructions.md') +
+    field('Greeting', 'The first line people see.', '<input type="text" id="f_greeting" value="' + esc(d.greeting || '') + '" />', 'project.json → greeting') +
+    field('Conversation starters', 'Up to four.', '<div class="starters-edit">' + [0, 1, 2, 3].map((i) => '<input type="text" data-starter="' + i + '" value="' + esc((d.starters || [])[i] || '') + '" placeholder="Starter ' + (i + 1) + '" />').join('') + '</div>', 'project.json → starters') +
+    field('Knowledge', 'Conversations can reveal part or all of these files. Text only (.md .txt .csv). Everything the bot may state as fact.', '<div id="kfiles">' + Object.entries(d.files || {}).map(([n, t], i) => kfileHtml(n, t, i)).join('') + '</div><div class="btnrow"><input type="file" id="f_upload" accept=".md,.txt,.csv,text/plain,text/markdown,text/csv" multiple hidden /><button type="button" class="btn" id="f_uploadbtn">Upload files</button><button type="button" class="btn" id="f_newfile">Write a new file</button></div>', 'knowledge/') +
+    '<div class="row2">' +
+    field('Job', 'One bot, one job. The role and shape come from prompt/jobs/&lt;job&gt;.md.', '<select id="f_mode">' + jobs + '</select>', 'project.json → mode') +
+    field('What it may say', '', '<select id="f_grounding"><option value="strict"' + (d.grounding !== 'open' ? ' selected' : '') + '>Only what\'s in the files (strict)</option><option value="open"' + (d.grounding === 'open' ? ' selected' : '') + '>Anything, files first (open, ChatGPT-style)</option></select>') +
+    '</div>' +
+    field('When it can\'t help', 'Said word for word. Put the phone number or email here.', '<input type="text" id="f_handoffText" value="' + esc(d.handoffText || '') + '" placeholder="I don\'t have that written down, and I\'d rather not guess." /><div style="height:6px"></div><input type="text" id="f_handoffContact" value="' + esc(d.handoffContact || '') + '" placeholder="Email hello@example.com and a human will pick it up." />') +
+    field('Links it may share', 'One per line. Anything else is removed from answers, in code.', '<textarea id="f_links" placeholder="https://example.com">' + esc((d.allowedLinks || []).join('\n')) + '</textarea>', 'project.json → allowedLinks') +
+    field('Thinking words', 'What the page says while it waits. One per line; blank = the global list.', '<textarea id="f_thinking" style="min-height:70px">' + esc((d.thinkingWords || []).join('\n')) + '</textarea>', 'project.json → thinkingWords') +
+    field('This bot\'s own voice and rules', 'Every bot shares the root <code>prompt/</code> files. Tick one to give this bot its own copy — the folder-wins rule. Leave unticked to stay with the shared text.', '<div id="povr">' + Object.entries(m.rootPrompt || {}).map(([n, root]) => { const own = (d.prompt || {})[n]; return '<div class="kfile"><div class="kh"><label style="margin:0;display:flex;gap:8px;align-items:center;font-weight:500"><input type="checkbox" data-povr="' + esc(n) + '"' + (own != null ? ' checked' : '') + ' /> ' + esc(n) + '</label><span style="color:var(--muted);font-size:12px">' + (own != null ? 'this bot\'s copy' : 'shared') + '</span></div><textarea data-pbody="' + esc(n) + '"' + (own != null ? '' : ' hidden') + '>' + esc(own != null ? own : root.replace(/<!--[\s\S]*?-->/g, '').trim()) + '</textarea></div>'; }).join('') + '</div>', 'prompt/ (overrides)') +
+    field('Recommended model', 'Set for the whole deployment in config.js.', '<input type="text" value="' + esc(m.model || '') + '" disabled />') +
+    field('Capabilities', 'What ChatGPT offers here, and what this bot has.', '<div class="caps"><label><input type="checkbox" disabled /> <span class="na">Web search — not in this bot</span></label><label><input type="checkbox" disabled /> <span class="na">Image generation — not in this bot</span></label><label><input type="checkbox" disabled /> <span class="na">Code interpreter &amp; data analysis — not in this bot</span></label><label><input type="checkbox" checked disabled /> Firewall: injection screen, link allowlist, leak check (always on)</label><label><input type="checkbox" checked disabled /> Audit log of every turn (when a database is bound)</label></div>') +
+    field('Actions', '', '<p style="color:var(--muted);margin:0">Not available. API calls are rebuilt deliberately, in code, if you need them.</p>');
+  $('f_uploadbtn').onclick = () => $('f_upload').click();
+  $('f_upload').onchange = async (e) => { for (const f of e.target.files) { const t = await f.text(); draft.files[f.name.replace(/[^\w. -]/g, '_')] = t; } renderConfigForm(); syncDraft(); };
+  $('f_newfile').onclick = () => { let n = 'notes.md', i = 2; while (draft.files[n]) n = 'notes-' + (i++) + '.md'; draft.files[n] = ''; renderConfigForm(); };
+  $('kfiles').addEventListener('click', (e) => { const b = e.target.closest('button[data-del]'); if (b) { delete draft.files[b.dataset.del]; renderConfigForm(); syncDraft(); } });
+  $('povr').addEventListener('change', (e) => { const c = e.target.closest('input[data-povr]'); if (!c) return; const ta = document.querySelector('textarea[data-pbody="' + CSS.escape(c.dataset.povr) + '"]'); ta.hidden = !c.checked; c.closest('.kh').querySelector('span').textContent = c.checked ? "this bot's copy" : 'shared'; syncDraft(); });
+  $('cfgform').addEventListener('input', syncDraft);
+}
+function kfileHtml(n, t, i) { return '<div class="kfile"><div class="kh"><input type="text" data-kname="' + esc(n) + '" value="' + esc(n) + '" /><span style="color:var(--muted);font-size:12px">' + t.length + ' chars</span><button type="button" class="iconbtn" data-del="' + esc(n) + '" title="Remove">✕</button></div><textarea data-kbody="' + esc(n) + '">' + esc(t) + '</textarea></div>'; }
+function syncDraft() {
+  const v = (id) => ($(id) ? $(id).value : '');
+  draft.name = v('f_name'); draft.tagline = v('f_tagline'); draft.instructions = v('f_instructions'); draft.greeting = v('f_greeting');
+  draft.starters = [...document.querySelectorAll('[data-starter]')].map((x) => x.value.trim()).filter(Boolean);
+  draft.mode = v('f_mode'); draft.grounding = v('f_grounding'); draft.handoffText = v('f_handoffText'); draft.handoffContact = v('f_handoffContact');
+  draft.allowedLinks = v('f_links').split('\n').map((x) => x.trim()).filter(Boolean);
+  draft.thinkingWords = v('f_thinking').split('\n').map((x) => x.trim()).filter(Boolean);
+  const files = {}; document.querySelectorAll('#kfiles .kfile').forEach((k) => { const n = k.querySelector('[data-kname]').value.trim() || 'file.md'; files[n] = k.querySelector('[data-kbody]').value; }); draft.files = files;
+  const prompt = {}; document.querySelectorAll('input[data-povr]').forEach((c) => { if (c.checked) prompt[c.dataset.povr] = document.querySelector('textarea[data-pbody="' + CSS.escape(c.dataset.povr) + '"]').value; }); draft.prompt = prompt;
+  $('cfgtitle').textContent = draft.name || 'New bot';
+}
+$('cfgsave').onclick = async () => {
+  syncDraft(); const id = (draft.name || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || draft.id;
+  $('cfgsave').disabled = true; $('cfgmsg').textContent = 'Saving…';
+  try {
+    const r = await fetch('/api/admin/project?id=' + encodeURIComponent(id), { method: 'PUT', headers: { 'content-type': 'application/json', 'x-admin-token': ADMIN }, body: JSON.stringify({ ...draft, id }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || r.status);
+    draft.id = d.id; $('cfgmsg').textContent = 'Saved. Live now as projects/' + d.id + ' (saved copy).'; $('cfgsource').textContent = 'saved copy (overrides the folder)'; $('cfgdelete').hidden = false;
+  } catch (err) { $('cfgmsg').textContent = 'Not saved: ' + err.message; } finally { $('cfgsave').disabled = false; }
+};
+$('cfgdelete').onclick = async () => {
+  $('cfgmsg').textContent = 'Removing…';
+  const r = await fetch('/api/admin/project?id=' + encodeURIComponent(draft.id), { method: 'DELETE', headers: { 'x-admin-token': ADMIN } }); const d = await r.json();
+  $('cfgmsg').textContent = d.fallsBackToFolder ? 'Removed. The folder version is live again.' : 'Removed.'; $('cfgdelete').hidden = true; $('cfgsource').textContent = d.fallsBackToFolder ? 'from the folder' : 'new';
+};
+$('cfgexport').onclick = () => {
+  syncDraft(); const id = (draft.name || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || draft.id;
+  const { instructions, files, prompt, id: _i, ...meta } = draft;
+  const out = { ['projects/' + id + '/project.json']: JSON.stringify(meta, null, 2) + '\n', ['projects/' + id + '/instructions.md']: (instructions || '') + '\n' };
+  for (const [n, t] of Object.entries(files || {})) out['projects/' + id + '/knowledge/' + n] = t + '\n';
+  for (const [n, t] of Object.entries(prompt || {})) out['projects/' + id + '/prompt/' + n] = t + '\n';
+  $('plog').innerHTML = '<div><h4 style="margin:0 0 8px">Files to put in GitHub — the folder is the version you own</h4>' + Object.entries(out).map(([n, t]) => '<div style="margin:10px 0"><div style="display:flex;justify-content:space-between;align-items:center"><code>' + esc(n) + '</code><button class="btn" data-copy="' + esc(n) + '">Copy</button></div><pre style="white-space:pre-wrap;background:var(--code);border:1px solid var(--edge);border-radius:8px;padding:10px;font-size:12px;max-height:220px;overflow:auto">' + esc(t) + '</pre></div>').join('') + '</div>';
+  $('plog').onclick = (e) => { const b = e.target.closest('button[data-copy]'); if (!b) return; navigator.clipboard?.writeText(out[b.dataset.copy]); b.textContent = 'Copied'; setTimeout(() => (b.textContent = 'Copy'), 1200); };
+};
+function renderPreview() {
+  const log = $('plog'); log.innerHTML = '';
+  if (!previewMsgs.length) { log.innerHTML = '<div class="empty"><p style="color:var(--muted)">Change something on the left, then ask it a question here. Nothing is saved until you press Save.</p></div>'; return; }
+  for (const m of previewMsgs) { const el = document.createElement('div'); el.className = 'msg ' + (m.role === 'user' ? 'user' : 'bot'); const body = document.createElement('div'); body.className = 'body'; if (m.role === 'user') body.textContent = m.content; else { el.innerHTML = '<div class="avatar">' + esc((draft.name || 'A')[0]) + '</div>'; body.innerHTML = md(m.content); } el.appendChild(body); if (m.flags?.length) el.appendChild(flagRow(m.flags)); log.appendChild(el); }
+  log.scrollTop = log.scrollHeight;
+}
+$('pform').addEventListener('submit', async (e) => {
+  e.preventDefault(); const text = $('pinput').value.trim(); if (!text) return; $('pinput').value = ''; syncDraft();
+  previewMsgs.push({ role: 'user', content: text }); previewMsgs.push({ role: 'assistant', content: '', flags: [] }); renderPreview();
+  const holder = $('plog').lastElementChild.querySelector('.body'); holder.className = 'body thinking'; holder.innerHTML = '<span>' + esc((draft.thinkingWords?.[0]) || (state.cfg?.thinkingWords?.[0]) || 'Thinking') + '</span>';
+  try {
+    const res = await fetch('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-token': ADMIN }, body: JSON.stringify({ draft, messages: previewMsgs.filter((m) => m.content || m.role === 'user').map(({ role, content }) => ({ role, content })), stream: false }) });
+    const d = await res.json(); const last = previewMsgs[previewMsgs.length - 1]; last.content = d.reply || d.error || 'Something went wrong.'; last.flags = d.flags || [];
+  } catch { previewMsgs[previewMsgs.length - 1].content = 'Something went wrong.'; }
+  renderPreview();
+});
 
 // ---- Audit tab: the D1 log, filtered ----
 let auditFilter = 'all', auditScope = 'this';

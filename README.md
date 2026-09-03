@@ -84,6 +84,27 @@ One script tag. Inline or bubble. See `https://YOUR-BOT-URL/embed-example`.
 
 ---
 
+## Building a bot the ChatGPT way (no files at all)
+With the admin code, **✎ Configure** opens the same screen ChatGPT's GPT builder
+has: Name, Description, Instructions, Conversation starters, Knowledge (Upload
+files), Capabilities — with a live **Preview** chat on the right that talks to
+your unsaved draft. **Save** stores it in your bot's database and it is live at
+once. **Export files** shows the folder to put in GitHub when you want the
+version you own in the repo. A saved copy overrides the folder with the same
+name; remove it and the folder is live again. **✎ New bot** in the sidebar starts
+a blank one.
+
+| ChatGPT's builder | Here |
+|---|---|
+| Name · Description · Instructions · Conversation starters | the same fields |
+| Knowledge → Upload files | Upload files (text: .md .txt .csv) or write one in place |
+| Recommended model | one model for the deployment, in `config.js` |
+| Capabilities: web search, images, code interpreter | not in this bot — shown unticked so nobody has to guess |
+| Actions | not in this bot |
+| Create tab (describe it and the builder writes it) | not yet |
+| Preview | the right-hand pane |
+| — | Job, strict/open grounding, the handoff line, allowed links, thinking words: the things ChatGPT doesn't let you set |
+
 ## Coming from ChatGPT?
 **Read `MIGRATE.md`.** A custom GPT or a Project moves across in about ten minutes:
 paste Instructions into one file, files into a folder, flip one switch.

@@ -7,6 +7,12 @@ upload to GPTs can be pulled back out by anyone who asks the right way.
 
 This takes what you built and puts it somewhere you own. **About ten minutes.**
 
+## The fast way: the Configure screen
+Open your bot with the admin code → **✎ New bot**. It's the same form as ChatGPT's
+builder: paste the Instructions, paste or upload the files, add the starters, try
+it in the Preview, press Save. Done, and live. Press **Export files** when you want
+the folder version in GitHub. The five steps below are the file-based route.
+
 ## The five steps
 1. **Copy the Instructions.** ChatGPT → your GPT (Edit → Configure) or your
    Project (Project settings → Instructions). Select all, copy. Paste into
