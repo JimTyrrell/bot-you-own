@@ -49,6 +49,7 @@ export default {
     if (url.pathname.startsWith("/api/admin/") || url.pathname.startsWith("/engine/")) {
       if (!isAdmin) return json({ error: "admin only" }, adminEnabled ? 401 : 404);
       if (url.pathname === "/api/admin/engine") return json(await engineView(env, url.searchParams.get("project")));
+      if (url.pathname === "/api/admin/audit") return json(await auditView(env, url.searchParams));
       if (url.pathname === "/api/admin/source") {
         const name = String(url.searchParams.get("name") || "");
         const res = await env.ASSETS.fetch(new Request(`${url.origin}/engine/${name.replace(/\//g, "__")}.txt`));
@@ -264,12 +265,46 @@ async function logTurn(env, project, question, answer, flags, who = "") {
   console.log(JSON.stringify({ event: "turn", project: project.name, who, refused, flags, asked: redact(question).slice(0, 200) }));
   if (!env.DB) return;
   try {
+    await ensureSchema(env);
     await env.DB.prepare(
       `INSERT INTO conversations (project, visitor, asked, answered, refused, flags, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
     ).bind(project.name, who, redact(question), redact(answer), refused ? 1 : 0, flags.join(","), new Date().toISOString()).run();
   } catch (err) {
     console.error("log failed (continuing)", err);
   }
+}
+
+// The audit table creates itself the first time it's needed (no schema step for
+// attendees). Same DDL as schema.sql, kept in one place here.
+let SCHEMA_OK = false;
+async function ensureSchema(env) {
+  if (SCHEMA_OK || !env.DB) return;
+  await env.DB.batch([
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS conversations (id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT, visitor TEXT, asked TEXT, answered TEXT, refused INTEGER DEFAULT 0, flags TEXT, created_at TEXT NOT NULL)`),
+    env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_conv_created ON conversations(created_at)`),
+    env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_conv_refused ON conversations(refused)`),
+  ]);
+  SCHEMA_OK = true;
+}
+
+// Under the hood → Audit. Who asked what, what the bot said, what the firewall did.
+async function auditView(env, q) {
+  if (!env.DB) return { enabled: false, reason: "No D1 database is bound (wrangler.jsonc → d1_databases). Turns still go to Workers Logs." };
+  await ensureSchema(env);
+  const project = String(q.get("project") || "");
+  const filter = String(q.get("filter") || "all");           // all | refused | flagged | visitor:<email>
+  const limit = Math.min(Math.max(parseInt(q.get("limit") || "50", 10) || 50, 1), 200);
+  const where = []; const args = [];
+  if (project && project !== "*") { const meta = getProject(project, CONFIG.defaultProject); where.push("project = ?"); args.push(meta.name); }
+  if (filter === "refused") where.push("refused = 1");
+  if (filter === "flagged") where.push("flags != ''");
+  if (filter.startsWith("visitor:")) { where.push("visitor = ?"); args.push(filter.slice(8).toLowerCase()); }
+  const W = where.length ? "WHERE " + where.join(" AND ") : "";
+  const rows = (await env.DB.prepare(`SELECT id, project, visitor, asked, answered, refused, flags, created_at FROM conversations ${W} ORDER BY id DESC LIMIT ?`).bind(...args, limit).all()).results || [];
+  const since = new Date(Date.now() - 7 * 86400000).toISOString();
+  const stats = (await env.DB.prepare(`SELECT COUNT(*) turns, SUM(refused) refused, SUM(CASE WHEN flags != '' THEN 1 ELSE 0 END) flagged, COUNT(DISTINCT visitor) visitors FROM conversations WHERE created_at >= ?`).bind(since).first()) || {};
+  const top = (await env.DB.prepare(`SELECT asked, COUNT(*) n FROM conversations WHERE refused = 1 AND created_at >= ? GROUP BY asked ORDER BY n DESC LIMIT 10`).bind(since).all()).results || [];
+  return { enabled: true, rows, stats: { ...stats, since }, topRefused: top, note: "Emails, phone numbers and dates inside questions and answers are redacted before storage. Names are not. The visitor column is kept on purpose in email mode." };
 }
 
 // The version stamp written by scripts/snapshot-src.mjs at build time.
@@ -302,7 +337,7 @@ async function engineView(env, projectId) {
       injectionPatterns: INJECTION_PATTERNS.map(String),
       secretPatterns: SECRET_PATTERNS.map(String),
       llamaGuardModel: LLAMA_GUARD_MODEL,
-      logging: env.DB ? "on (D1 bound)" : "off (no D1 binding)",
+      logging: env.DB ? "on (D1 bound) — see the Audit tab" : "off (no D1 binding; Workers Logs only)",
       flags: {
         "injection-blocked": "matched an injection pattern; model never called",
         "invisible-text-stripped": "zero-width / bidi characters removed",

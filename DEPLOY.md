@@ -74,11 +74,10 @@ then in `config.js`: `provider: "openai", model: "gpt-4.1-mini"` or
 `provider: "anthropic", model: "claude-opus-5"`. Set `gateway.accountId` too if you
 want those calls to go through AI Gateway (recommended: the spend cap applies).
 
-## F. Logging what people ask (optional)
-```bash
-npx wrangler d1 create bot-you-own-logs
-# paste the id into wrangler.jsonc (uncomment d1_databases), then:
-npx wrangler d1 execute bot-you-own-logs --remote --file=./schema.sql
-```
-Read it with the two queries in `CUSTOMIZE.md`. Personal info is stripped before
-storage (emails, phones, dates — not names; nothing pattern-based catches names).
+## F. The audit log (on by default)
+`wrangler.jsonc` binds a D1 database called `bot-you-own-logs`. The Deploy button
+creates one in the attendee's account; from the terminal, `npx wrangler d1 create
+bot-you-own-logs` once and paste the id. No schema step: the Worker runs
+`CREATE TABLE IF NOT EXISTS` on first use. Read it under the hood → Audit, or with
+the queries in `CUSTOMIZE.md`. Personal info is stripped before storage (emails,
+phones, dates — not names). Remove the binding to log only to Workers Logs.

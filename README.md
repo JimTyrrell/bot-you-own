@@ -131,6 +131,15 @@ means, the model and gateway settings, the version stamp, and the engine's sourc
 files themselves. Visitors with the ordinary passphrase never see any of it.
 This is the workshop's "open the bonnet" moment: nothing is hidden from the owner.
 
+## The audit log (what people actually asked)
+Every turn is written to a small database in your account: time, project, who
+(in email mode), the question, the answer, whether it was refused, and what the
+firewall did. The Worker creates the table itself; the Deploy button provisions
+the database. Read it under the hood → **Audit** (filters: refused, flagged, this
+project / all) or with the SQL in `CUSTOMIZE.md`. Emails, phone numbers and dates
+inside questions and answers are redacted before storage; names are not. The
+most-refused questions are the pages your business hasn't written yet.
+
 ## Version
 `VERSION` holds the number you bump (`2.1.0`). Every dev run and deploy stamps
 `version.json` with that number, the build time and the git commit; it shows in the

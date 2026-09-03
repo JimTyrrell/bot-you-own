@@ -176,7 +176,7 @@
     <aside id="hood">
       <header><h1>Under the hood</h1><span class="pill" id="hoodproj"></span><span class="spacer"></span><button class="iconbtn" id="hoodclose">✕</button></header>
       <div class="tabs" id="hoodtabs">
-        <button data-tab="prompt" class="on">Prompt</button><button data-tab="files">Files</button><button data-tab="firewall">Firewall</button><button data-tab="gateway">Gateway &amp; model</button><button data-tab="source">Source</button>
+        <button data-tab="prompt" class="on">Prompt</button><button data-tab="files">Files</button><button data-tab="firewall">Firewall</button><button data-tab="gateway">Gateway &amp; model</button><button data-tab="audit">Audit</button><button data-tab="source">Source</button>
       </div>
       <div id="hoodbody"></div>
     </aside>
@@ -493,7 +493,33 @@ function renderHood() {
   if (hoodTab === 'files') box.innerHTML = '<h4>instructions.md</h4>' + pre(d.project.instructions || '(none)') + Object.entries(d.files || {}).map(([n, t]) => '<h4>knowledge/' + esc(n) + ' · ' + t.length + ' chars</h4>' + pre(t)).join('') + '<h4>project.json</h4>' + pre(JSON.stringify({ ...d.project, instructions: undefined }, null, 2));
   if (hoodTab === 'firewall') { const f = d.firewall; box.innerHTML = '<h4>Switches (config.js → firewall)</h4>' + pre(JSON.stringify(f.config, null, 2)) + '<div class="kv"><b>Door</b><span>' + esc(f.door) + '</span><b>Rate limit</b><span>' + esc(f.rateLimit) + '</span><b>Logging</b><span>' + esc(f.logging) + '</span><b>Llama Guard model</b><span>' + esc(f.llamaGuardModel) + '</span></div><h4>Injection patterns (' + f.injectionPatterns.length + ') — a hit never reaches the model</h4>' + pre(f.injectionPatterns.join('\n')) + '<h4>Secret shapes</h4>' + pre(f.secretPatterns.join('\n')) + '<h4>What the chips mean</h4><div class="kv">' + Object.entries(f.flags).map(([k, v]) => '<b>' + esc(k) + '</b><span>' + esc(v) + '</span>').join('') + '</div>'; }
   if (hoodTab === 'gateway') box.innerHTML = '<h4>Version</h4>' + pre(JSON.stringify(d.version, null, 2)) + '<h4>Provider &amp; model</h4>' + pre(JSON.stringify(d.gateway, null, 2)) + '<p style="color:var(--muted)">gateway.id empty = calls go straight to the model. Set it to route through Cloudflare AI Gateway: spend cap, logs, caching, edge Guardrails. See DEPLOY.md.</p>';
+  if (hoodTab === 'audit') { renderAudit(); return; }
   if (hoodTab === 'source') { box.innerHTML = '<h4>Engine source (snapshot taken at deploy)</h4><select id="srcsel">' + (d.sources || []).map((n) => '<option>' + esc(n) + '</option>').join('') + '</select><div id="srcbox"></div>'; const load = async () => { const n = $('srcsel').value; $('srcbox').innerHTML = '<p class="thinking"><span>Loading ' + esc(n) + '</span></p>'; try { const t = await (await fetch('/api/admin/source?name=' + encodeURIComponent(n), { headers: { 'x-admin-token': ADMIN } })).text(); $('srcbox').innerHTML = pre(t); } catch { $('srcbox').innerHTML = '<p style="color:var(--danger)">Could not load ' + esc(n) + '.</p>'; } }; $('srcsel').onchange = load; load(); }
+}
+
+// ---- Audit tab: the D1 log, filtered ----
+let auditFilter = 'all', auditScope = 'this';
+async function renderAudit() {
+  const box = $('hoodbody');
+  box.innerHTML = '<h4>Audit log</h4><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="auditbar">'
+    + ['all', 'refused', 'flagged'].map((f) => '<button class="iconbtn' + (auditFilter === f ? ' on' : '') + '" data-f="' + f + '"' + (auditFilter === f ? ' style="background:var(--panel)"' : '') + '>' + f + '</button>').join('')
+    + '<span class="spacer"></span><button class="iconbtn" data-s="this"' + (auditScope === 'this' ? ' style="background:var(--panel)"' : '') + '>this project</button><button class="iconbtn" data-s="all"' + (auditScope === 'all' ? ' style="background:var(--panel)"' : '') + '>all projects</button></div>'
+    + '<p class="thinking"><span>Reading the log</span></p>';
+  $('auditbar').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.f) auditFilter = b.dataset.f; if (b.dataset.s) auditScope = b.dataset.s; renderAudit(); };
+  try {
+    const r = await fetch('/api/admin/audit?project=' + encodeURIComponent(auditScope === 'all' ? '*' : state.project.id) + '&filter=' + auditFilter + '&limit=100', { headers: { 'x-admin-token': ADMIN } });
+    const d = await r.json();
+    const body = box.querySelector('.thinking');
+    if (!d.enabled) { body.outerHTML = '<p style="color:var(--muted)">' + esc(d.reason) + '</p>'; return; }
+    const st = d.stats || {};
+    const when = (t) => { try { return new Date(t).toISOString().slice(0, 16).replace('T', ' '); } catch { return t; } };
+    let html = '<div class="kv" style="margin-bottom:12px"><b>Last 7 days</b><span>' + (st.turns || 0) + ' turns · ' + (st.refused || 0) + ' refused · ' + (st.flagged || 0) + ' flagged by the firewall · ' + (st.visitors || 0) + ' distinct visitors</span></div>';
+    if (d.topRefused?.length) html += '<h4>Most-refused questions (7 days) — each one is a page to write</h4><ol style="margin:0 0 12px;padding-left:20px">' + d.topRefused.map((t) => '<li>' + esc(t.asked) + ' <span style="color:var(--muted)">×' + t.n + '</span></li>').join('') + '</ol>';
+    html += '<h4>' + (d.rows.length ? d.rows.length + ' most recent' : 'No turns yet') + '</h4>';
+    html += '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">' + d.rows.map((row) => '<tr style="border-top:1px solid var(--edge);vertical-align:top"><td style="padding:6px 8px 6px 0;white-space:nowrap;color:var(--muted)">' + esc(when(row.created_at)) + '<br>' + esc(row.project) + (row.visitor ? '<br>' + esc(row.visitor) : '') + '</td><td style="padding:6px 0"><b>' + esc(row.asked) + '</b><br><span style="color:var(--muted)">' + esc(row.answered) + '</span>' + (row.flags ? '<br>' + row.flags.split(',').map((f) => '<span class="flag' + (/blocked|error/.test(f) ? ' hard' : '') + '">' + esc(FLAG_LABELS[f] || f) + '</span>').join(' ') : '') + (row.refused ? ' <span class="flag">refused / handed off</span>' : '') + '</td></tr>').join('') + '</table></div>';
+    html += '<p style="color:var(--muted);margin-top:12px">' + esc(d.note) + '</p>';
+    body.outerHTML = html;
+  } catch (err) { box.querySelector('.thinking').outerHTML = '<p style="color:var(--danger)">Could not read the log (' + esc(err.message) + ').</p>'; }
 }
 
 // Tiny markdown. Everything is HTML-escaped FIRST, so nothing the model writes can run.

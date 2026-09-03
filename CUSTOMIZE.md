@@ -44,8 +44,10 @@ Paid plan: create an AI Gateway and set a **spend limit** — `DEPLOY.md` §D.
 Budget *alerts* are informational and arrive a day late. Use limits for the ceiling.
 
 ## Read what your bot has been saying (audit log)
-Set up D1 per `DEPLOY.md` §F. Then:
+On by default (`DEPLOY.md` §F); the friendly view is under the hood → Audit. Raw SQL:
 ```sql
+-- Who asked, in email mode.
+SELECT visitor, COUNT(*) n FROM conversations WHERE visitor != '' GROUP BY visitor ORDER BY n DESC;
 -- What it could NOT answer. Every row is a page your website should have.
 SELECT asked, COUNT(*) n FROM conversations WHERE refused = 1 GROUP BY asked ORDER BY n DESC LIMIT 40;
 -- What it gets asked most. Your FAQ, written by your customers.
