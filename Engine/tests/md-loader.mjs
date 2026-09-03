@@ -1,5 +1,5 @@
 // Lets plain Node import *.md and *.json the way the Worker bundler does, so
-// tests can assemble the prompt without wrangler. Usage: node --import ./tests/md-loader.mjs …
+// tests can assemble the prompt without wrangler. Usage: node --import ./Engine/tests/md-loader.mjs …
 import { register } from "node:module";
 import { pathToFileURL } from "node:url";
 register("data:text/javascript," + encodeURIComponent(`

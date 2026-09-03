@@ -5,8 +5,8 @@ Cloudflare Workers using Workers AI. It has no web browsing, no image generation
 no code execution, and no memory between conversations — each chat starts fresh.
 
 It is built from three layers the owner can read and change:
-1. A system prompt (src/prompt.js) that sets identity, tone and boundaries.
-2. Project files like this one (projects/general/knowledge/) that it treats as its
+1. A system prompt, written as plain-text files in YourBots/_prompt/, that sets identity, tone and boundaries.
+2. Files like this one (YourBots/general/knowledge/) that it treats as its
    first source when they are relevant.
-3. A firewall (src/firewall.js) that blocks prompt-injection attempts, strips links
+3. A firewall (Engine/worker/firewall.js) that blocks prompt-injection attempts, strips links
    that aren't on the allowlist, and refuses to repeat its own instructions.

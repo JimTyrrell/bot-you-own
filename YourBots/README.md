@@ -48,7 +48,7 @@ PDFs and Word files can't be dropped in as-is: open them, copy the text into a
 
 **Giving one bot its own voice** = copy a file from the root `YourBots/_prompt/` folder into
 `YourBots/my-shop/prompt/` with the same name and edit it. Root is global, the
-bot's folder wins. Jobs cascade the same way: `YourBots/my-shop/YourBots/_prompt/jobs/answer.md`.
+bot's folder wins. Jobs cascade the same way: `YourBots/my-shop/prompt/jobs/answer.md`.
 
 ## The samples
 | Folder | Job | Grounding | What it's testing |

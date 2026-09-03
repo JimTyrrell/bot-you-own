@@ -353,7 +353,7 @@ async function resolveList(env) {
 function pickPublic(p) { return { name: p.name, tagline: p.tagline, greeting: p.greeting, starters: p.starters, mode: p.mode, grounding: p.grounding, thinkingWords: p.thinkingWords.length ? p.thinkingWords : undefined, order: p.order }; }
 
 // The audit table creates itself the first time it's needed (no schema step for
-// attendees). Same DDL as schema.sql, kept in one place here.
+// attendees). Engine/schema.sql is the same DDL, kept for reading; this is the source.
 let SCHEMA_OK = false;
 async function ensureSchema(env) {
   if (SCHEMA_OK || !env.DB) return;
