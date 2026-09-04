@@ -188,7 +188,7 @@ live?", the answer is in the footer.
 
 ## Where this stops being enough (honest version)
 - **Documents are fine now, up to a point.** Text files are bundled into the prompt; PDFs, Word, sheets, transcripts and screenshots go into the library (Cloudflare **AI Search**, wired in, scanned before they go in) — `docs/CUSTOMIZE.md → Give it documents`. Two hundred PDFs is fine. A website crawl or multi-tenant search is a different build.
-- **Browsing, images, code execution, file upload at runtime.** Not included. `docs/MIGRATE.md` says exactly what doesn't come across.
+- **Browsing, image generation, code execution.** Not included. `docs/MIGRATE.md` says exactly what doesn't come across. (A visitor *can* attach one file to a conversation — read for that chat, screened, never stored — `docs/CUSTOMIZE.md → Let visitors attach a file`.)
 - **Sign-in / private bots.** Rate limiting is what a public bot needs; access control is a different build.
 - **Regulated data.** Health, financial, legal — the requirements are paperwork, not code. Know that before you point a bot at them.
 

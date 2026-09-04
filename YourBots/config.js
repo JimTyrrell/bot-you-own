@@ -82,6 +82,23 @@ export const CONFIG = {
     scanWithModel: true,           // …and ask the model "would a business put this on its website?" (one small call)
   },
 
+  // ---- 6a'. VISITOR ATTACHMENTS: "here's my invoice, what does it say?" --------
+  // The paperclip next to the send button. A visitor attaches ONE file (PDF,
+  // Word, spreadsheet, text or an image) and the bot reads it for THAT
+  // conversation only. Nothing is stored on the server: the text is read out,
+  // checked, handed back to the visitor's browser and re-sent with each message
+  // while the chat lasts — exactly like the chat history. It never goes into
+  // the library and never becomes a fact about your business (strict grounding
+  // still refuses anything about you that isn't in your own files).
+  // Every attachment is screened: "ignore your instructions" inside a PDF is
+  // refused, and so is anything that looks like a card number or a key.
+  attachments: {
+    enabled: true,               // false hides the paperclip and switches the route off
+    max: 1,                      // files per conversation
+    maxBytes: 4 * 1024 * 1024,   // 4 MB, Cloudflare's converter limit
+    maxChars: 20000,             // the text is cut here (about 8 pages); the bot is told it was cut
+  },
+
   // ---- 6b. GITHUB (for "Commit to GitHub" on the Configure screen) --------------
   // The repo this bot deploys from. With the GITHUB_TOKEN secret set (a fine-grained
   // token with Contents: read & write on ONLY this repo), the Configure screen can
