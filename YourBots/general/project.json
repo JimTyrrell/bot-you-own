@@ -20,5 +20,10 @@
   "intakeQuestions": [],
   "bookingUrl": "",
   "bookingFitRules": "",
-  "nextSteps": []
+  "nextSteps": [],
+  "website": {
+    "url": "",
+    "include": [],
+    "exclude": []
+  }
 }

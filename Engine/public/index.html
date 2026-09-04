@@ -330,7 +330,7 @@ function boot() { fetch('/api/config', { headers: authHeaders() }).then((r) => r
   $('hoodbtn').disabled = !cfg.adminEnabled; $('hoodbtn').classList.toggle('off', !cfg.adminEnabled);
   $('cfgbtn').disabled = !cfg.adminEnabled; $('cfgbtn').classList.toggle('off', !cfg.adminEnabled);
   $('newbot').hidden = !(cfg.adminEnabled && ADMIN);
-  $('newbot').onclick = () => openConfigure('new-bot').then(() => { draft = { id: 'new-bot', name: '', tagline: '', greeting: 'Hi — ask me anything.', starters: [], mode: 'answer', grounding: 'strict', handoffText: "I don't have a solid answer for that one, and I'd rather not guess.", handoffContact: '', allowedLinks: [], thinkingWords: [], instructions: '', files: {} }; $('cfgsource').textContent = 'new'; $('cfgdelete').hidden = true; renderConfigForm(); });
+  $('newbot').onclick = () => openConfigure('new-bot').then(() => { draft = { id: 'new-bot', name: '', tagline: '', greeting: 'Hi — ask me anything.', starters: [], mode: 'answer', grounding: 'strict', handoffText: "I don't have a solid answer for that one, and I'd rather not guess.", handoffContact: '', allowedLinks: [], thinkingWords: [], website: { url: '', include: [], exclude: [] }, instructions: '', files: {} }; $('cfgsource').textContent = 'new'; $('cfgdelete').hidden = true; renderConfigForm(); });
   const v = cfg.version || {}; const built = v.builtAt ? new Date(v.builtAt).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '';
   $('foot').innerHTML = 'Run by <b>' + esc(cfg.owner || '') + '</b><br>' + esc(cfg.provider || '') + ' · your account, your bill<br><span title="' + esc(built) + '">v' + esc(v.version || '?') + (v.commit ? ' · ' + esc(v.commit) : '') + (built ? ' · ' + esc(built) : '') + '</span>';
   const want = qs.get('project') || cfg.defaultProject;
@@ -431,6 +431,7 @@ const FLAG_LABELS = {
   'rate-limited': '⏱ rate limited', 'model-error': '⚠ model error', 'gateway-blocked': '🛡 blocked at the gateway',
   'invisible-text-stripped': '👁 hidden characters removed', 'handoff-appended': '📇 contact added by the firewall', 'secret-detected': '🔑 looks like a secret was pasted',
   'library-used': '📚 answered with the document library',
+  'website-used': '🌐 answered from the website',
 };
 function flagRow(flags) {
   const row = document.createElement('div'); row.className = 'flags';
@@ -550,7 +551,7 @@ function renderHood() {
   [...$('hoodtabs').children].forEach((b) => b.classList.toggle('on', b.dataset.tab === hoodTab));
   const box = $('hoodbody'); const pre = (t) => '<pre>' + esc(t).replace(/&lt;(\/?[a-z_]+)&gt;/g, '<span class="tag-xml">&lt;$1&gt;</span>') + '</pre>';
   if (hoodTab === 'prompt') box.innerHTML = '<h4>Edit these plain-text files to change it</h4><p style="color:var(--muted);margin:0 0 10px">' + (d.promptFiles || []).map((f) => '<code>' + esc(f) + '</code>').join(' · ') + ' · and this project\'s <code>instructions.md</code></p><h4>The exact system prompt sent to the model for this project · ' + d.promptChars + ' chars ≈ ' + d.promptTokensApprox + ' tokens</h4>' + pre(d.prompt) + '<h4>Job (mode: ' + esc(d.project.mode) + ')</h4><div class="kv"><b>Role</b><span>' + esc(d.mode.role) + '</span><b>Done when</b><span>' + esc(d.mode.done) + '</span></div>';
-  if (hoodTab === 'files') box.innerHTML = '<h4>instructions.md</h4>' + pre(d.project.instructions || '(none)') + Object.entries(d.files || {}).map(([n, t]) => '<h4>knowledge/' + esc(n) + ' · ' + t.length + ' chars</h4>' + pre(t)).join('') + '<h4>The library (AI Search' + (d.library?.name ? ' · ' + esc(d.library.name) : '') + ') — excerpts are pulled per question, not bundled</h4>' + (!d.library?.enabled ? '<p style="color:var(--muted)">Off: no ai_search_namespaces binding or no library.name in YourBots/config.js.</p>' : d.library.error ? '<p style="color:var(--danger)">' + esc(d.library.error) + '</p>' : !d.library.files.length ? '<p style="color:var(--muted)">No documents for this bot. Configure → Documents, or drop a PDF into its knowledge/ folder in GitHub.</p>' : '<div class="kv">' + d.library.files.map((f) => '<b>' + esc(f.name) + '</b><span>' + esc(f.status) + (f.chunks != null ? ' · ' + f.chunks + ' passages' : '') + (f.size ? ' · ' + Math.round(f.size / 1024) + ' KB' : '') + '</span>').join('') + '</div>') + '<h4>project.json</h4>' + pre(JSON.stringify({ ...d.project, instructions: undefined }, null, 2));
+  if (hoodTab === 'files') box.innerHTML = '<h4>instructions.md</h4>' + pre(d.project.instructions || '(none)') + Object.entries(d.files || {}).map(([n, t]) => '<h4>knowledge/' + esc(n) + ' · ' + t.length + ' chars</h4>' + pre(t)).join('') + '<h4>The library (AI Search' + (d.library?.name ? ' · ' + esc(d.library.name) : '') + ') — excerpts are pulled per question, not bundled</h4>' + (!d.library?.enabled ? '<p style="color:var(--muted)">Off: no ai_search_namespaces binding or no library.name in YourBots/config.js.</p>' : d.library.error ? '<p style="color:var(--danger)">' + esc(d.library.error) + '</p>' : !d.library.files.length ? '<p style="color:var(--muted)">No documents for this bot. Configure → Documents, or drop a PDF into its knowledge/ folder in GitHub.</p>' : '<div class="kv">' + d.library.files.map((f) => '<b>' + esc(f.name) + '</b><span>' + esc(f.status) + (f.chunks != null ? ' · ' + f.chunks + ' passages' : '') + (f.size ? ' · ' + Math.round(f.size / 1024) + ' KB' : '') + '</span>').join('') + '</div>') + '<h4>The website (AI Search web crawler) — pages are crawled on a schedule and searched alongside the documents</h4>' + (!d.library?.website ? '<p style="color:var(--muted)">No website for this bot. Configure → Website, or project.json → website.url.</p>' : '<div class="kv"><b>URL</b><span>' + esc(d.library.website.url) + '</span><b>Instance</b><span>' + esc(d.library.website.name) + ' · ' + esc(websiteState(d.library.website)) + '</span><b>Pages</b><span>' + d.library.website.pages + ' indexed' + (d.library.website.indexing ? ' · ' + d.library.website.indexing + ' in progress' : '') + (d.library.website.errors ? ' · ' + d.library.website.errors + ' failed' : '') + '</span><b>Re-crawls</b><span>every ' + d.library.website.syncIntervalHours + ' h' + (d.library.website.lastActivity ? ' · last activity ' + esc(whenAt(d.library.website.lastActivity)) : '') + '</span></div>') + '<h4>project.json</h4>' + pre(JSON.stringify({ ...d.project, instructions: undefined }, null, 2));
   if (hoodTab === 'firewall') { const f = d.firewall; box.innerHTML = '<h4>Switches (YourBots/config.js → firewall)</h4>' + pre(JSON.stringify(f.config, null, 2)) + '<div class="kv"><b>Door</b><span>' + esc(f.door) + '</span><b>Rate limit</b><span>' + esc(f.rateLimit) + '</span><b>Logging</b><span>' + esc(f.logging) + '</span><b>Llama Guard model</b><span>' + esc(f.llamaGuardModel) + '</span></div><h4>Injection patterns (' + f.injectionPatterns.length + ') — a hit never reaches the model</h4>' + pre(f.injectionPatterns.join('\n')) + '<h4>Secret shapes</h4>' + pre(f.secretPatterns.join('\n')) + '<h4>What the chips mean</h4><div class="kv">' + Object.entries(f.flags).map(([k, v]) => '<b>' + esc(k) + '</b><span>' + esc(v) + '</span>').join('') + '</div>'; }
   if (hoodTab === 'gateway') box.innerHTML = '<h4>Version</h4>' + pre(JSON.stringify(d.version, null, 2)) + '<h4>Provider &amp; model</h4>' + pre(JSON.stringify(d.gateway, null, 2)) + '<p style="color:var(--muted)">gateway.id empty = calls go straight to the model. Set it to route through Cloudflare AI Gateway: spend cap, logs, caching, edge Guardrails. See docs/DEPLOY.md.</p>';
   if (hoodTab === 'audit') { renderAudit(); return; }
@@ -590,6 +591,7 @@ function renderConfigForm() {
     field('Conversation starters', 'Up to four.', '<div class="starters-edit">' + [0, 1, 2, 3].map((i) => '<input type="text" data-starter="' + i + '" value="' + esc((d.starters || [])[i] || '') + '" placeholder="Starter ' + (i + 1) + '" />').join('') + '</div>', 'project.json → starters') +
     field('Knowledge', 'Conversations can reveal part or all of these files. Text only (.md .txt .csv). Everything the bot may state as fact.', '<div id="kfiles">' + Object.entries(d.files || {}).map(([n, t], i) => kfileHtml(n, t, i)).join('') + '</div><div class="btnrow"><input type="file" id="f_upload" accept=".md,.txt,.csv,text/plain,text/markdown,text/csv" multiple hidden /><button type="button" class="btn" id="f_uploadbtn">Upload files</button><button type="button" class="btn" id="f_newfile">Write a new file</button></div>', 'knowledge/') +
     field('Documents (the library)', 'PDFs, Word, spreadsheets, transcripts, screenshots. Converted and indexed by Cloudflare AI Search; the bot gets the relevant passages per question, under the same rules as the files above. <b>Every file is scanned</b> for emails, card numbers, keys and "confidential" before it goes in — you decide what to do with what it finds. Up to 4 MB each.', '<div id="lfiles"><p class="thinking" style="margin:0"><span>Loading</span></p></div><div id="llog"></div><div class="btnrow" style="margin-top:8px"><input type="file" id="l_upload" multiple hidden /><button type="button" class="btn" id="l_uploadbtn">Upload documents</button><span id="ltypes" style="color:var(--muted);font-size:12px"></span></div>', 'knowledge/ (PDF etc. → AI Search)') +
+    field('Website', 'The bot can also answer from your website. Cloudflare crawls it (from the sitemap, or by following links), keeps the pages next to the documents, and re-crawls on a schedule. Only for a site you own on this Cloudflare account. Nothing is scanned — it\'s already public. Save, then <b>Crawl now</b>.', '<input type="url" id="f_website" value="' + esc(d.website?.url || '') + '" placeholder="https://example.com" /><div class="row2" style="margin-top:6px"><input type="text" id="f_winclude" value="' + esc((d.website?.include || []).join(', ')) + '" placeholder="Only these paths, e.g. **/help/** (optional)" /><input type="text" id="f_wexclude" value="' + esc((d.website?.exclude || []).join(', ')) + '" placeholder="Skip these paths, e.g. **/blog/** (optional)" /></div><input type="url" id="f_wsitemap" value="' + esc(d.website?.sitemap || '') + '" placeholder="Sitemap URL, if it isn\'t at /sitemap.xml (optional)" style="margin-top:6px" /><div id="wstats" style="margin-top:8px;color:var(--muted);font-size:12.5px"></div><div class="btnrow" style="margin-top:8px"><button type="button" class="btn" id="w_crawl">Crawl now</button><button type="button" class="btn" id="w_forget" hidden>Forget the site</button></div>', 'project.json → website') +
     '<div class="row2">' +
     field('Job', 'One bot, one job. The role and shape come from YourBots/_prompt/jobs/&lt;job&gt;.md.', '<select id="f_mode">' + jobs + '</select>', 'project.json → mode') +
     field('What it may say', '', '<select id="f_grounding"><option value="strict"' + (d.grounding !== 'open' ? ' selected' : '') + '>Only what\'s in the files (strict)</option><option value="open"' + (d.grounding === 'open' ? ' selected' : '') + '>Anything, files first (open, ChatGPT-style)</option></select>') +
@@ -607,6 +609,9 @@ function renderConfigForm() {
   $('l_uploadbtn').onclick = () => $('l_upload').click();
   $('l_upload').onchange = async (e) => { const fs = [...e.target.files]; e.target.value = ''; for (const f of fs) await libUpload(f, false, libLine(f.name + ' — checking and uploading…', 'muted')); loadLibrary(); };
   loadLibrary();
+  $('w_crawl').onclick = crawlNow;
+  $('w_forget').onclick = forgetWebsite;
+  loadWebsite();
   $('kfiles').addEventListener('click', (e) => { const b = e.target.closest('button[data-del]'); if (b) { delete draft.files[b.dataset.del]; renderConfigForm(); syncDraft(); } });
   $('povr').addEventListener('change', (e) => { const c = e.target.closest('input[data-povr]'); if (!c) return; const ta = document.querySelector('textarea[data-pbody="' + CSS.escape(c.dataset.povr) + '"]'); ta.hidden = !c.checked; c.closest('.kh').querySelector('span').textContent = c.checked ? "this bot's copy" : 'shared'; syncDraft(); });
   $('cfgform').addEventListener('input', syncDraft);
@@ -662,6 +667,42 @@ function libFlags(f, res, row) {
   skip.onclick = () => { row.className = 'lline muted'; row.textContent = f.name + ' — left out.'; };
   btns.append(go, skip); row.append(head, ul, note, btns);
 }
+// ---- The website (Configure → Website). Talks to /api/admin/library/crawl for THIS bot. ----
+function whenAt(t) { try { return new Date(t).toISOString().slice(0, 16).replace('T', ' '); } catch { return String(t); } }
+function websiteState(w) { return !w.exists ? 'not crawled yet' : w.lastJob?.running ? 'crawling…' : w.status === 'paused' ? 'paused' : w.pages ? 'ready' : w.indexing ? 'indexing' : (w.status || 'created'); }
+async function loadWebsite() {
+  const box = $('wstats'); if (!box) return;
+  const m = cfgMeta?.library || {};
+  if (!m.enabled) { box.textContent = 'The library isn\'t switched on for this deployment, so the website can\'t be crawled either.'; $('w_crawl').disabled = true; return; }
+  try {
+    const r = await fetch('/api/admin/library/crawl?project=' + encodeURIComponent(draft.id), { headers: { 'x-admin-token': ADMIN } });
+    const w = await r.json();
+    if (!r.ok) throw new Error(w.error || r.status);
+    $('w_forget').hidden = !w.exists;
+    if (!w.exists) { box.textContent = w.url ? 'Not crawled yet. Click Crawl now — the first crawl creates the index; after that it re-crawls itself every ' + w.syncIntervalHours + ' hours.' : 'No website. Add the URL above, Save, then Crawl now.'; return; }
+    box.innerHTML = '<b>' + esc(websiteState(w)) + '</b> · ' + w.pages + ' page' + (w.pages === 1 ? '' : 's') + ' indexed' + (w.indexing ? ' · ' + w.indexing + ' in progress' : '') + (w.errors ? ' · <span style="color:var(--danger)">' + w.errors + ' failed</span>' : '') + ' · re-crawls every ' + w.syncIntervalHours + ' h' + (w.lastActivity ? ' · last activity ' + esc(whenAt(w.lastActivity)) : '') + (w.mismatch ? '<br><span style="color:var(--danger)">The index holds ' + esc(w.source) + ', not the URL above. Crawl now starts over with the new one.</span>' : '') + ((w.lastJob?.notes || []).length ? '<br><span style="font-size:11.5px">Last crawl: ' + w.lastJob.notes.map(esc).join(' · ') + '</span>' : '') + '<br><span style="font-size:11.5px">instance ' + esc(w.name) + (w.parseType ? ' · ' + (w.parseType === 'discover' ? 'follows links + sitemap' : 'sitemap only') : '') + '</span>';
+    if (w.lastJob?.running) setTimeout(loadWebsite, 8000);
+  } catch (err) { box.innerHTML = '<span style="color:var(--danger)">Could not read the crawl (' + esc(err.message) + ').</span>'; }
+}
+async function crawlNow() {
+  syncDraft();
+  if (!draft.website?.url) { $('wstats').textContent = 'Add the website URL first.'; return; }
+  const b = $('w_crawl'); b.disabled = true; $('wstats').textContent = 'Starting the crawl…';
+  try {
+    const r = await fetch('/api/admin/library/crawl?project=' + encodeURIComponent(draft.id), { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-token': ADMIN }, body: JSON.stringify({ website: draft.website }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || r.status);
+    libLine((d.created ? 'Created the website index and started the first crawl.' : d.recreated ? 'The URL changed: started over with a fresh index.' : 'Crawl started.') + ' A small site takes a minute or two.', 'muted');
+    setTimeout(loadWebsite, 4000);
+  } catch (err) { $('wstats').innerHTML = '<span style="color:var(--danger)">Crawl failed: ' + esc(err.message) + '</span>'; }
+  b.disabled = false;
+}
+async function forgetWebsite() {
+  if (!confirm('Remove the crawled pages for this bot? The URL stays in the form; Crawl now rebuilds it.')) return;
+  const r = await fetch('/api/admin/library/crawl?project=' + encodeURIComponent(draft.id), { method: 'DELETE', headers: { 'x-admin-token': ADMIN } });
+  libLine(r.ok ? 'Website index removed.' : 'Could not remove the website index.', r.ok ? 'muted' : 'bad');
+  loadWebsite();
+}
 function syncDraft() {
   const v = (id) => ($(id) ? $(id).value : '');
   draft.name = v('f_name'); draft.tagline = v('f_tagline'); draft.instructions = v('f_instructions'); draft.greeting = v('f_greeting');
@@ -669,6 +710,8 @@ function syncDraft() {
   draft.mode = v('f_mode'); draft.grounding = v('f_grounding'); draft.handoffText = v('f_handoffText'); draft.handoffContact = v('f_handoffContact');
   draft.allowedLinks = v('f_links').split('\n').map((x) => x.trim()).filter(Boolean);
   draft.thinkingWords = v('f_thinking').split('\n').map((x) => x.trim()).filter(Boolean);
+  const globs = (t) => t.split(/[\n,]/).map((x) => x.trim()).filter(Boolean);
+  draft.website = { url: v('f_website').trim(), include: globs(v('f_winclude')), exclude: globs(v('f_wexclude')), ...(v('f_wsitemap').trim() ? { sitemap: v('f_wsitemap').trim() } : {}) };
   const files = {}; document.querySelectorAll('#kfiles .kfile').forEach((k) => { const n = k.querySelector('[data-kname]').value.trim() || 'file.md'; files[n] = k.querySelector('[data-kbody]').value; }); draft.files = files;
   const prompt = {}; document.querySelectorAll('input[data-povr]').forEach((c) => { if (c.checked) prompt[c.dataset.povr] = document.querySelector('textarea[data-pbody="' + CSS.escape(c.dataset.povr) + '"]').value; }); draft.prompt = prompt;
   $('cfgtitle').textContent = draft.name || 'New bot';
