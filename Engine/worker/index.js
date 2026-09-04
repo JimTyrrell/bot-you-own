@@ -4,12 +4,14 @@ import { buildSystemPrompt, PROMPT_FILES, ROOT_PROMPT_FILES } from "./prompt.js"
 import { complete } from "./gateway.js";
 import { screenInbound, screenOutbound, ensureHandoff, llamaGuard, redact, INJECTION_PATTERNS, SECRET_PATTERNS, LLAMA_GUARD_MODEL } from "./firewall.js";
 import { MODES } from "./modes.js";
-import { retrieve, uploadFile, listFiles, deleteFile, downloadFile, rescanLibrary, libraryMeta } from "./library.js";
+import { retrieve, uploadFile, listFiles, deleteFile, downloadFile, rescanLibrary, extractText, libraryMeta, allExtensions, gate, safeName, scanText } from "./library.js";
 
 // ============================================================================
-//  THE WORKER. Three routes and a static folder.
+//  THE WORKER. Four routes and a static folder.
 //    GET  /api/config   → what the page needs to draw itself
-//    POST /api/chat     → { project, messages, stream } → SSE stream (or JSON)
+//    POST /api/chat     → { project, messages, stream, attachments } → SSE stream (or JSON)
+//    POST /api/attach   → multipart "file" → { ok, name, chars, text } (the paperclip;
+//                         nothing is stored — the text goes back to the visitor's browser)
 //    GET  /health       → "ok"
 //    *                  → public/ (the chat page, the widget)
 //  Admin (x-admin-token): /api/admin/engine, /audit, /projects, /project,
@@ -117,6 +119,8 @@ export default {
         provider: CONFIG.provider,
         defaultProject: CONFIG.defaultProject,
         projects: projects.length ? projects : all.slice(0, 1),
+        // the paperclip: whether to show it, and what it accepts
+        attachments: { enabled: attachmentRules().enabled, max: attachmentRules().max, maxBytes: attachmentRules().maxBytes, extensions: allExtensions() },
       });
     }
 
@@ -124,6 +128,14 @@ export default {
       if (request.method !== "POST") return json({ error: "POST only" }, 405);
       if (!authed) return json({ error: "locked", reply: "This bot is locked. Enter the passphrase to continue." }, 401);
       return handleChat(request, env, ctx, { wantEmail, isAdmin });
+    }
+
+    // The paperclip. Same door as /api/chat; switched off = it doesn't exist.
+    if (url.pathname === "/api/attach") {
+      if (!attachmentRules().enabled) return json({ error: "not found" }, 404);
+      if (request.method !== "POST") return json({ error: "POST only" }, 405);
+      if (!authed) return json({ error: "locked", reply: "This bot is locked. Enter the passphrase to continue." }, 401);
+      return handleAttach(request, env, ctx);
     }
 
     return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Not found", { status: 404 });
@@ -225,6 +237,26 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
     }
   }
 
+  // --- The visitor's attachment(s). The page got the text from /api/attach and
+  //     sends it back with every turn, like the history. The checks run AGAIN
+  //     here — /api/chat is where it matters, and nothing stops a script from
+  //     skipping /api/attach. Never logged; never stored.
+  const attachments = [];
+  const rules = attachmentRules();
+  if (rules.enabled && Array.isArray(body.attachments)) {
+    for (const a of body.attachments.slice(0, rules.max)) {
+      if (!a || typeof a.text !== "string" || !a.text.trim()) continue;
+      const v = vetAttachment(a.text, rules.maxChars);
+      if (v.refused) {
+        flags.push(v.flag);
+        ctx.waitUntil(logTurn(env, project, last.content, v.reason, flags, who));
+        return send(v.reason, flags);
+      }
+      attachments.push({ name: safeName(a.name || "attachment").slice(0, 120) || "attachment", text: v.text });
+    }
+  }
+  if (attachments.length) flags.push("attachment-used");
+
   // --- LAYER 2b: the library. Relevant excerpts from this bot's documents
   //     (PDFs, sheets, transcripts) for THIS question. The search is given the
   //     visitor's last few messages, not just the latest one, so a follow-up
@@ -236,7 +268,7 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
   if (passages) flags.push("library-used");
 
   // --- LAYER 1: build the prompt --------------------------------------------
-  const prompt = buildSystemPrompt({ config: CONFIG, project, passages });
+  const prompt = buildSystemPrompt({ config: CONFIG, project, passages, attachments });
   const outboundOpts = { allowedLinks: project.allowedLinks, protectedText: prompt.protectedText, config: CONFIG, project };
 
   // --- LAYER 3b: call the model through the gateway --------------------------
@@ -298,6 +330,63 @@ async function finish(raw, { env, fw, flags, handoff, outboundOpts }) {
   }
   if (!reply) reply = handoff;
   return { reply, flags: f };
+}
+
+// --- THE PAPERCLIP: a visitor attaches one file to the conversation. ----------
+//     Read it → cut it to size → screen it → hand the TEXT back to the browser.
+//     Nothing is stored here: not the file, not the text. The page keeps the
+//     text with the chat and sends it back with every message (index.html).
+//     The scan is the library's (Engine/worker/library.js), but the verdicts
+//     are different: a card number or a key is refused outright (a visitor
+//     can't override), while their own email address or phone number is fine.
+function attachmentRules() {
+  const a = CONFIG.attachments || {};
+  return { enabled: a.enabled !== false, max: Math.max(1, Number(a.max) || 1), maxBytes: Number(a.maxBytes) || 4 * 1024 * 1024, maxChars: Number(a.maxChars) || 20000 };
+}
+// The blocking half of the scan. Emails/phones/"confidential" are the
+// visitor's business; these are the things that should never be in a chat.
+const ATTACH_BLOCKS = ["card", "ssn", "iban", "secret", "password", "privkey"];
+function vetAttachment(text, maxChars) {
+  let t = String(text || "");
+  const notes = [];
+  if (t.length > maxChars) { t = t.slice(0, maxChars) + "\n[truncated]"; notes.push(`Only the first ${maxChars.toLocaleString("en-US")} characters are used; the rest was cut.`); }
+  const screen = screenInbound(t);                  // strips invisible characters, looks for "ignore your instructions…"
+  t = screen.text;
+  if (screen.invisible) notes.push("Hidden characters were removed.");
+  if (screen.injection) return { refused: true, flag: "attachment-injection-blocked", reason: "That file contains text that reads like instructions for me (\"ignore your previous instructions…\"), so I can't take it. If it's your own document, remove that part and try again." };
+  const found = scanText(t).filter((f) => ATTACH_BLOCKS.includes(f.id));
+  if (found.length) return { refused: true, flag: "attachment-secret-blocked", reason: `That file looks like it contains ${found.map((f) => f.label).join(" and ")} — remove it and try again. I don't take card numbers, keys or ID numbers in chat.` };
+  return { text: t, notes };
+}
+async function handleAttach(request, env, ctx) {
+  if (!(await allowed(env, request))) return json({ ok: false, reason: "You're sending files faster than I can read them. Give me a moment and try again.", flags: ["rate-limited"] }, 429);
+  const rules = attachmentRules();
+  let form;
+  try { form = await request.formData(); } catch { return json({ ok: false, reason: "Send the file as multipart/form-data in a 'file' field." }, 400); }
+  const f = form.get("file");
+  if (!f || typeof f.arrayBuffer !== "function") return json({ ok: false, reason: "No file in the request." }, 400);
+  const project = await resolveProject(env, String(form.get("project") || ""));
+  const log = (chars, flags) => console.log(JSON.stringify({ event: "attach", project: project.name, name: safeName(f.name).slice(0, 120), chars, flags }));
+
+  // 1. Type and size — the library's gate, with its plain-English hints (".pptx → export as PDF").
+  const g = gate(f.name, f.size);
+  if (!g.ok) { log(0, ["attachment-refused"]); return json({ ok: false, name: safeName(f.name), reason: g.reason, flags: ["attachment-refused"] }, 400); }
+  if (f.size > rules.maxBytes) { log(0, ["attachment-refused"]); return json({ ok: false, name: g.name, reason: `That file is ${(f.size / 1048576).toFixed(1)} MB. The limit is ${Math.round(rules.maxBytes / 1048576)} MB.`, flags: ["attachment-refused"] }, 400); }
+
+  // 2. Read it. Text files are decoded; PDFs, Word, sheets and images go
+  //    through Cloudflare's converter (an image comes back as a description).
+  const isImage = /\.(jpe?g|png|webp|gif|svg|bmp)$/.test(g.ext);
+  let text = "";
+  try { text = await extractText(env, g.name, g.ext, await f.arrayBuffer()); } catch (err) { console.error("attach: extract failed", err?.message || err); }
+  if (!String(text || "").trim()) { log(0, ["attachment-refused"]); return json({ ok: false, name: g.name, reason: isImage ? "I couldn't make out anything in that image. Try a clearer picture, or a PDF." : "I couldn't read any text in that file. If it's a scan, try a clearer copy; if it's a document, try exporting it as PDF.", flags: ["attachment-refused"] }, 400); }
+
+  // 3. Cut, then screen: injections and secrets are refused, with the reason.
+  const v = vetAttachment(text, rules.maxChars);
+  if (v.refused) { log(text.length, [v.flag]); return json({ ok: false, name: g.name, reason: v.reason, flags: [v.flag] }, 400); }
+  const notes = [...v.notes];
+  if (isImage) notes.push("Images come back as a description from Cloudflare's converter — what it noticed, not the pixels.");
+  log(v.text.length, []);
+  return json({ ok: true, name: g.name, chars: v.text.length, text: v.text, notes });
 }
 
 // --- Audit log (optional D1). Fail-open: no DB bound = no logging. ------------
@@ -632,6 +721,9 @@ async function engineView(env, projectId) {
         "leak-blocked:paraphrase": "answer described its rules in its own words; withheld",
         "handoff-appended": "a decline in a strict project was missing the contact; added",
         "library-used": "excerpts from this bot's documents (AI Search) were put in the prompt for this question",
+        "attachment-used": "the visitor's attached file was put in the prompt (outside <files>; never a fact about the business)",
+        "attachment-injection-blocked": "the attached file contained instructions for the bot; refused before the model",
+        "attachment-secret-blocked": "the attached file looked like it held a card number, key or ID number; refused",
         "guard-blocked:S#": "Llama Guard flagged the user turn (category S1–S14)",
         "gateway-blocked": "AI Gateway Guardrails blocked it at the edge",
         "rate-limited": "over the per-visitor limit",

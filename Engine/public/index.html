@@ -96,6 +96,15 @@
   textarea { flex:1; border:0; background:transparent; color:var(--text); font:inherit; resize:none; max-height:180px; outline:none; padding:6px 0; }
   .send { width:36px; height:36px; border-radius:50%; border:0; background:var(--text); color:var(--bg); cursor:pointer; font-size:16px; flex:none; }
   .send.stop { background:var(--danger); color:#fff; }
+  /* the paperclip (YourBots/config.js → attachments) and the chip for the attached file */
+  .clip { width:36px; height:36px; border-radius:50%; border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:17px; flex:none; }
+  .clip:hover { background:var(--panel); color:var(--text); }
+  .clip:disabled { opacity:.45; cursor:default; }
+  .attachrow { max-width:760px; margin:0 auto 6px; display:flex; gap:6px; flex-wrap:wrap; padding:0 8px; }
+  .attachchip { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; padding:4px 6px 4px 10px; border-radius:999px; background:var(--chip); color:var(--chipText); max-width:100%; }
+  .attachchip span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .attachchip button { border:0; background:transparent; color:inherit; cursor:pointer; font-size:13px; padding:0 4px; }
+  .attachchip.pending { color:var(--muted); background:var(--panel); }
   .disclaimer { text-align:center; font-size:11px; color:var(--muted); padding:6px 0 4px; }
 
   /* ---- the door ---- */
@@ -241,8 +250,11 @@
       <div id="log"></div>
     </div>
     <div class="composer">
+      <div class="attachrow" id="attachrow" hidden></div>
       <form id="form" autocomplete="off">
         <textarea id="input" rows="1" placeholder="Message…"></textarea>
+        <input type="file" id="attachfile" hidden />
+        <button class="clip" id="attachbtn" type="button" title="Attach a file (PDF, Word, spreadsheet, text or image) — read for this conversation only" hidden>📎</button>
         <button class="send" id="send" type="submit" title="Send">↑</button>
       </form>
       <div class="disclaimer" id="disclaimer">Can make mistakes. Check important information.</div>
@@ -328,6 +340,9 @@ function boot() { fetch('/api/config', { headers: authHeaders() }).then((r) => r
   $('brand').textContent = cfg.siteName || 'The Bot You Own';
   if (cfg.accent) document.documentElement.style.setProperty('--accent', cfg.accent);
   $('modelpill').textContent = (cfg.model || '').replace(/^@cf\//, '');
+  // the paperclip: only when YourBots/config.js → attachments.enabled
+  const att = cfg.attachments || {};
+  $('attachbtn').hidden = !att.enabled; $('attachfile').accept = (att.extensions || []).join(',');
   $('hoodbtn').disabled = !cfg.adminEnabled; $('hoodbtn').classList.toggle('off', !cfg.adminEnabled);
   $('cfgbtn').disabled = !cfg.adminEnabled; $('cfgbtn').classList.toggle('off', !cfg.adminEnabled);
   $('newbot').hidden = !(cfg.adminEnabled && ADMIN);
@@ -344,7 +359,7 @@ boot();
 function pushUrl(replace) {
   const u = new URL(location.href);
   u.searchParams.set('project', state.project.id);
-  if (state.chat?.messages?.length) u.searchParams.set('chat', state.chat.id); else u.searchParams.delete('chat');
+  if (state.chat?.messages?.length || state.chat?.attachments?.length) u.searchParams.set('chat', state.chat.id); else u.searchParams.delete('chat');
   const st = { project: state.project.id, chat: state.chat?.id || null };
   try { replace ? history.replaceState(st, '', u) : history.pushState(st, '', u); } catch {}
 }
@@ -393,12 +408,56 @@ function renderChats() {
 }
 
 function newChat(silent) {
-  state.chat = { id: Date.now().toString(36), project: state.project.id, title: '', messages: [] };
-  renderChats(); renderLog(); $('input').focus();
+  state.chat = { id: Date.now().toString(36), project: state.project.id, title: '', messages: [], attachments: [] };
+  renderChats(); renderLog(); renderAttachments(); $('input').focus();
   if (!silent) pushUrl(!history.state);           // first load replaces, later switches push
 }
 $('newchat').onclick = () => newChat();
-function loadChat(c, silent) { state.chat = c; renderChats(); renderLog(); if (!silent) pushUrl(); }
+function loadChat(c, silent) { state.chat = c; renderChats(); renderLog(); renderAttachments(); if (!silent) pushUrl(); }
+
+// ---- the paperclip: one file, read for this conversation only ----
+// The server reads the file and hands the TEXT back; it keeps nothing. The text
+// lives here with the chat (localStorage) and goes with every message, like the
+// history does. ✕ on the chip drops it.
+function renderAttachments(pending) {
+  const row = $('attachrow'); row.innerHTML = '';
+  const list = state.chat?.attachments || [];
+  list.forEach((a, i) => {
+    const chip = document.createElement('span'); chip.className = 'attachchip';
+    const label = document.createElement('span'); label.textContent = '📎 ' + a.name + ' · ' + Number(a.chars || a.text.length).toLocaleString() + ' chars';
+    const x = document.createElement('button'); x.type = 'button'; x.textContent = '✕'; x.title = 'Remove from this conversation';
+    x.onclick = () => { state.chat.attachments.splice(i, 1); if (state.chat.messages.length || state.chat.attachments.length) store.upsert(state.chat); renderAttachments(); };
+    chip.append(label, x); row.appendChild(chip);
+  });
+  if (pending) { const chip = document.createElement('span'); chip.className = 'attachchip pending'; chip.textContent = '📎 ' + pending + ' · reading…'; row.appendChild(chip); }
+  row.hidden = !row.children.length;
+  const max = state.cfg?.attachments?.max || 1;
+  $('attachbtn').disabled = list.length >= max || !!pending;
+  $('attachbtn').title = list.length >= max ? 'One file per conversation. Remove the current one to attach another.' : 'Attach a file (PDF, Word, spreadsheet, text or image) — read for this conversation only';
+}
+$('attachbtn').onclick = () => $('attachfile').click();
+$('attachfile').onchange = async (e) => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  const chat = state.chat; renderAttachments(f.name);
+  const fd = new FormData(); fd.append('file', f, f.name); fd.append('project', state.project.id);
+  let d = {};
+  try {
+    const r = await fetch('/api/attach', { method: 'POST', headers: authHeaders(), body: fd });
+    d = await r.json().catch(() => ({}));
+    if (r.status === 401) { TOKEN = ''; try { localStorage.removeItem('byo:token'); } catch {} needKey = true; showLock('Enter the passphrase to continue.'); }
+    if (r.status === 404) d = { ok: false, reason: 'Attachments are switched off for this bot.' };
+  } catch { d = { ok: false, reason: 'Could not reach the server. Try again.' }; }
+  if (state.chat !== chat) return;                                   // they switched chats meanwhile
+  if (d.ok) {
+    chat.attachments = [...(chat.attachments || []), { name: d.name, chars: d.chars, text: d.text }];
+    store.upsert(chat); renderChats(); pushUrl(true);
+    if (d.notes?.length) addMessage('assistant', '📎 ' + d.name + ' attached. ' + d.notes.join(' '));
+  } else {
+    // A refusal reads like the bot said it: the reason, plus the chip that explains it.
+    addMessage('assistant', d.reason || d.error || 'I couldn\'t take that file.', (d.flags || []).filter((x) => x !== 'attachment-refused'));
+  }
+  renderAttachments(); scrollDown(); $('input').focus();
+};
 
 function renderLog() {
   const log = $('log'); log.innerHTML = '';
@@ -432,6 +491,7 @@ const FLAG_LABELS = {
   'rate-limited': '⏱ rate limited', 'model-error': '⚠ model error', 'gateway-blocked': '🛡 blocked at the gateway',
   'invisible-text-stripped': '👁 hidden characters removed', 'handoff-appended': '📇 contact added by the firewall', 'secret-detected': '🔑 looks like a secret was pasted',
   'library-used': '📚 answered with the document library',
+  'attachment-used': '📎 read your attached file', 'attachment-injection-blocked': '🛡 attachment refused: it contained instructions for the bot', 'attachment-secret-blocked': '🔑 attachment refused: looks like a card number or a key',
 };
 // The small chips under an answer. Two kinds share the row: firewall flags
 // (what the engine did to this turn) and citations — the documents the answer
@@ -478,7 +538,7 @@ async function send(text) {
   try {
     const res = await fetch('/api/chat', {
       method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, signal: state.abort.signal,
-      body: JSON.stringify({ project: state.project.id, visitor: VISITOR ? { email: VISITOR } : undefined, messages: chat.messages.map(({ role, content }) => ({ role, content })), stream: true }),
+      body: JSON.stringify({ project: state.project.id, visitor: VISITOR ? { email: VISITOR } : undefined, messages: chat.messages.map(({ role, content }) => ({ role, content })), attachments: (chat.attachments || []).map(({ name, text }) => ({ name, text })), stream: true }),
     });
     if (res.status === 401) { const d = await res.clone().json().catch(() => ({})); if (d.error === 'email') { VISITOR = ''; needEmail = true; showLock('Please enter your email address to start.'); } else { TOKEN = ''; try { localStorage.removeItem('byo:token'); } catch {} needKey = true; showLock('Enter the passphrase to continue.'); } }
     if (!(res.headers.get('content-type') || '').includes('event-stream')) {
@@ -607,7 +667,7 @@ function renderConfigForm() {
     field('Thinking words', 'What the page says while it waits. One per line; blank = the global list.', '<textarea id="f_thinking" style="min-height:70px">' + esc((d.thinkingWords || []).join('\n')) + '</textarea>', 'project.json → thinkingWords') +
     field('This bot\'s own voice and rules', 'Every bot shares the <code>YourBots/_prompt/</code> files. Tick one to give this bot its own copy — the folder-wins rule. Leave unticked to stay with the shared text.', '<div id="povr">' + Object.entries(m.rootPrompt || {}).map(([n, root]) => { const own = (d.prompt || {})[n]; return '<div class="kfile"><div class="kh"><label style="margin:0;display:flex;gap:8px;align-items:center;font-weight:500"><input type="checkbox" data-povr="' + esc(n) + '"' + (own != null ? ' checked' : '') + ' /> ' + esc(n) + '</label><span style="color:var(--muted);font-size:12px">' + (own != null ? 'this bot\'s copy' : 'shared') + '</span></div><textarea data-pbody="' + esc(n) + '"' + (own != null ? '' : ' hidden') + '>' + esc(own != null ? own : root.replace(/<!--[\s\S]*?-->/g, '').trim()) + '</textarea></div>'; }).join('') + '</div>', 'prompt/ (overrides)') +
     field('Recommended model', 'Set for the whole deployment in YourBots/config.js.', '<input type="text" value="' + esc(m.model || '') + '" disabled />') +
-    field('Capabilities', 'What ChatGPT offers here, and what this bot has.', '<div class="caps"><label><input type="checkbox" disabled /> <span class="na">Web search — not in this bot</span></label><label><input type="checkbox" disabled /> <span class="na">Image generation — not in this bot</span></label><label><input type="checkbox" disabled /> <span class="na">Code interpreter &amp; data analysis — not in this bot</span></label><label><input type="checkbox" checked disabled /> Firewall: injection screen, link allowlist, leak check (always on)</label><label><input type="checkbox" checked disabled /> Audit log of every turn (when a database is bound)</label></div>') +
+    field('Capabilities', 'What ChatGPT offers here, and what this bot has.', '<div class="caps"><label><input type="checkbox" disabled /> <span class="na">Web search — not in this bot</span></label><label><input type="checkbox" disabled /> <span class="na">Image generation — not in this bot</span></label><label><input type="checkbox" disabled /> <span class="na">Code interpreter &amp; data analysis — not in this bot</span></label><label><input type="checkbox" checked disabled /> File upload by visitors: one file per conversation, read for that chat only, screened, never stored (YourBots/config.js → attachments)</label><label><input type="checkbox" checked disabled /> Firewall: injection screen, link allowlist, leak check (always on)</label><label><input type="checkbox" checked disabled /> Audit log of every turn (when a database is bound)</label></div>') +
     field('Actions', '', '<p style="color:var(--muted);margin:0">Not available. API calls are rebuilt deliberately, in code, if you need them.</p>');
   $('f_uploadbtn').onclick = () => $('f_upload').click();
   $('f_upload').onchange = async (e) => { for (const f of e.target.files) { const t = await f.text(); draft.files[f.name.replace(/[^\w. -]/g, '_')] = t; } renderConfigForm(); syncDraft(); };

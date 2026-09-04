@@ -145,8 +145,9 @@ function mask(s) { s = String(s); return s.length <= 6 ? s : s.slice(0, 3) + "â€
 
 // Get the text out so we can scan it. Text types are decoded; everything else
 // goes through Workers AI's converter â€” the same conversion AI Search does on
-// its side, so what we scan is what the bot will see.
-async function extractText(env, name, ext, bytes) {
+// its side, so what we scan is what the bot will see. (Also used by
+// /api/attach: a visitor's file is read the same way, then thrown away.)
+export async function extractText(env, name, ext, bytes) {
   if (SUPPORTED.text.includes(ext)) return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
   if (!env.AI?.toMarkdown) return "";
   try {
