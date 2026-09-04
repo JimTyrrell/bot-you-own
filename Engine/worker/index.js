@@ -4,7 +4,7 @@ import { buildSystemPrompt, PROMPT_FILES, ROOT_PROMPT_FILES } from "./prompt.js"
 import { complete } from "./gateway.js";
 import { screenInbound, screenOutbound, ensureHandoff, llamaGuard, redact, INJECTION_PATTERNS, SECRET_PATTERNS, LLAMA_GUARD_MODEL } from "./firewall.js";
 import { MODES } from "./modes.js";
-import { retrieve, uploadFile, listFiles, deleteFile, downloadFile, rescanLibrary, extractText, libraryMeta, allExtensions, gate, safeName, scanText } from "./library.js";
+import { retrieve, uploadFile, listFiles, deleteFile, downloadFile, rescanLibrary, extractText, libraryMeta, allExtensions, gate, safeName, scanText, websiteOf, crawlWebsite, websiteStatus, deleteWebsite } from "./library.js";
 import { normaliseHandoffActions, stripIntakeMarker, handoffEvent, runHandoffActions, handoffActionsView } from "./handoff.js";
 
 // ============================================================================
@@ -20,6 +20,9 @@ import { normaliseHandoffActions, stripIntakeMarker, handoffEvent, runHandoffAct
 //    optional "override") · DELETE /api/admin/library/<itemId>?project=<id>
 //    POST /api/admin/library/rescan?project=<id>   re-check every document (read-only)
 //    GET  /api/admin/library/audit?project=<id|*>  what the scan did, newest first
+//    /api/admin/library/crawl?project=<id>  GET status of the bot's website
+//    crawl · POST crawl it now (creates the crawler instance the first time) ·
+//    DELETE remove the crawler instance and its pages
 // ============================================================================
 
 export default {
@@ -258,15 +261,19 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
   }
   if (attachments.length) flags.push("attachment-used");
 
-  // --- LAYER 2b: the library. Relevant excerpts from this bot's documents
-  //     (PDFs, sheets, transcripts) for THIS question. The search is given the
-  //     visitor's last few messages, not just the latest one, so a follow-up
-  //     like "and on Thursdays?" still finds the right page. "" if none, or if
-  //     AI Search isn't set up — the bot answers from knowledge/ regardless.
-  //     `sources` = the document names, shown under the answer as citations.
+  // --- LAYER 2b: the library, and the website if the bot has one. Relevant
+  //     excerpts from this bot's documents (PDFs, sheets, transcripts) and its
+  //     crawled pages for THIS question. The search is given the visitor's last
+  //     few messages, not just the latest one, so a follow-up like "and on
+  //     Thursdays?" still finds the right page. "" if none, or if AI Search
+  //     isn't set up — the bot answers from knowledge/ regardless.
+  //     `sources` = the document names / page URLs, shown under the answer.
   const userTurns = history.filter((m) => m.role === "user").map((m) => m.content);
-  const { passages, sources } = await retrieve(env, CONFIG, project.id || CONFIG.defaultProject, userTurns);
-  if (passages) flags.push("library-used");
+  const found = await retrieve(env, CONFIG, project.id || CONFIG.defaultProject, userTurns, { website: websiteOf(project) });
+  const passages = found.text;
+  const sources = found.sources;
+  if (found.library) flags.push("library-used");
+  if (found.website) flags.push("website-used");
 
   // --- LAYER 1: build the prompt --------------------------------------------
   const prompt = buildSystemPrompt({ config: CONFIG, project, passages, attachments });
@@ -466,11 +473,19 @@ function normaliseProject(p, id) {
     intakeQuestions: (Array.isArray(p.intakeQuestions) ? p.intakeQuestions : []).map((x) => String(x).slice(0, 200)).slice(0, 10),
     bookingUrl: String(p.bookingUrl || ""), bookingFitRules: String(p.bookingFitRules || "").slice(0, 2000),
     nextSteps: (Array.isArray(p.nextSteps) ? p.nextSteps : []).slice(0, 10),
+    // the bot's website (optional): one URL, and glob patterns for which pages to keep / skip
+    website: normaliseWebsite(p.website),
     instructions: clean(p.instructions).slice(0, 20000),
     files: Object.fromEntries(Object.entries(p.files || {}).filter(([n]) => /^[\w. -]{1,80}\.(md|txt|csv)$/i.test(n)).map(([n, t]) => [n, clean(t).slice(0, 200000)]).slice(0, 40)),
     // this bot's own copies of root prompt/ files (same names) — the folder-wins rule, from the form
     prompt: Object.fromEntries(Object.entries(p.prompt || {}).filter(([n]) => OVERRIDABLE.includes(n) || /^jobs\/[a-z-]+\.md$/.test(n)).map(([n, t]) => [n, clean(t).slice(0, 20000)]).filter(([, t]) => t.length > 0)),
   };
+}
+function normaliseWebsite(w) {
+  const globs = (v) => (Array.isArray(v) ? v : String(v || "").split(/[\n,]/)).map((x) => String(x).trim().slice(0, 200)).filter(Boolean).slice(0, 10);
+  const url = String(w?.url || "").trim().slice(0, 500);
+  const sitemap = String(w?.sitemap || "").trim().slice(0, 500);
+  return { url: /^https?:\/\/\S+$/i.test(url) ? url : "", include: globs(w?.include), exclude: globs(w?.exclude), ...(sitemap ? { sitemap } : {}) };
 }
 async function resolveProject(env, id) {
   const saved = await savedProjects(env);
@@ -490,6 +505,24 @@ async function handleLibrary(request, env, url) {
   const meta = libraryMeta(env, CONFIG);
   if (!meta.enabled) return json({ error: "The library isn't switched on: wrangler.jsonc needs the ai_search_namespaces binding and YourBots/config.js → library.name. See docs/CUSTOMIZE.md → Give it documents.", ...meta }, 503);
   try {
+    // --- The website: GET = where it stands · POST = crawl now · DELETE = forget it.
+    //     The URL comes from the saved bot; the form can send an unsaved one in the
+    //     body so "Crawl now" works before "Save" (the chat only uses it once saved).
+    if (url.pathname === "/api/admin/library/crawl") {
+      const project = await resolveProject(env, bot);
+      let site = websiteOf(project);
+      if (request.method === "POST") {
+        let b = {}; try { b = await request.json(); } catch {}
+        if (b && typeof b.website === "object") site = websiteOf({ website: normaliseWebsite(b.website) }) || site;
+        if (!site) return json({ error: "This bot has no website URL. Configure → Website, or project.json → website.url." }, 400);
+        const r = await crawlWebsite(env, CONFIG, bot, site);
+        console.log(JSON.stringify({ event: "website-crawl", bot, url: site.url, instance: r.name, created: r.created, recreated: r.recreated }));
+        return json({ ok: true, ...r, status: await websiteStatus(env, CONFIG, bot, site) });
+      }
+      if (request.method === "DELETE") return json({ ok: true, removed: await deleteWebsite(env, CONFIG, bot) });
+      if (request.method === "GET") return json(await websiteStatus(env, CONFIG, bot, site));
+      return json({ error: "method" }, 405);
+    }
     if (request.method === "GET" && url.pathname === "/api/admin/library") return json({ ...meta, files: await listFiles(env, CONFIG, bot) });
     if (request.method === "POST" && url.pathname === "/api/admin/library") {
       const form = await request.formData();
@@ -724,6 +757,8 @@ async function engineView(env, projectId) {
   const libMeta = libraryMeta(env, CONFIG);
   const library = { ...libMeta, name: CONFIG.library?.name || "", files: [] };
   if (libMeta.enabled) { try { library.files = await listFiles(env, CONFIG, project.id || String(projectId || "")); } catch (err) { library.error = String(err?.message || err); } }
+  // the website crawl, if this bot has one (null = no URL set)
+  library.website = websiteOf(project) ? await websiteStatus(env, CONFIG, project.id || String(projectId || ""), websiteOf(project)) : null;
   return {
     project: { id: projectId, ...meta, instructions },
     library,
@@ -756,6 +791,7 @@ async function engineView(env, projectId) {
         "attachment-used": "the visitor's attached file was put in the prompt (outside <files>; never a fact about the business)",
         "attachment-injection-blocked": "the attached file contained instructions for the bot; refused before the model",
         "attachment-secret-blocked": "the attached file looked like it held a card number, key or ID number; refused",
+        "website-used": "excerpts from this bot's crawled website (AI Search web crawler) were put in the prompt for this question",
         "guard-blocked:S#": "Llama Guard flagged the user turn (category S1–S14)",
         "gateway-blocked": "AI Gateway Guardrails blocked it at the edge",
         "rate-limited": "over the per-visitor limit",

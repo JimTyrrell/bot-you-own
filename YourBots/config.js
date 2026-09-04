@@ -76,13 +76,18 @@ export const CONFIG = {
   // and let the GitHub Action sync them. docs/CUSTOMIZE.md → "Give it documents".
   // Answers that used the library cite it: a 📄 chip per document under the reply
   // (names only — visitors never get the files).
+  // A bot can also answer from its own WEBSITE: project.json → "website": { "url": … }.
+  // Cloudflare crawls it into a second instance ("<name>-web-<bot>") and re-crawls
+  // on the schedule below. Free plan: 500 pages a day. "Or point it at your website" in the docs.
   library: {
     name: "bot-you-own-library",   // the AI Search instance; created on first upload
-    maxPassages: 6,                // excerpts per question. 4–8. More is not smarter.
+    maxPassages: 6,                // excerpts per question, documents and web pages together. 4–8. More is not smarter.
     matchThreshold: 0.4,           // 0–1. Raise to 0.5 if it quotes unrelated documents.
     contextTurns: 2,               // earlier visitor messages added to the search, so "and on Thursdays?" finds the page. 0 = latest message only.
     scan: true,                    // scan every upload for emails, cards, keys, "CONFIDENTIAL"… before it goes in
     scanWithModel: true,           // …and ask the model "would a business put this on its website?" (one small call)
+    crawlIntervalHours: 24,        // how often a bot's website is re-crawled. 1, 2, 4, 6, 12 or 24 (the values Cloudflare offers)
+    crawlMaxPages: 200,            // pages per crawl. Keep it under the free plan's 500 a day; raise it on a paid plan
   },
 
   // ---- 6a'. VISITOR ATTACHMENTS: "here's my invoice, what does it say?" --------

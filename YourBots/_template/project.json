@@ -20,6 +20,11 @@
   "bookingUrl": "",
   "bookingFitRules": "",
   "nextSteps": [],
+  "website": {
+    "url": "",
+    "include": [],
+    "exclude": []
+  },
   "thinkingWords": [
     "Thinking",
     "Checking the files",

@@ -222,6 +222,49 @@ of Q&A gives far better answers, and that page belongs in `knowledge/faq.md`.
   depot page the visitor asked about a moment ago. Only the last few hundred
   characters are sent, never the whole chat. 0 = search the latest message only.
 
+### Or point it at your website
+A bot can answer from your site as well as from its documents. Put the address in
+`project.json` → `"website": { "url": "https://example.com" }` (or Configure →
+**Website**), Save, then click **Crawl now**. Cloudflare's crawler reads the
+pages, converts them to text and indexes them in a second AI Search instance for
+that bot (`<library.name>-web-<bot>`), then **re-crawls on its own** — every 24
+hours by default (`config.js` → `library.crawlIntervalHours`; Cloudflare offers
+1, 2, 4, 6, 12 or 24). Each question searches the documents and the pages
+together; the best `maxPassages` win, and a page excerpt is labelled with its
+URL so the bot can say "on your pricing page…". Chip under the answer: 🌐.
+
+What it needs, plainly:
+- **Your own domain, on this Cloudflare account, is the easy case.** Then the
+  crawler starts at the URL, reads your `sitemap.xml` if there is one, and
+  follows links up to five clicks deep — a site with no sitemap still works.
+- **A domain that lives elsewhere gets sitemap-only.** Cloudflare only follows
+  links on domains onboarded to the same account (the bot notices the refusal
+  and falls back by itself). It then reads the site's sitemap and nothing else,
+  so **a site with no sitemap yields no pages** — the Configure screen shows the
+  crawler's own note ("Invalid sitemap…"). If the sitemap isn't at `/sitemap.xml`,
+  name it: `"website": { "url": …, "sitemap": "https://example.com/sitemap-pages.xml" }`.
+- **It reads `robots.txt`** and shows up as Cloudflare's AI Search crawler
+  (user agent `CloudflareAISearch`, Bot Detection ID `122933950`). If your own
+  WAF, Bot Management or Turnstile rules block bots, add an exception for it or
+  the crawl comes back empty.
+- **The free plan crawls 500 pages a day.** `crawlMaxPages` (200 by default)
+  keeps one bot from spending it all. A bigger site: raise it on a paid plan, or
+  narrow the crawl with `include` / `exclude` — glob patterns matched against the
+  full URL, so `**/help/**` keeps the help centre and `**/blog/**` skips the blog.
+  Most accounts get ten rules in total.
+- **No scan.** Uploads are checked for private things before they go in; pages
+  are not, because they're already public. If it's on your website, anyone can
+  already read it — the bot just makes it easier to ask.
+- **Cost.** Storage, indexing and the crawl itself are included with AI Search
+  during the beta. Converting and embedding each page uses Workers AI from the
+  same daily allowance as chat; a 200-page site is a few minutes of that, once a day.
+
+If you change the URL, the old index is thrown away and a fresh one is built on
+the next **Crawl now** — the old pages would otherwise keep answering for a site
+the bot no longer points at. **Forget the site** removes the index; the URL stays
+in the form. A bot whose index is missing (never crawled, or deleted) simply
+answers without it — like everything else here, it fails open.
+
 **Keep the guardrails.** Retrieval changes where the facts come from. It doesn't
 make the bot willing to say "I don't know." And the rule that doesn't change:
 assume anything in the library can be read by anyone who talks to the bot.

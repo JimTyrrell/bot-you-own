@@ -12,6 +12,12 @@
 //  One AI Search instance per deployment; every item is tagged with the bot
 //  it belongs to, so Brightside never sees Ledgerly's files.
 //
+//  A bot can ALSO answer from its own website (project.json → "website").
+//  That is a second, separate AI Search instance per bot, of the "web-crawler"
+//  kind: Cloudflare crawls the site, converts each page to text and indexes it,
+//  and re-crawls on a schedule. See "THE WEBSITE" below. Nothing is uploaded,
+//  so nothing is scanned — the pages are already public.
+//
 //  Two ways in, same place:
 //    1. Configure → Documents (drag a file in; admin code required)
 //    2. Drop files in YourBots/<bot>/knowledge/ in GitHub — an Action syncs
@@ -246,7 +252,6 @@ export async function ensureLibrary(env, config) {
 //  bot answers from knowledge/ as if the library didn't exist.
 // ---------------------------------------------------------------------------
 const QUERY_MAX_CHARS = 600;
-const nothing = () => ({ passages: "", sources: [] });
 
 // Builds the search text from the visitor's messages. contextTurns = how many
 // EARLIER messages to include (0 = the latest message only, the old behaviour).
@@ -260,39 +265,240 @@ export function searchQuery(userTurns, contextTurns = 2) {
   return q.length > QUERY_MAX_CHARS ? q.slice(-QUERY_MAX_CHARS) : q;
 }
 
-export async function retrieve(env, config, bot, userTurns) {
-  if (!libraryEnabled(env, config) || !bot) return nothing();
-  const q = searchQuery(userTurns, config.library.contextTurns ?? 2);
-  if (!q) return nothing();
-  try {
-    const search = (withFilter) => handle(env, config).search({
-      query: q,
-      ai_search_options: {
-        retrieval: {
-          max_num_results: config.library.maxPassages ?? 6,
-          match_threshold: config.library.matchThreshold ?? 0.4,
-          context_expansion: 1,
-          ...(withFilter ? { filters: { bot: { $eq: bot } } } : {}),
-        },
-        query_rewrite: { enabled: true },
+//  THE WEBSITE. One extra instance per bot that has project.json → website.url,
+//  named "<library.name>-web-<bot>". Cloudflare does the crawling (its own
+//  "CloudflareAISearch" crawler, from the site's sitemap or by following links),
+//  keeps the pages in the instance, and re-crawls every `crawlIntervalHours`.
+//  Created the first time someone clicks "Crawl now" — never during a chat.
+//  If the URL changes we delete the instance and create a fresh one: the old
+//  pages would otherwise sit in the index answering questions about a site
+//  the bot no longer points at, and AI Search has no "forget that site" call.
+// ---------------------------------------------------------------------------
+export function websiteOf(project) {
+  const w = project?.website;
+  const url = String(w?.url || "").trim();
+  const sitemap = String(w?.sitemap || "").trim();
+  return /^https?:\/\/\S+$/i.test(url) ? { url, include: listOf(w?.include), exclude: listOf(w?.exclude), sitemap: /^https?:\/\/\S+$/i.test(sitemap) ? sitemap : "" } : null;
+}
+const listOf = (v) => (Array.isArray(v) ? v : String(v || "").split(/[\n,]/)).map((x) => String(x).trim()).filter(Boolean).slice(0, 10);
+
+// Instance ids: lowercase letters, digits, _ and single dashes, 32 chars max.
+// A long library name + a long bot id can overflow, so the tail becomes a
+// short hash of the full name — still deterministic, still unique per bot.
+export function websiteInstanceName(config, bot) {
+  const full = `${config.library.name}-web-${bot}`.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  if (full.length <= 32) return full;
+  let h = 2166136261;                                             // FNV-1a, plenty for a name
+  for (let i = 0; i < full.length; i++) { h ^= full.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return full.slice(0, 25).replace(/-$/, "") + "-" + h.toString(16).slice(0, 6);
+}
+
+const SYNC_INTERVALS = [3600, 7200, 14400, 21600, 43200, 86400];   // the only values AI Search accepts
+function syncInterval(config) {
+  const want = Math.round((Number(config.library?.crawlIntervalHours) || 24) * 3600);
+  return SYNC_INTERVALS.reduce((best, v) => (Math.abs(v - want) < Math.abs(best - want) ? v : best), 86400);
+}
+
+// What we ask Cloudflare to create. Two ways to find pages:
+//   "discover" — start at the URL, follow links AND read the sitemap. Works for
+//                a site with no sitemap, but only for a domain that is on THIS
+//                Cloudflare account (a "verified zone"). Tried first.
+//   "sitemap"  — read sitemap.xml only. The fallback when the domain lives
+//                elsewhere; a site with no sitemap then yields no pages.
+// Depth 5 and `crawlMaxPages` keep a big site from eating the free plan's 500 pages a day.
+function websiteConfig(config, bot, site, parseType = "discover") {
+  if (site.sitemap) parseType = "sitemap";                        // a named sitemap means: read that, exactly
+  return {
+    id: websiteInstanceName(config, bot),
+    type: "web-crawler",
+    source: site.url,
+    source_params: {
+      ...(site.include.length ? { include_items: site.include } : {}),
+      ...(site.exclude.length ? { exclude_items: site.exclude } : {}),
+      web_crawler: {
+        parse_type: parseType,
+        ...(parseType === "discover" ? { discover_options: { depth: 5, limit: Math.max(1, Math.min(100000, Number(config.library?.crawlMaxPages) || 200)), source: "all", include_subdomains: false, include_external_links: false } } : {}),
+        parse_options: { use_browser_rendering: false, include_images: false, ...(site.sitemap ? { specific_sitemaps: [site.sitemap] } : {}) },
       },
-    });
-    let r;
-    try { r = await search(true); }
-    catch (err) { if (!/undeclared metadata/i.test(String(err?.message || err))) throw err; r = await search(false); }
-    // Belt and braces: the filter is the wall; the key prefix is the second wall.
-    const chunks = (Array.isArray(r?.chunks) ? r.chunks : []).filter((c) => String(c.item?.key || "").startsWith(bot + "/"));
-    if (!chunks.length) return nothing();
-    // The key is "<bot>/<file name>"; the visitor sees just the file name.
-    const nameOf = (c) => String(c.item?.key || "document").slice(bot.length + 1);
-    const passages = chunks.map((c) => `<excerpt from="${nameOf(c)}">\n${String(c.text || "").trim()}\n</excerpt>`).join("\n\n");
-    const sources = [...new Set(chunks.map(nameOf))];
-    return { passages, sources };
-  } catch (err) {
-    // No instance yet, still indexing, or AI Search hiccup. Bot still works.
-    console.error("library search failed (continuing without it)", err?.message || err);
-    return nothing();
+    },
+    sync_interval: syncInterval(config),
+  };
+}
+const needsOwnZone = (err) => /verified_zone|verified zone/i.test(String(err?.message || err));
+
+async function findInstance(env, id) {
+  try {
+    const { result } = await env.AI_SEARCH.list({ search: id, per_page: 50 });
+    return (Array.isArray(result) ? result : []).find((i) => i.id === id) || null;
+  } catch (err) { console.error("instance list failed", err?.message || err); return null; }
+}
+
+// Make sure the bot's website instance exists and points at the right URL.
+// Returns { name, created, recreated, updated } or throws (admin routes only).
+export async function ensureWebsite(env, config, bot, site) {
+  if (!libraryEnabled(env, config)) throw new Error("the library isn't switched on");
+  if (!site?.url) throw new Error("no website URL");
+  const want = websiteConfig(config, bot, site);
+  const have = await findInstance(env, want.id);
+  const out = { name: want.id, created: false, recreated: false, updated: false, parseType: "discover" };
+  if (have && String(have.source || "").replace(/\/$/, "") !== want.source.replace(/\/$/, "")) {
+    // The URL changed: start over (see the note at the top of this section).
+    await env.AI_SEARCH.delete(want.id);
+    out.recreated = true;
+  } else if (have) {
+    // Same site — keep the pages, but refresh the filters and the schedule in
+    // case they were edited in project.json. Cheap, and idempotent. The way
+    // pages are found (discover / sitemap) stays whatever it was created with.
+    out.parseType = have.source_params?.web_crawler?.parse_type || out.parseType;
+    const keep = websiteConfig(config, bot, site, out.parseType);
+    try { await env.AI_SEARCH.get(want.id).update({ source_params: keep.source_params, sync_interval: keep.sync_interval }); out.updated = true; }
+    catch (err) { console.warn("website instance update failed (keeping it as is)", err?.message || err); }
+    return out;
   }
+  try { await env.AI_SEARCH.create(want); }
+  catch (err) {
+    if (!needsOwnZone(err)) throw err;
+    // The domain isn't on this account, so link-following is off the table.
+    // Sitemap-only still works — if the site publishes one.
+    console.warn(`website ${site.url} is not a zone on this account; crawling from its sitemap only`);
+    await env.AI_SEARCH.create(websiteConfig(config, bot, site, "sitemap"));
+    out.parseType = "sitemap";
+  }
+  out.created = !out.recreated;
+  return out;
+}
+
+// "Crawl now": create if needed, then kick off a crawl job.
+export async function crawlWebsite(env, config, bot, site) {
+  const ensured = await ensureWebsite(env, config, bot, site);
+  let job = null;
+  try { job = await env.AI_SEARCH.get(ensured.name).jobs.create({ description: "Crawl now (from Configure)" }); }
+  catch (err) {
+    // A brand-new instance starts its own first crawl; asking for another one
+    // while it runs is refused. That's fine — it's crawling.
+    if (!ensured.created && !ensured.recreated) throw err;
+    console.warn("job create refused right after create (the first crawl is already running)", err?.message || err);
+  }
+  return { ...ensured, job };
+}
+
+// What the Configure screen shows: does the instance exist, how many pages,
+// what the last crawl did. Never throws — a missing instance is a state, not an error.
+export async function websiteStatus(env, config, bot, site) {
+  const name = websiteInstanceName(config, bot);
+  const out = { enabled: libraryEnabled(env, config), name, url: site?.url || "", exists: false, source: "", pages: 0, indexing: 0, errors: 0, lastActivity: null, lastJob: null, syncIntervalHours: syncInterval(config) / 3600, status: "" };
+  if (!out.enabled) return out;
+  const inst = env.AI_SEARCH.get(name);
+  let info;
+  try { info = await inst.info(); } catch (err) { out.status = "not created yet"; return out; }
+  out.exists = true; out.source = String(info?.source || ""); out.status = String(info?.status || "");
+  out.parseType = info?.source_params?.web_crawler?.parse_type || "";
+  out.mismatch = Boolean(site?.url && out.source && out.source.replace(/\/$/, "") !== site.url.replace(/\/$/, ""));
+  try {
+    const s = await inst.stats();
+    out.pages = s?.completed ?? 0; out.indexing = (s?.queued ?? 0) + (s?.running ?? 0); out.errors = s?.error ?? 0; out.lastActivity = s?.last_activity || null;
+  } catch (err) { console.warn("website stats failed", err?.message || err); }
+  try {
+    const { result } = await inst.jobs.list({ page: 1, per_page: 1 });
+    const j = Array.isArray(result) && result[0];
+    if (j) out.lastJob = { id: j.id, source: j.source, startedAt: j.started_at || null, endedAt: j.ended_at || null, endReason: j.end_reason || null, running: !j.ended_at, notes: [] };
+    // The crawler's own last words — "Invalid sitemap …", "got 12 pages" — are
+    // the difference between "0 pages" and knowing why.
+    if (j) {
+      try {
+        const { result } = await inst.jobs.get(j.id).logs({ page: 1, per_page: 40 });
+        out.lastJob.notes = (Array.isArray(result) ? result : []).map((l) => String(l.message || "")).filter((m) => /pages|sitemap|invalid|error|failed|blocked|robots|limit|skipp/i.test(m) && !/not authoritative/i.test(m)).slice(0, 6);
+      } catch (err) { console.warn("website job logs failed", err?.message || err); }
+    }
+  } catch (err) { console.warn("website jobs list failed", err?.message || err); }
+  return out;
+}
+
+// Remove the bot's website instance and every crawled page with it.
+export async function deleteWebsite(env, config, bot) {
+  if (!libraryEnabled(env, config)) return false;
+  const name = websiteInstanceName(config, bot);
+  if (!(await findInstance(env, name))) return false;
+  await env.AI_SEARCH.delete(name);
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+//  Retrieval — every chat turn. Returns { text, library, website }: the excerpt
+//  block for the prompt ("" if nothing), and which sources were actually used.
+//  The document library and the website are searched side by side, the best
+//  `maxPassages` by score win, and each excerpt says where it came from — a
+//  filename, or the page's URL.
+// ---------------------------------------------------------------------------
+export async function retrieve(env, config, bot, userTurns, { website = null } = {}) {
+  // What comes back, always (fail-open means every path returns this shape):
+  //   text     — the excerpts, ready for the prompt ("" if nothing was found)
+  //   sources  — document names and page URLs, each once, for the 📄/🌐 chips
+  //   library  — true if a document excerpt was used
+  //   website  — true if a crawled page was used
+  const none = { text: "", passages: "", sources: [], library: false, website: false };
+  if (!libraryEnabled(env, config) || !bot) return none;
+  const q = searchQuery(userTurns, config.library.contextTurns ?? 2);
+  if (!q) return none;
+  const max = config.library.maxPassages ?? 6;
+  const options = (extra) => ({
+    query: q,
+    ai_search_options: {
+      retrieval: { max_num_results: max, match_threshold: config.library.matchThreshold ?? 0.4, context_expansion: 1, ...extra },
+      query_rewrite: { enabled: true },
+    },
+  });
+
+  // The library, filtered to this bot. Belt and braces: the filter is the
+  // wall; the key prefix is the second wall.
+  const fromLibrary = async () => {
+    try {
+      const search = (withFilter) => handle(env, config).search(options(withFilter ? { filters: { bot: { $eq: bot } } } : {}));
+      let r;
+      try { r = await search(true); }
+      catch (err) { if (!/undeclared metadata/i.test(String(err?.message || err))) throw err; r = await search(false); }
+      return (Array.isArray(r?.chunks) ? r.chunks : [])
+        .filter((c) => String(c.item?.key || "").startsWith(bot + "/"))
+        .map((c) => ({ score: Number(c.score) || 0, from: String(c.item?.key || "document").slice(bot.length + 1), text: String(c.text || "").trim(), web: false }));
+    } catch (err) {
+      // No instance yet, still indexing, or AI Search hiccup. Bot still works.
+      console.error("library search failed (continuing without it)", err?.message || err);
+      return [];
+    }
+  };
+
+  // The website, only for a bot that has one. Its own instance, so no filter.
+  // Not crawled yet, deleted, or down → same as having no website.
+  const fromWebsite = async () => {
+    if (!website?.url) return [];
+    try {
+      const r = await env.AI_SEARCH.get(websiteInstanceName(config, bot)).search(options({}));
+      return (Array.isArray(r?.chunks) ? r.chunks : [])
+        .map((c) => ({ score: Number(c.score) || 0, from: pageUrl(c.item, website.url), text: String(c.text || "").trim(), web: true }));
+    } catch (err) {
+      console.error("website search failed (continuing without it)", err?.message || err);
+      return [];
+    }
+  };
+
+  const [lib, web] = await Promise.all([fromLibrary(), fromWebsite()]);
+  const picked = [...lib, ...web].filter((c) => c.text).sort((a, b) => b.score - a.score).slice(0, max);
+  if (!picked.length) return none;
+  const text = picked.map((c) => `<excerpt from="${c.from.replace(/"/g, "")}">\n${c.text}\n</excerpt>`).join("\n\n");
+  return {
+    text,
+    passages: text,
+    sources: [...new Set(picked.map((c) => c.from))],
+    library: picked.some((c) => !c.web),
+    website: picked.some((c) => c.web),
+  };
+}
+
+function pageUrl(item, siteUrl) {
+  const m = item?.metadata || {};
+  const cand = [m.url, m.source_url, m.page_url, item?.key].map((v) => String(v || "").trim()).find(Boolean) || "";
+  if (/^https?:\/\//i.test(cand)) return cand;
+  try { return new URL(cand.replace(/^\/+/, "/"), siteUrl).href; } catch { return siteUrl; }
 }
 
 // ---------------------------------------------------------------------------
