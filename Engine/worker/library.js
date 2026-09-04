@@ -71,7 +71,7 @@ export function allExtensions() { return [...SUPPORTED.rich, ...SUPPORTED.text];
 
 // What the Configure screen and the sync script need to explain themselves.
 export function libraryMeta(env, config) {
-  return { enabled: libraryEnabled(env, config), extensions: allExtensions(), maxBytes: MAX_BYTES, scan: config.library?.scan !== false };
+  return { enabled: libraryEnabled(env, config), extensions: allExtensions(), maxBytes: MAX_BYTES, scan: config.library?.scan !== false, contextTurns: config.library?.contextTurns ?? 2 };
 }
 
 // Returns { ok: true, name, ext } or { ok: false, reason }.
@@ -213,12 +213,41 @@ export async function ensureLibrary(env, config) {
 }
 
 // ---------------------------------------------------------------------------
-//  Retrieval — every chat turn. "" if there's nothing (or nothing works).
+//  Retrieval — every chat turn. Returns { passages, sources }:
+//    passages — the excerpts, ready for the prompt ("" if nothing was found)
+//    sources  — the names of the documents they came from, each listed once,
+//               so the page can show "📄 depot-notes.pdf" under the answer.
+//               Names only: no ids, no links. The files themselves stay
+//               admin-only.
+//
+//  `userTurns` is what the visitor has said so far, most recent last. The
+//  search uses the latest message PLUS a couple before it (config.library
+//  .contextTurns), because "and on Thursdays?" means nothing on its own — the
+//  depot it's asking about was named in the previous message. The whole chat
+//  is never sent; a few hundred characters is plenty for a search.
+//
+//  Nothing found, or nothing working → { passages: "", sources: [] } and the
+//  bot answers from knowledge/ as if the library didn't exist.
 // ---------------------------------------------------------------------------
-export async function retrieve(env, config, bot, question) {
-  if (!libraryEnabled(env, config) || !bot) return "";
-  const q = String(question || "").trim();
-  if (!q) return "";
+const QUERY_MAX_CHARS = 600;
+const nothing = () => ({ passages: "", sources: [] });
+
+// Builds the search text from the visitor's messages. contextTurns = how many
+// EARLIER messages to include (0 = the latest message only, the old behaviour).
+export function searchQuery(userTurns, contextTurns = 2) {
+  const turns = (Array.isArray(userTurns) ? userTurns : [userTurns]).map((t) => String(t || "").trim()).filter(Boolean);
+  if (!turns.length) return "";
+  const earlier = Math.max(0, Math.floor(Number(contextTurns) || 0));
+  const q = turns.slice(-(earlier + 1)).join("\n");
+  // Over the cap → keep the END. The oldest context is what gets trimmed; the
+  // question being asked right now always survives.
+  return q.length > QUERY_MAX_CHARS ? q.slice(-QUERY_MAX_CHARS) : q;
+}
+
+export async function retrieve(env, config, bot, userTurns) {
+  if (!libraryEnabled(env, config) || !bot) return nothing();
+  const q = searchQuery(userTurns, config.library.contextTurns ?? 2);
+  if (!q) return nothing();
   try {
     const search = (withFilter) => handle(env, config).search({
       query: q,
@@ -237,12 +266,16 @@ export async function retrieve(env, config, bot, question) {
     catch (err) { if (!/undeclared metadata/i.test(String(err?.message || err))) throw err; r = await search(false); }
     // Belt and braces: the filter is the wall; the key prefix is the second wall.
     const chunks = (Array.isArray(r?.chunks) ? r.chunks : []).filter((c) => String(c.item?.key || "").startsWith(bot + "/"));
-    if (!chunks.length) return "";
-    return chunks.map((c) => `<excerpt from="${String(c.item?.key || "document").slice(bot.length + 1)}">\n${String(c.text || "").trim()}\n</excerpt>`).join("\n\n");
+    if (!chunks.length) return nothing();
+    // The key is "<bot>/<file name>"; the visitor sees just the file name.
+    const nameOf = (c) => String(c.item?.key || "document").slice(bot.length + 1);
+    const passages = chunks.map((c) => `<excerpt from="${nameOf(c)}">\n${String(c.text || "").trim()}\n</excerpt>`).join("\n\n");
+    const sources = [...new Set(chunks.map(nameOf))];
+    return { passages, sources };
   } catch (err) {
     // No instance yet, still indexing, or AI Search hiccup. Bot still works.
     console.error("library search failed (continuing without it)", err?.message || err);
-    return "";
+    return nothing();
   }
 }
 

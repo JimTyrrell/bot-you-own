@@ -74,10 +74,13 @@ export const CONFIG = {
   // the bot gets the relevant passages per question. Each bot only sees its own.
   // Two ways in: Configure → Documents, or drop files into YourBots/<bot>/knowledge/
   // and let the GitHub Action sync them. docs/CUSTOMIZE.md → "Give it documents".
+  // Answers that used the library cite it: a 📄 chip per document under the reply
+  // (names only — visitors never get the files).
   library: {
     name: "bot-you-own-library",   // the AI Search instance; created on first upload
     maxPassages: 6,                // excerpts per question. 4–8. More is not smarter.
     matchThreshold: 0.4,           // 0–1. Raise to 0.5 if it quotes unrelated documents.
+    contextTurns: 2,               // earlier visitor messages added to the search, so "and on Thursdays?" finds the page. 0 = latest message only.
     scan: true,                    // scan every upload for emails, cards, keys, "CONFIDENTIAL"… before it goes in
     scanWithModel: true,           // …and ask the model "would a business put this on its website?" (one small call)
   },

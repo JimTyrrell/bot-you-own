@@ -63,7 +63,9 @@ Cloudflare **AI Search**, which converts them to text (PDFs, Word, sheets, and
 images — a vision model reads a screenshot of your price list), chunks them, and
 hands the bot only the passages relevant to each question. They land inside
 `<files>` in the prompt, so strict/open grounding and every firewall rule apply
-unchanged. Each bot only sees its own documents. Chip under the answer: 📚.
+unchanged. Each bot only sees its own documents. Chips under the answer: 📚 when
+the library was used, and **📄 *file-name*** for each document the excerpts came
+from — the citation. Visitors see the names only, never the files.
 
 It's already wired (`wrangler.jsonc` → `ai_search_namespaces`, `YourBots/config.js`
 → `library`). The Worker creates its own AI Search instance on the first upload —
@@ -135,10 +137,14 @@ re-export at lower quality or split it. **Transcripts:** a raw call transcript i
 40 minutes of "um" and the bot will quote it. Ten minutes turning it into a page
 of Q&A gives far better answers, and that page belongs in `knowledge/faq.md`.
 
-### Two dials · `config.js` → `library`
+### Three dials · `config.js` → `library`
 - `maxPassages` — excerpts per question. 6. Past 8 answers get vaguer, not smarter.
 - `matchThreshold` — how relevant an excerpt must be. 0.4 (Cloudflare's default).
   Quoting unrelated documents → 0.5. "I don't know" about things clearly in a PDF → 0.3.
+- `contextTurns` — how many of the visitor's *earlier* messages go into the search
+  along with the latest one. 2. That's what makes "and on Thursdays?" find the
+  depot page the visitor asked about a moment ago. Only the last few hundred
+  characters are sent, never the whole chat. 0 = search the latest message only.
 
 **Keep the guardrails.** Retrieval changes where the facts come from. It doesn't
 make the bot willing to say "I don't know." And the rule that doesn't change:
