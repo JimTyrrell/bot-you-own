@@ -21,6 +21,9 @@
 //  numbers, card numbers, API keys, "CONFIDENTIAL", contract language, and a
 //  second opinion from the model. Anything found = held back with the list.
 //  You can override. The point is that nothing private goes in by accident.
+//  "Scan again" (rescanLibrary) re-runs the same check on everything already
+//  in, and every outcome — held, override, clean upload, remove — is written
+//  to the library_events table in D1 (index.js) so there's a record.
 //
 //  Fail-open for readers: no binding, no instance, AI Search down — the bot
 //  still answers from knowledge/. It never breaks because a PDF didn't index.
@@ -71,7 +74,7 @@ export function allExtensions() { return [...SUPPORTED.rich, ...SUPPORTED.text];
 
 // What the Configure screen and the sync script need to explain themselves.
 export function libraryMeta(env, config) {
-  return { enabled: libraryEnabled(env, config), extensions: allExtensions(), maxBytes: MAX_BYTES, scan: config.library?.scan !== false };
+  return { enabled: libraryEnabled(env, config), extensions: allExtensions(), maxBytes: MAX_BYTES, scan: config.library?.scan !== false, scanWithModel: Boolean(config.library?.scanWithModel) };
 }
 
 // Returns { ok: true, name, ext } or { ok: false, reason }.
@@ -181,6 +184,18 @@ When unsure, say PUBLIC. Do not explain.` },
   } catch (err) { console.error("model scan failed (ignoring)", err?.message || err); return null; }
 }
 
+// The whole scan in one place — extract, pattern checks, model's opinion — so
+// an upload and a "Scan again" of something already in are checked the SAME
+// way. Returns [] when clean, else the list the admin is shown.
+async function runScan(env, config, name, ext, bytes) {
+  const text = await extractText(env, name, ext, bytes);
+  const flagged = scanText(text);
+  const opinion = await modelOpinion(env, config, name, text);
+  if (opinion) flagged.push({ id: "model", label: "looks private", count: 1, sample: opinion });
+  if (!text && !SUPPORTED.text.includes(ext)) flagged.push({ id: "unscanned", label: "couldn't read it to check", count: 1, sample: "Conversion failed, so the scan didn't run." });
+  return flagged;
+}
+
 // ---------------------------------------------------------------------------
 //  The instance. One per deployment, created on first upload. Nothing to click.
 // ---------------------------------------------------------------------------
@@ -257,11 +272,7 @@ export async function uploadFile(env, config, bot, name, bytes, { override = fal
   if (!g.ok) return { ok: false, name, reason: g.reason };
 
   if (config.library?.scan !== false && !override) {
-    const text = await extractText(env, g.name, g.ext, bytes);
-    const flagged = scanText(text);
-    const opinion = await modelOpinion(env, config, g.name, text);
-    if (opinion) flagged.push({ id: "model", label: "looks private", count: 1, sample: opinion });
-    if (!text && !SUPPORTED.text.includes(g.ext)) flagged.push({ id: "unscanned", label: "couldn't read it to check", count: 1, sample: "Conversion failed, so the scan didn't run." });
+    const flagged = await runScan(env, config, g.name, g.ext, bytes);
     if (flagged.length) return { ok: false, name: g.name, flagged, needsOverride: true };
   }
 
@@ -338,17 +349,50 @@ export async function downloadFile(env, config, bot, id) {
   const mine = await listFiles(env, config, bot);
   const f = mine.find((x) => x.id === id);
   if (!f) return null;
+  const { bytes, contentType } = await downloadBytes(lib, id);
+  return { ...f, bytes, contentType };
+}
+async function downloadBytes(lib, id) {
   const r = await lib.items.get(id).download();
   const body = r?.body ?? r;                       // { body, contentType, filename, size } or a bare stream
   const bytes = body instanceof ArrayBuffer ? body : await new Response(body).arrayBuffer();
-  return { ...f, bytes, contentType: r?.contentType || "" };
+  return { bytes, contentType: r?.contentType || "" };
 }
 
+// "Scan again": rules change, and what went in last month should be checkable
+// against this month's list. Every document of this bot is pulled back out and
+// run through the same scan as an upload. READ-ONLY — nothing in the library is
+// changed, moved or re-approved; the admin decides what to do with the list.
+// Capped at `limit` files per call (each is a download + conversion, plus one
+// model call when scanWithModel is on); `truncated` says there were more.
+export const RESCAN_LIMIT = 25;
+export async function rescanLibrary(env, config, bot, { limit = RESCAN_LIMIT } = {}) {
+  const lib = await ensureLibrary(env, config);
+  const mine = await listFiles(env, config, bot);
+  const batch = mine.slice(0, limit);
+  const results = [];
+  for (const f of batch) {
+    const ext = extensionOf(f.name);
+    try {
+      const { bytes } = await downloadBytes(lib, f.id);
+      const flagged = await runScan(env, config, f.name, ext, bytes);
+      results.push({ name: f.name, id: f.id, approved: f.approved, flagged });
+    } catch (err) {
+      // One bad download doesn't sink the batch — it's reported as a flag of its own.
+      console.error("rescan failed for", f.name, err?.message || err);
+      results.push({ name: f.name, id: f.id, approved: f.approved, flagged: [{ id: "unscanned", label: "couldn't read it to check", count: 1, sample: String(err?.message || err).slice(0, 120) }] });
+    }
+  }
+  return { results, scanned: batch.length, total: mine.length, truncated: mine.length > batch.length };
+}
+
+// Returns the removed file's record (name, id…) or false if it wasn't this bot's.
 export async function deleteFile(env, config, bot, id) {
   const lib = await ensureLibrary(env, config);
   // Only this bot's items. A wrong id for another bot is a 404, not a deletion.
   const mine = await listFiles(env, config, bot);
-  if (!mine.some((f) => f.id === id)) return false;
+  const f = mine.find((x) => x.id === id);
+  if (!f) return false;
   await lib.items.delete(id);
-  return true;
+  return f;
 }

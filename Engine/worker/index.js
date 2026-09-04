@@ -4,7 +4,7 @@ import { buildSystemPrompt, PROMPT_FILES, ROOT_PROMPT_FILES } from "./prompt.js"
 import { complete } from "./gateway.js";
 import { screenInbound, screenOutbound, ensureHandoff, llamaGuard, redact, INJECTION_PATTERNS, SECRET_PATTERNS, LLAMA_GUARD_MODEL } from "./firewall.js";
 import { MODES } from "./modes.js";
-import { retrieve, uploadFile, listFiles, deleteFile, downloadFile, libraryMeta } from "./library.js";
+import { retrieve, uploadFile, listFiles, deleteFile, downloadFile, rescanLibrary, libraryMeta } from "./library.js";
 
 // ============================================================================
 //  THE WORKER. Three routes and a static folder.
@@ -15,6 +15,8 @@ import { retrieve, uploadFile, listFiles, deleteFile, downloadFile, libraryMeta 
 //  Admin (x-admin-token): /api/admin/engine, /audit, /projects, /project,
 //    /api/admin/library?project=<id>  GET list · POST upload (multipart "file",
 //    optional "override") · DELETE /api/admin/library/<itemId>?project=<id>
+//    POST /api/admin/library/rescan?project=<id>   re-check every document (read-only)
+//    GET  /api/admin/library/audit?project=<id|*>  what the scan did, newest first
 // ============================================================================
 
 export default {
@@ -358,7 +360,10 @@ async function resolveProject(env, id) {
 // --- The library: this bot's documents in AI Search. Admin only; every upload
 //     is scanned first (Engine/worker/library.js). ---------------------------------
 async function handleLibrary(request, env, url) {
-  const bot = String(url.searchParams.get("project") || "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40);
+  const raw = String(url.searchParams.get("project") || "");
+  // The audit needs D1, not AI Search, and takes "*" for every bot — so it goes first.
+  if (request.method === "GET" && url.pathname === "/api/admin/library/audit") return json(await libraryAudit(env, raw, url.searchParams.get("limit")));
+  const bot = raw.toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40);
   if (!bot) return json({ error: "which bot? add ?project=<id>" }, 400);
   const meta = libraryMeta(env, CONFIG);
   if (!meta.enabled) return json({ error: "The library isn't switched on: wrangler.jsonc needs the ai_search_namespaces binding and YourBots/config.js → library.name. See docs/CUSTOMIZE.md → Give it documents.", ...meta }, 503);
@@ -370,19 +375,31 @@ async function handleLibrary(request, env, url) {
       if (!files.length) return json({ error: "No file in the request. Send multipart/form-data with a 'file' field." }, 400);
       const override = ["1", "true", "yes"].includes(String(form.get("override") || "").toLowerCase());
       const source = String(form.get("source") || "upload");   // "github" = the sync action owns it
+      const who = source === "github" ? "github" : "admin";     // the only two things that upload today
       const results = [];
       for (const f of files.slice(0, 10)) {
         const res = await uploadFile(env, CONFIG, bot, f.name, await f.arrayBuffer(), { override, source });
         // The override is the one thing worth a permanent line in the logs.
         if (override && res.ok) console.log(JSON.stringify({ event: "library-override", bot, file: res.name }));
+        // …and every outcome gets a row in the audit table (when D1 is bound).
+        if (res.ok) await logLibraryEvent(env, bot, res.name, override ? "override" : "upload", "", who);
+        else if (res.needsOverride) await logLibraryEvent(env, bot, res.name, "held", JSON.stringify(res.flagged), who);
         results.push(res);
       }
       return json({ results });
     }
+    // Scan again: every document, same checks as an upload, nothing changed.
+    if (request.method === "POST" && url.pathname === "/api/admin/library/rescan") {
+      const r = await rescanLibrary(env, CONFIG, bot);
+      for (const f of r.results) if (f.flagged.length) await logLibraryEvent(env, bot, f.name, "rescan-held", JSON.stringify(f.flagged), "admin");
+      return json({ ...r, scanWithModel: meta.scanWithModel });
+    }
     if (request.method === "DELETE" && url.pathname.startsWith("/api/admin/library/")) {
       const id = decodeURIComponent(url.pathname.slice("/api/admin/library/".length));
-      const ok = await deleteFile(env, CONFIG, bot, id);
-      return ok ? json({ ok: true }) : json({ error: "no such file for this bot" }, 404);
+      const gone = await deleteFile(env, CONFIG, bot, id);
+      if (!gone) return json({ error: "no such file for this bot" }, 404);
+      await logLibraryEvent(env, bot, gone.name, "remove", "", "admin");
+      return json({ ok: true });
     }
     // The original file back out (admin only) — what Commit to GitHub writes into the repo.
     if (request.method === "GET" && /^\/api\/admin\/library\/[^/]+\/download$/.test(url.pathname)) {
@@ -397,6 +414,34 @@ async function handleLibrary(request, env, url) {
   }
   return json({ error: "method" }, 405);
 }
+// --- The scan's own record. What was held, what was put in anyway, what was
+//     removed — durable, in D1, next to the conversations. Fail-open: no DB, no
+//     row, no error. Workers Logs still get the override line above.
+//     event: held | override | upload | remove | rescan-held
+//     detail: for held/rescan-held, the JSON list the admin was shown (labels, counts, masked samples)
+//     who: "admin" (Configure) or "github" (the sync action)
+async function logLibraryEvent(env, bot, file, event, detail = "", who = "admin") {
+  if (!env.DB) return;
+  try {
+    await ensureSchema(env);
+    await env.DB.prepare(`INSERT INTO library_events (bot, file, event, detail, who, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+      .bind(bot, file, event, String(detail || "").slice(0, 4000), who, new Date().toISOString()).run();
+  } catch (err) { console.error("library event log failed (continuing)", err?.message || err); }
+}
+
+// GET /api/admin/library/audit?project=<bot>&limit=100 — newest first. project=* for every bot.
+async function libraryAudit(env, project, limitRaw) {
+  if (!env.DB) return { enabled: false, rows: [], reason: "No D1 database is bound (wrangler.jsonc → d1_databases). Overrides still go to Workers Logs." };
+  await ensureSchema(env);
+  const limit = Math.min(Math.max(parseInt(limitRaw || "100", 10) || 100, 1), 500);
+  const all = !project || project === "*";
+  const bot = project.toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40);
+  const sql = `SELECT id, bot, file, event, detail, who, created_at FROM library_events ${all ? "" : "WHERE bot = ?"} ORDER BY id DESC LIMIT ?`;
+  const stmt = all ? env.DB.prepare(sql).bind(limit) : env.DB.prepare(sql).bind(bot, limit);
+  const rows = ((await stmt.all()).results || []).map((r) => { let detail = []; try { detail = r.detail ? JSON.parse(r.detail) : []; } catch { detail = []; } return { ...r, detail }; });
+  return { enabled: true, rows };
+}
+
 async function resolveList(env) {
   const saved = await savedProjects(env);
   const folder = folderList().map((p) => ({ ...p, source: saved[p.id] ? "saved (overrides folder)" : "folder" }));
@@ -416,6 +461,9 @@ async function ensureSchema(env) {
     env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_conv_created ON conversations(created_at)`),
     env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_conv_refused ON conversations(refused)`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at TEXT NOT NULL)`),
+    // What the document scan did: held / override / upload / remove / rescan-held. See logLibraryEvent.
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS library_events (id INTEGER PRIMARY KEY AUTOINCREMENT, bot TEXT, file TEXT, event TEXT NOT NULL, detail TEXT, who TEXT, created_at TEXT NOT NULL)`),
+    env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_libev_bot ON library_events(bot, id)`),
   ]);
   SCHEMA_OK = true;
 }

@@ -113,6 +113,26 @@ and commit — the job fails loudly until you do, so nothing slips by, and the
 approval sits in git history with your name on it. Overrides are also written
 to Workers Logs (`event: "library-override"`).
 
+**Scan again.** Rules change — a check gets added, or you tighten the list — and
+what went in last month should be checkable against this month's rules. Configure
+→ Documents → **Scan again** pulls every document of this bot back out and runs the
+same scan as an upload, then shows one line per file: *clean*, or the list of what
+it found, plus *approved earlier* on anything you put in over the scan the first
+time. It **changes nothing** — nothing is removed or re-approved; you decide.
+Up to 25 documents per run. Cost: one model call per document when
+`scanWithModel` is on (pattern checks are free). Same thing from the terminal:
+`POST /api/admin/library/rescan?project=<bot>` with the `x-admin-token` header.
+
+**There's a record.** When the D1 database is bound, every outcome is written to a
+`library_events` table: `held` (with what was found), `override` (put in anyway),
+`upload` (went in clean), `remove`, and `rescan-held`. `who` is `admin` for
+Configure and `github` for the sync action. Read it under the hood → **Files**
+(when · file · event · detail · who), or with
+`GET /api/admin/library/audit?project=<bot>&limit=100` (`project=*` for every bot),
+or straight from the database:
+`wrangler d1 execute bot-you-own-logs --remote --command "SELECT created_at, bot, file, event, who FROM library_events ORDER BY id DESC LIMIT 50"`.
+No database bound = no rows, no error; overrides still go to Workers Logs.
+
 **What it can't catch, said plainly:** names, addresses, "the Henderson deal is in
 trouble." The scan stops accidents; it doesn't replace reading the file. Knobs
 in `config.js` → `library`: `scan: false` turns it off; `scanWithModel: false`
