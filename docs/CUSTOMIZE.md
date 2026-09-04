@@ -56,6 +56,62 @@ SELECT flags, COUNT(*) n FROM conversations WHERE flags != '' GROUP BY flags ORD
 ```
 Tell people conversations are recorded if it matters — a line in your privacy policy.
 
+## When it hands off, tell someone
+A handoff that only prints your phone number is a handoff you never hear about.
+Each bot can call a webhook and/or send an email **after** the reply has gone out
+(the visitor never waits for it, and a webhook that's down changes nothing they see).
+
+`YourBots/<bot>/project.json` — or Configure → "When it hands off, tell someone":
+```json
+"handoffActions": { "webhook": "https://hooks.zapier.com/hooks/catch/…", "email": "you@yourbusiness.com", "on": ["handoff", "intake-complete"] }
+```
+`on` picks what fires it: `handoff` (a real decline — the bot said its handoff line,
+or the firewall had to add the contact; injection / rate-limit / model-error turns do
+**not** count), `intake-complete` (an intake bot collected everything — the job prompt
+makes the model end its summary with a `[INTAKE COMPLETE]` line that the code strips
+before anyone sees it), `every-turn` (off by default; noisy). One event per turn, the
+most specific one.
+
+**Zapier / Make / n8n / Slack in three lines:**
+1. Make a "Catch hook" (Zapier), "Custom webhook" (Make), "Webhook" node (n8n) or a Slack
+   *incoming webhook* and copy its URL.
+2. Paste it into the bot's webhook field (Configure → Save, or edit project.json and commit).
+3. Ask the bot something it can't answer. The tool receives:
+```json
+{ "event": "handoff", "bot": { "id": "brightside-dental", "name": "Brightside Dental" }, "when": "2026-09-03T…",
+  "visitor": "sam@example.com", "question": "…", "reply": "…", "transcript": [ { "role": "user", "content": "…" } ],
+  "flags": ["handoff-appended"], "url": "https://your-bot.workers.dev/?project=brightside-dental",
+  "text": "[Brightside Dental] handoff · sam@example.com\nAsked: …\nBot: …" }
+```
+Slack renders `text` as the message; the other tools see every field. `transcript` is
+the last 8 turns. Question, reply and transcript are redacted the same way as the
+audit log (emails, phones, dates → `[email]` `[phone]` `[date]`); **names are not**, and
+the `visitor` email is kept on purpose so you can reply to them.
+
+**Prove it came from your bot (optional).** Set a secret:
+```bash
+printf 'a long random string' | npx wrangler secret put HANDOFF_WEBHOOK_SECRET
+```
+Every POST then carries `x-handoff-signature`: hex HMAC-SHA256 of the **raw request
+body** with that secret (and `x-handoff-event` for routing). Verify before you trust it:
+```js
+// Node: `raw` is the body exactly as received, as a string or Buffer
+const expected = require("crypto").createHmac("sha256", process.env.HANDOFF_WEBHOOK_SECRET).update(raw).digest("hex");
+const ok = expected.length === sig.length && require("crypto").timingSafeEqual(Buffer.from(expected), Buffer.from(sig));
+```
+Zapier/Make can't verify a signature; treat the URL itself as the secret there (it is —
+don't put it on a public page). Delivery: 5-second timeout, no retry. The outcome is on
+the turn's Audit row: `handoff-webhook-sent` / `handoff-webhook-failed`, and in Workers
+Logs as `{"event":"handoff-action", …}`.
+
+**The email caveat.** Email goes through Cloudflare Email Sending, which only sends
+from a domain you've onboarded. Until you do, emails are **skipped** (one warning in the
+logs, `handoff-email-skipped` on the Audit row) and the webhook still works. To switch it on:
+`npx wrangler email sending enable yourdomain.com`, set `handoffEmailFrom: "bot@yourdomain.com"`
+in `YourBots/config.js`, uncomment the `send_email` block in `wrangler.jsonc`, deploy.
+Under the hood → Gateway & model shows the webhook host, the email, `on`, and whether the
+secret and the email binding exist.
+
 ## Give it documents ⭐ (PDFs, Word, spreadsheets, transcripts, screenshots)
 `knowledge/*.md` goes into the prompt on every message — right for a FAQ, wrong
 for a 60-page manual. For everything else there's **the library**: files go into

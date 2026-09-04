@@ -13,6 +13,7 @@
   "grounding": "strict",
   "handoffText": "I don't have that written down, and I'd rather not guess about anything to do with your care.",
   "handoffContact": "Call the front desk on (970) 555-0142 during opening hours, or email hello@brightsidedental.example.",
+  "handoffActions": { "webhook": "", "email": "", "on": ["handoff", "intake-complete"] },
   "allowedLinks": [
     "https://brightsidedental.example",
     "https://brightsidedental.example/new-patients"
