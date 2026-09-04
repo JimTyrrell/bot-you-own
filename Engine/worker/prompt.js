@@ -94,7 +94,10 @@ export function buildSystemPrompt({ config, project, passages = "", now = new Da
     `<boundaries>\n${boundaries}\n</boundaries>`,
   ].filter(Boolean).join("\n\n");
 
-  const protectedText = [identityCore, personality, formatting, boundaries, job].join("\n");
+  // The job's rules are protected; its extras (the owner's intake questions, booking
+  // rules, next steps) are not — an intake bot asking the owner's question word for
+  // word is doing its job, not leaking the prompt.
+  const protectedText = [identityCore, personality, formatting, boundaries, modeBlock(project, { withExtras: false })].join("\n");
   return { text, protectedText };
 }
 

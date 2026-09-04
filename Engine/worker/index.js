@@ -5,6 +5,7 @@ import { complete } from "./gateway.js";
 import { screenInbound, screenOutbound, ensureHandoff, llamaGuard, redact, INJECTION_PATTERNS, SECRET_PATTERNS, LLAMA_GUARD_MODEL } from "./firewall.js";
 import { MODES } from "./modes.js";
 import { retrieve, uploadFile, listFiles, deleteFile, downloadFile, libraryMeta } from "./library.js";
+import { normaliseHandoffActions, stripIntakeMarker, handoffEvent, runHandoffActions, handoffActionsView } from "./handoff.js";
 
 // ============================================================================
 //  THE WORKER. Three routes and a static folder.
@@ -208,7 +209,7 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
   if (screen.injection && fw.blockInjections !== false) {
     flags.push("injection-blocked");
     const reply = `I'm here to help with ${project.name}, so I'll skip that one. What can I help you with?`;
-    ctx.waitUntil(logTurn(env, project, last.content, reply, flags, who));
+    ctx.waitUntil(afterReply(env, { project, question: last.content, reply, flags, who, history, url: request.url }));
     return send(reply, flags);
   }
 
@@ -218,7 +219,7 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
     if (g.ran && !g.safe) {
       flags.push("guard-blocked:" + (g.categories.join(",") || "unspecified"));
       const reply = "I can't help with that. If you're in a difficult situation, please reach out to someone qualified to help.";
-      ctx.waitUntil(logTurn(env, project, last.content, reply, flags, who));
+      ctx.waitUntil(afterReply(env, { project, question: last.content, reply, flags, who, history, url: request.url }));
       return send(reply, flags);
     }
   }
@@ -240,14 +241,14 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
   } catch (err) {
     console.error("model call failed", err?.code || "", err?.message || err);
     const f = [...flags, err?.code === "gateway-blocked" ? "gateway-blocked" : err?.code === "rate-limited" ? "provider-rate-limited" : "model-error"];
-    ctx.waitUntil(logTurn(env, project, last.content, handoff, f, who));
+    ctx.waitUntil(afterReply(env, { project, question: last.content, reply: handoff, flags: f, who, history, url: request.url }));
     return send(handoff, f);
   }
 
   // --- Non-streaming path -----------------------------------------------------
   if (!stream) {
     const out = await finish(String(result), { env, fw, flags, handoff, outboundOpts });
-    ctx.waitUntil(logTurn(env, project, last.content, out.reply, out.flags, who));
+    ctx.waitUntil(afterReply(env, { project, question: last.content, reply: out.reply, flags: out.flags, who, history, url: request.url }));
     return json({ reply: out.reply, flags: out.flags });
   }
 
@@ -266,7 +267,7 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
         }
         const out = await finish(full, { env, fw, flags, handoff, outboundOpts });
         push({ type: "final", text: out.reply, flags: out.flags });
-        ctx.waitUntil(logTurn(env, project, last.content, out.reply, out.flags, who));
+        ctx.waitUntil(afterReply(env, { project, question: last.content, reply: out.reply, flags: out.flags, who, history, url: request.url }));
       } catch (err) {
         console.error("stream failed", err);
         push({ type: "final", text: handoff, flags: [...flags, "stream-error"] });
@@ -285,6 +286,11 @@ async function finish(raw, { env, fw, flags, handoff, outboundOpts }) {
   if (reply) {
     const h = ensureHandoff(reply, outboundOpts.project);
     if (h.added) { reply = h.text; f.push("handoff-appended"); }
+    // An intake bot ends its final summary with "[INTAKE COMPLETE]" (YourBots/_prompt/jobs/intake.md).
+    // Take the line out — the visitor and the audit log never see it — and remember it fired.
+    // (On the streaming path the line may flash for a moment before "final" replaces the text.)
+    const m = stripIntakeMarker(reply);
+    if (m.found) { reply = m.text; if (m.done && outboundOpts.project.mode === "intake") f.push("intake-complete"); }
   }
   if (reply && fw.llamaGuard) {
     const g = await llamaGuard(env, [{ role: "user", content: "(user message)" }, { role: "assistant", content: reply }]);
@@ -292,6 +298,28 @@ async function finish(raw, { env, fw, flags, handoff, outboundOpts }) {
   }
   if (!reply) reply = handoff;
   return { reply, flags: f };
+}
+
+// --- After the reply has gone out: tell someone (if configured), then log. ----
+// Runs inside ctx.waitUntil, so the visitor never waits for any of it. The
+// action runs FIRST and the audit row is written afterwards — on purpose: that
+// way the row records what actually happened (handoff-webhook-sent / -failed,
+// handoff-email-skipped) instead of a guess, and the only cost is that the row
+// lands up to five seconds later. The reply already went out, so the chips on
+// the visitor's screen don't show these flags; the Audit tab does.
+async function afterReply(env, { project, question, reply, flags, who, history, url }) {
+  let f = flags;
+  try {
+    const event = handoffEvent(project, reply, flags);
+    if (event) {
+      let page = "";
+      try { const u = new URL(url); page = `${u.origin}/?project=${encodeURIComponent(project.id || "")}`; } catch {}
+      f = [...flags, ...(await runHandoffActions(env, CONFIG, { project, event, question, reply, history, flags, who, url: page }))];
+    }
+  } catch (err) {
+    console.error("handoff action failed (continuing)", err);
+  }
+  await logTurn(env, project, question, reply, f, who);
 }
 
 // --- Audit log (optional D1). Fail-open: no DB bound = no logging. ------------
@@ -337,6 +365,7 @@ function normaliseProject(p, id) {
     starters: (Array.isArray(p.starters) ? p.starters : []).map((x) => String(x).slice(0, 120)).filter(Boolean).slice(0, 4),
     mode: MODES[p.mode] ? p.mode : "answer", grounding: p.grounding === "open" ? "open" : "strict",
     handoffText: String(p.handoffText || "").slice(0, 300), handoffContact: String(p.handoffContact || "").slice(0, 300),
+    handoffActions: normaliseHandoffActions(p.handoffActions),   // { webhook, email, on } — Engine/worker/handoff.js
     allowedLinks: (Array.isArray(p.allowedLinks) ? p.allowedLinks : []).map((x) => String(x).trim()).filter((x) => /^https?:\/\//.test(x)).slice(0, 40),
     thinkingWords: (Array.isArray(p.thinkingWords) ? p.thinkingWords : []).map((x) => String(x).slice(0, 60)).filter(Boolean).slice(0, 40),
     intakeQuestions: (Array.isArray(p.intakeQuestions) ? p.intakeQuestions : []).map((x) => String(x).slice(0, 200)).slice(0, 10),
@@ -579,6 +608,9 @@ async function engineView(env, projectId) {
         "leak-blocked": "answer repeated the protected prompt; withheld",
         "leak-blocked:paraphrase": "answer described its rules in its own words; withheld",
         "handoff-appended": "a decline in a strict project was missing the contact; added",
+        "intake-complete": "an intake bot collected everything (the [INTAKE COMPLETE] line was found and removed)",
+        "handoff-webhook-sent / handoff-webhook-failed": "the bot's handoff webhook was called after the reply; Audit tab only",
+        "handoff-email-sent / -failed / -skipped": "the handoff email; skipped = no send_email binding or no handoffEmailFrom",
         "library-used": "excerpts from this bot's documents (AI Search) were put in the prompt for this question",
         "guard-blocked:S#": "Llama Guard flagged the user turn (category S1–S14)",
         "gateway-blocked": "AI Gateway Guardrails blocked it at the edge",
@@ -586,6 +618,7 @@ async function engineView(env, projectId) {
       },
     },
     gateway: { provider: CONFIG.provider, model: CONFIG.model, maxTokens: CONFIG.maxTokens, gateway: CONFIG.gateway },
+    handoffActions: handoffActionsView(env, CONFIG, project),
     version: await versionStamp(env),
     sources,
   };

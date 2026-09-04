@@ -44,6 +44,11 @@ The source snapshot in `Engine/public/engine/` is produced by `Engine/scripts/sn
 before every dev/deploy (`build.command` in `wrangler.jsonc`) and is git-ignored;
 `run_worker_first` keeps `/engine/*` behind the gate.
 
+## B3b. Handoff webhook signature (optional)
+`printf 'a long random string' | npx wrangler secret put HANDOFF_WEBHOOK_SECRET` — every handoff
+webhook then carries `x-handoff-signature` (hex HMAC-SHA256 of the body). Local: `.dev.vars`.
+Setup and verification: `docs/CUSTOMIZE.md → When it hands off, tell someone`.
+
 ## B4. Versioning
 Bump `"version"` in `package.json`, commit, deploy. `public/version.json` is generated at build with
 `{version, builtAt, commit}`; `/health` returns `ok 2.1.0 <commit> <builtAt>`.

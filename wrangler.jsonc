@@ -40,6 +40,16 @@
     { "binding": "DB", "database_name": "bot-you-own-logs", "database_id": "cc9d43d1-46fa-4c1e-8501-a0565bdd7b77" }
   ],
 
+  // Handoff emails (project.json → handoffActions.email) go through Cloudflare Email
+  // Sending. OFF by default because it only works with a domain you've onboarded:
+  //   1. npx wrangler email sending enable yourdomain.com   (or dashboard → Email → Sending)
+  //   2. YourBots/config.js → handoffEmailFrom: "bot@yourdomain.com"
+  //   3. uncomment the block below and deploy. Until then emails are skipped with a
+  //      warning in the logs; webhooks don't need any of this. docs/CUSTOMIZE.md.
+  // "send_email": [
+  //   { "name": "SEND_EMAIL" }
+  // ],
+
   // Copies the engine source into public/engine/ for the admin "Under the hood"
   // view. Runs before dev and deploy. The Worker gates /engine/* behind the admin code.
   // discover: scans YourBots/ and YourBots/_prompt/jobs/ so nobody edits a registry by hand.

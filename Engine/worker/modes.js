@@ -27,11 +27,15 @@ export const MODES = Object.fromEntries(
   Object.entries(JOB_FILES).map(([id, md]) => [id, { id, label: id, blurb: BLURBS[id] || "", file: `YourBots/_prompt/jobs/${id}.md`, ...parseJob(md) }])
 );
 
-export function modeBlock(project) {
+// withExtras=false gives just the role and shape — the part the leak check
+// protects. The extras (intake questions, booking rules, next steps) are the
+// owner's own words and the bot is MEANT to say them out loud, so they are not.
+export function modeBlock(project, { withExtras = true } = {}) {
   const base = MODES[project.mode] || MODES.answer;
   const own = project.prompt?.[`jobs/${project.mode}.md`];   // YourBots/<name>/prompt/jobs/<mode>.md
   const mode = own ? { ...base, ...parseJob(own) } : base;
   const extras = [];
+  if (!withExtras) return `${mode.role}\n\nWhat a good answer looks like:\n${mode.shape}`;
   if (project.mode === "intake" && project.intakeQuestions?.length) {
     extras.push(`What to collect, in this order, one at a time:\n` + project.intakeQuestions.map((q, i) => `${i + 1}. ${q}`).join("\n"));
   }

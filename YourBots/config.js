@@ -82,6 +82,14 @@ export const CONFIG = {
     scanWithModel: true,           // …and ask the model "would a business put this on its website?" (one small call)
   },
 
+  // ---- 6a-ii. WHEN IT HANDS OFF, TELL SOMEONE ----------------------------------
+  // Each bot chooses a webhook and/or an email in its project.json → "handoffActions"
+  // (Configure → "When it hands off, tell someone"). Email needs the send_email
+  // binding in wrangler.jsonc AND a "from" address on a domain you've onboarded to
+  // Cloudflare Email Sending. Empty = emails are skipped (webhooks still work).
+  // docs/CUSTOMIZE.md → "When it hands off, tell someone".
+  handoffEmailFrom: "",            // e.g. "bot@yourdomain.com"
+
   // ---- 6b. GITHUB (for "Commit to GitHub" on the Configure screen) --------------
   // The repo this bot deploys from. With the GITHUB_TOKEN secret set (a fine-grained
   // token with Contents: read & write on ONLY this repo), the Configure screen can
