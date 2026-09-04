@@ -43,8 +43,14 @@ That's the whole job. Nothing else registers it: the build finds every folder in
 `YourBots/`, every file in its `knowledge/`, and every override in its `YourBots/_prompt/`.
 
 **Adding more data later** = drop another file into `knowledge/` and commit.
-PDFs and Word files can't be dropped in as-is: open them, copy the text into a
-`.md` file. For a large library that's the AI Search upgrade in `docs/CUSTOMIZE.md`.
+
+**PDFs, Word files, spreadsheets, transcripts, screenshots** go in the same
+`knowledge/` folder (or `knowledge/library/` for long text you don't want in the
+prompt). They aren't bundled: the *Sync library* GitHub Action sends them to the
+bot's library in Cloudflare AI Search, and the bot pulls the relevant passages
+per question. Every file is scanned for things that shouldn't be public first;
+a held-back file is approved by listing it in `knowledge/APPROVED.txt`. Or skip
+GitHub and drop them into Configure → Documents. `docs/CUSTOMIZE.md → Give it documents`.
 
 **Giving one bot its own voice** = copy a file from the root `YourBots/_prompt/` folder into
 `YourBots/my-shop/prompt/` with the same name and edit it. Root is global, the

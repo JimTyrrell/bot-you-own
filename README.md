@@ -187,7 +187,7 @@ live?", the answer is in the footer.
 - No per-message plan. No per-seat pricing. No badge to pay to remove.
 
 ## Where this stops being enough (honest version)
-- **A lot of documents.** This bundles your files into the prompt — right for an FAQ, wrong for two hundred PDFs. That's Cloudflare **AI Search**; see `docs/CUSTOMIZE.md`.
+- **Documents are fine now, up to a point.** Text files are bundled into the prompt; PDFs, Word, sheets, transcripts and screenshots go into the library (Cloudflare **AI Search**, wired in, scanned before they go in) — `docs/CUSTOMIZE.md → Give it documents`. Two hundred PDFs is fine. A website crawl or multi-tenant search is a different build.
 - **Browsing, images, code execution, file upload at runtime.** Not included. `docs/MIGRATE.md` says exactly what doesn't come across.
 - **Sign-in / private bots.** Rate limiting is what a public bot needs; access control is a different build.
 - **Regulated data.** Health, financial, legal — the requirements are paperwork, not code. Know that before you point a bot at them.

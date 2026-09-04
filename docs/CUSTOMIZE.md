@@ -56,14 +56,93 @@ SELECT flags, COUNT(*) n FROM conversations WHERE flags != '' GROUP BY flags ORD
 ```
 Tell people conversations are recorded if it matters — a line in your privacy policy.
 
-## Switch to real retrieval (Cloudflare AI Search)
-When a project outgrows a few files — a whole website, hundreds of pages — bundling
-into the prompt stops working. AI Search does the chunking, indexing and retrieval.
-1. Create an AI Search instance in the dashboard; point it at your files / R2 / a crawl of your site.
-2. Bind it in `wrangler.jsonc`: `"ai_search": [{ "binding": "SEARCH", "instance_name": "my-instance" }]`
-3. In `Engine/worker/gateway.js`, replace the Workers AI call with
-   `env.SEARCH.get("my-instance").chatCompletions({ messages, model, ai_search_options: { retrieval: { max_num_results: 5 } } })`.
-**Keep the guardrails.** Retrieval changes where the facts come from. It doesn't make the bot willing to say "I don't know."
+## Give it documents ⭐ (PDFs, Word, spreadsheets, transcripts, screenshots)
+`knowledge/*.md` goes into the prompt on every message — right for a FAQ, wrong
+for a 60-page manual. For everything else there's **the library**: files go into
+Cloudflare **AI Search**, which converts them to text (PDFs, Word, sheets, and
+images — a vision model reads a screenshot of your price list), chunks them, and
+hands the bot only the passages relevant to each question. They land inside
+`<files>` in the prompt, so strict/open grounding and every firewall rule apply
+unchanged. Each bot only sees its own documents. Chip under the answer: 📚.
+
+It's already wired (`wrangler.jsonc` → `ai_search_namespaces`, `YourBots/config.js`
+→ `library`). The Worker creates its own AI Search instance on the first upload —
+nothing to create in the dashboard. AI Search is free during its beta; the
+conversion of each file uses Workers AI out of the same daily allowance as chat.
+
+### Two ways in, same place
+1. **Configure → Documents.** Admin code → ✎ Configure → drop files in. Usually
+   searchable in seconds; when Cloudflare's indexer is busy it can take a few
+   minutes, and the list shows *indexing* until then. A file that shows **error**
+   hit a timeout on their side — upload it again (same name replaces it). Ask the
+   preview something that's only in the file.
+2. **GitHub.** Drop the file into `YourBots/<bot>/knowledge/` (anything that isn't
+   `.md/.txt/.csv`), or into `knowledge/library/` (anything at all, including a
+   long `.txt` transcript you don't want bundled into the prompt). Commit. To make
+   that sync, add two **repository secrets** (Settings → Secrets and variables →
+   Actions): `BOT_URL` (the bot's address) and `ADMIN_PASSPHRASE` (the same admin
+   code the Worker has). Every commit that touches `knowledge/` then uploads
+   what's new and removes what you deleted. It only removes what it put there;
+   files added through Configure are left alone.
+
+**They don't drift.** Configure → **Commit to GitHub** writes the bot's documents
+into `knowledge/` alongside the text files (byte-for-byte, unchanged ones skipped),
+and adds any file you overrode to `knowledge/APPROVED.txt` so the sync action won't
+hold it back again. After that commit the repo is the documents' source: they show
+as "from GitHub", and deleting one in the repo removes it from the library on the
+next push. A document you remove in Configure is removed from the repo on the next
+commit, but only when the library was readable at that moment — never on a hiccup.
+
+### Every file is scanned first — and you can override it
+Nothing goes in without being read for the things that shouldn't be in a public
+bot. The check runs on the converted text, so a PDF, a sheet and a screenshot get
+the same treatment:
+- **lists of people:** more than a couple of email addresses or phone numbers
+  (one of each is your contact details; forty is a customer list)
+- **money and identity:** card numbers that pass the checksum, IBANs, US SSNs
+- **secrets:** API keys, tokens, private keys, `password: …`
+- **markings and language:** CONFIDENTIAL, internal only, NDA, "the parties
+  agree", indemnification, payroll
+- **a second opinion from the model:** "would a business put this on its
+  website?" — catches an invoice or a client's onboarding doc
+
+Found something → the file is **held back** and you're shown the list with a
+masked sample. Then it's your call. In Configure: **Put it in anyway** or **Leave
+it out**. In GitHub: add the filename to `YourBots/<bot>/knowledge/APPROVED.txt`
+and commit — the job fails loudly until you do, so nothing slips by, and the
+approval sits in git history with your name on it. Overrides are also written
+to Workers Logs (`event: "library-override"`).
+
+**What it can't catch, said plainly:** names, addresses, "the Henderson deal is in
+trouble." The scan stops accidents; it doesn't replace reading the file. Knobs
+in `config.js` → `library`: `scan: false` turns it off; `scanWithModel: false`
+drops just the model check (one small AI call per upload).
+
+### What it reads, and what it doesn't
+Cloudflare's list; the bot refuses the rest *before* uploading so you're told
+rather than finding out when the answers are wrong.
+
+| Works | Doesn't — do this instead |
+|---|---|
+| `.pdf` `.docx` `.odt` | `.doc` → save as `.docx` |
+| `.xlsx` `.xls` `.csv` `.ods` `.numbers` | `.pptx` `.key` → export as PDF |
+| `.txt` `.md` `.json` `.html` `.xml` | `.rtf` `.pages` → save as `.docx` |
+| `.jpg` `.png` `.webp` `.gif` `.svg` `.bmp` | `.heic` → save as `.jpg` |
+| `.srt` `.vtt` transcripts (stored as `.txt`) | audio / video → upload the transcript |
+
+4 MB per file. A 200-page text PDF is usually under; a scanned one usually isn't —
+re-export at lower quality or split it. **Transcripts:** a raw call transcript is
+40 minutes of "um" and the bot will quote it. Ten minutes turning it into a page
+of Q&A gives far better answers, and that page belongs in `knowledge/faq.md`.
+
+### Two dials · `config.js` → `library`
+- `maxPassages` — excerpts per question. 6. Past 8 answers get vaguer, not smarter.
+- `matchThreshold` — how relevant an excerpt must be. 0.4 (Cloudflare's default).
+  Quoting unrelated documents → 0.5. "I don't know" about things clearly in a PDF → 0.3.
+
+**Keep the guardrails.** Retrieval changes where the facts come from. It doesn't
+make the bot willing to say "I don't know." And the rule that doesn't change:
+assume anything in the library can be read by anyone who talks to the bot.
 
 ## Two things to know about the iframe
 1. Your website analytics won't see chat activity (different origin). Log from the Worker instead — better data anyway.

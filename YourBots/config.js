@@ -68,6 +68,20 @@ export const CONFIG = {
     maxChars: 4000,          // per message
   },
 
+  // ---- 6a. THE LIBRARY: PDFs, Word docs, spreadsheets, transcripts, images ----
+  // knowledge/*.md is bundled into the prompt — a few pages, word-for-word.
+  // The library is for everything else: files go into Cloudflare AI Search and
+  // the bot gets the relevant passages per question. Each bot only sees its own.
+  // Two ways in: Configure → Documents, or drop files into YourBots/<bot>/knowledge/
+  // and let the GitHub Action sync them. docs/CUSTOMIZE.md → "Give it documents".
+  library: {
+    name: "bot-you-own-library",   // the AI Search instance; created on first upload
+    maxPassages: 6,                // excerpts per question. 4–8. More is not smarter.
+    matchThreshold: 0.4,           // 0–1. Raise to 0.5 if it quotes unrelated documents.
+    scan: true,                    // scan every upload for emails, cards, keys, "CONFIDENTIAL"… before it goes in
+    scanWithModel: true,           // …and ask the model "would a business put this on its website?" (one small call)
+  },
+
   // ---- 6b. GITHUB (for "Commit to GitHub" on the Configure screen) --------------
   // The repo this bot deploys from. With the GITHUB_TOKEN secret set (a fine-grained
   // token with Contents: read & write on ONLY this repo), the Configure screen can

@@ -4,6 +4,7 @@ import { buildSystemPrompt, PROMPT_FILES, ROOT_PROMPT_FILES } from "./prompt.js"
 import { complete } from "./gateway.js";
 import { screenInbound, screenOutbound, ensureHandoff, llamaGuard, redact, INJECTION_PATTERNS, SECRET_PATTERNS, LLAMA_GUARD_MODEL } from "./firewall.js";
 import { MODES } from "./modes.js";
+import { retrieve, uploadFile, listFiles, deleteFile, downloadFile, libraryMeta } from "./library.js";
 
 // ============================================================================
 //  THE WORKER. Three routes and a static folder.
@@ -11,6 +12,9 @@ import { MODES } from "./modes.js";
 //    POST /api/chat     → { project, messages, stream } → SSE stream (or JSON)
 //    GET  /health       → "ok"
 //    *                  → public/ (the chat page, the widget)
+//  Admin (x-admin-token): /api/admin/engine, /audit, /projects, /project,
+//    /api/admin/library?project=<id>  GET list · POST upload (multipart "file",
+//    optional "override") · DELETE /api/admin/library/<itemId>?project=<id>
 // ============================================================================
 
 export default {
@@ -50,7 +54,8 @@ export default {
       if (!isAdmin) return json({ error: "admin only" }, adminEnabled ? 401 : 404);
       if (url.pathname === "/api/admin/engine") return json(await engineView(env, url.searchParams.get("project")));
       if (url.pathname === "/api/admin/audit") return json(await auditView(env, url.searchParams));
-      if (url.pathname === "/api/admin/projects") return json({ projects: await resolveList(env), jobs: Object.values(MODES).map((m) => ({ id: m.id, blurb: m.blurb, role: m.role, shape: m.shape, done: m.done })), model: CONFIG.model, canSave: Boolean(env.DB), rootPrompt: ROOT_PROMPT_FILES, github: { repo: CONFIG.github?.repo || "", branch: CONFIG.github?.branch || "main", ready: Boolean(CONFIG.github?.repo && env.GITHUB_TOKEN) } });
+      if (url.pathname === "/api/admin/library" || url.pathname.startsWith("/api/admin/library/")) return handleLibrary(request, env, url);
+      if (url.pathname === "/api/admin/projects") return json({ projects: await resolveList(env), jobs: Object.values(MODES).map((m) => ({ id: m.id, blurb: m.blurb, role: m.role, shape: m.shape, done: m.done })), model: CONFIG.model, canSave: Boolean(env.DB), rootPrompt: ROOT_PROMPT_FILES, github: { repo: CONFIG.github?.repo || "", branch: CONFIG.github?.branch || "main", ready: Boolean(CONFIG.github?.repo && env.GITHUB_TOKEN) }, library: libraryMeta(env, CONFIG) });
       if (url.pathname === "/api/admin/project") {
         const id = String(url.searchParams.get("id") || "").toLowerCase();
         if (request.method === "GET") { const p = await resolveProject(env, id); return json({ project: { ...p, id: p.id || id }, source: (await savedProjects(env))[id] ? "saved" : (PROJECTS[id] ? "folder" : "new") }); }
@@ -218,8 +223,14 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
     }
   }
 
+  // --- LAYER 2b: the library. Relevant excerpts from this bot's documents
+  //     (PDFs, sheets, transcripts) for THIS question. "" if none, or if AI
+  //     Search isn't set up — the bot answers from knowledge/ regardless.
+  const passages = await retrieve(env, CONFIG, project.id || CONFIG.defaultProject, last.content);
+  if (passages) flags.push("library-used");
+
   // --- LAYER 1: build the prompt --------------------------------------------
-  const prompt = buildSystemPrompt({ config: CONFIG, project });
+  const prompt = buildSystemPrompt({ config: CONFIG, project, passages });
   const outboundOpts = { allowedLinks: project.allowedLinks, protectedText: prompt.protectedText, config: CONFIG, project };
 
   // --- LAYER 3b: call the model through the gateway --------------------------
@@ -340,8 +351,51 @@ function normaliseProject(p, id) {
 async function resolveProject(env, id) {
   const saved = await savedProjects(env);
   if (id && saved[id]) return saved[id];
-  if (id && PROJECTS[id]) return folderProject(id, CONFIG.defaultProject);
-  return saved[CONFIG.defaultProject] || folderProject(CONFIG.defaultProject, CONFIG.defaultProject);
+  if (id && PROJECTS[id]) return { id, ...folderProject(id, CONFIG.defaultProject) };
+  return saved[CONFIG.defaultProject] || { id: CONFIG.defaultProject, ...folderProject(CONFIG.defaultProject, CONFIG.defaultProject) };
+}
+
+// --- The library: this bot's documents in AI Search. Admin only; every upload
+//     is scanned first (Engine/worker/library.js). ---------------------------------
+async function handleLibrary(request, env, url) {
+  const bot = String(url.searchParams.get("project") || "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40);
+  if (!bot) return json({ error: "which bot? add ?project=<id>" }, 400);
+  const meta = libraryMeta(env, CONFIG);
+  if (!meta.enabled) return json({ error: "The library isn't switched on: wrangler.jsonc needs the ai_search_namespaces binding and YourBots/config.js → library.name. See docs/CUSTOMIZE.md → Give it documents.", ...meta }, 503);
+  try {
+    if (request.method === "GET" && url.pathname === "/api/admin/library") return json({ ...meta, files: await listFiles(env, CONFIG, bot) });
+    if (request.method === "POST" && url.pathname === "/api/admin/library") {
+      const form = await request.formData();
+      const files = form.getAll("file").filter((f) => f && typeof f.arrayBuffer === "function");
+      if (!files.length) return json({ error: "No file in the request. Send multipart/form-data with a 'file' field." }, 400);
+      const override = ["1", "true", "yes"].includes(String(form.get("override") || "").toLowerCase());
+      const source = String(form.get("source") || "upload");   // "github" = the sync action owns it
+      const results = [];
+      for (const f of files.slice(0, 10)) {
+        const res = await uploadFile(env, CONFIG, bot, f.name, await f.arrayBuffer(), { override, source });
+        // The override is the one thing worth a permanent line in the logs.
+        if (override && res.ok) console.log(JSON.stringify({ event: "library-override", bot, file: res.name }));
+        results.push(res);
+      }
+      return json({ results });
+    }
+    if (request.method === "DELETE" && url.pathname.startsWith("/api/admin/library/")) {
+      const id = decodeURIComponent(url.pathname.slice("/api/admin/library/".length));
+      const ok = await deleteFile(env, CONFIG, bot, id);
+      return ok ? json({ ok: true }) : json({ error: "no such file for this bot" }, 404);
+    }
+    // The original file back out (admin only) — what Commit to GitHub writes into the repo.
+    if (request.method === "GET" && /^\/api\/admin\/library\/[^/]+\/download$/.test(url.pathname)) {
+      const id = decodeURIComponent(url.pathname.split("/")[4]);
+      const d = await downloadFile(env, CONFIG, bot, id);
+      if (!d) return json({ error: "no such file for this bot" }, 404);
+      return new Response(d.bytes, { headers: { "content-type": d.contentType || "application/octet-stream", "content-disposition": `attachment; filename="${d.name.split("/").pop().replace(/"/g, "")}"` } });
+    }
+  } catch (err) {
+    console.error("library request failed", err);
+    return json({ error: "The library hit an error: " + String(err?.message || err).slice(0, 200) }, 500);
+  }
+  return json({ error: "method" }, 405);
 }
 async function resolveList(env) {
   const saved = await savedProjects(env);
@@ -402,7 +456,7 @@ async function syncToGitHub(env, id) {
   if (!env.GITHUB_TOKEN) return { error: "GITHUB_TOKEN secret is not set (fine-grained token, Contents: read & write, only this repo)" };
   const p = await resolveProject(env, id);
   if (!p || (p.id && p.id !== id && !PROJECTS[id])) return { error: "unknown bot" };
-  const want = exportFiles(p, id);
+  const want = exportFiles(p, id);                    // text: project.json, instructions, knowledge/*.md|txt|csv, prompt/*
   const gh = async (path, init = {}) => {
     const r = await fetch(`https://api.github.com/repos/${repo}/${path}`, { ...init, headers: { authorization: `Bearer ${env.GITHUB_TOKEN}`, accept: "application/vnd.github+json", "user-agent": "bot-you-own", "content-type": "application/json", ...(init.headers || {}) } });
     const body = await r.json().catch(() => ({}));
@@ -416,21 +470,69 @@ async function syncToGitHub(env, id) {
     for (const e of r.body) { if (e.type === "file") existing[e.path] = e.sha; else if (e.type === "dir") await walk(e.path); }
   };
   await walk(`YourBots/${id}`);
+
+  // --- The library's documents ride along, so the folder holds the same PDFs
+  //     the bot answers from. Each one is the original bytes, written under
+  //     knowledge/. Overrides go into knowledge/APPROVED.txt so the sync action
+  //     (which re-scans everything it uploads) doesn't hold them back again.
+  const docs = {};                                    // path → { bytes }
+  const docErrors = [];
+  let approvedNames = [];
+  if (libraryMeta(env, CONFIG).enabled) {
+    try {
+      for (const f of await listFiles(env, CONFIG, id)) {
+        if (f.status === "error" || f.status === "skipped") { docErrors.push(`${f.name}: not committed (status ${f.status})`); continue; }
+        try {
+          const d = await downloadFile(env, CONFIG, id, f.id);
+          if (d) { docs[`YourBots/${id}/knowledge/${f.name}`] = { bytes: d.bytes }; if (f.approved) approvedNames.push(f.name); }
+        } catch (err) { docErrors.push(`${f.name}: download failed (${String(err?.message || err).slice(0, 80)})`); }
+      }
+    } catch (err) { docErrors.push(`library list failed: ${String(err?.message || err).slice(0, 120)}`); }
+  }
+  const approvedPath = `YourBots/${id}/knowledge/APPROVED.txt`;
+  if (approvedNames.length) {
+    let current = "";
+    if (existing[approvedPath]) { const r = await gh(`contents/${approvedPath}?ref=${encodeURIComponent(branch)}`); if (r.ok && r.body?.content) current = atob(String(r.body.content).replace(/\n/g, "")); }
+    const lines = current.split(/\r?\n/);
+    const have = new Set(lines.map((l) => l.trim()));
+    const add = approvedNames.filter((n) => !have.has(n));
+    if (add.length) want[approvedPath] = (current.trim() ? current.replace(/\s*$/, "\n") : "# Files the upload scan held back and you approved. One filename per line.\n") + add.join("\n") + "\n";
+  }
+
   const b64 = (s) => btoa(unescape(encodeURIComponent(s)));
-  const committed = [], unchanged = [], deleted = [], errors = [];
+  const b64bytes = (buf) => { const u = new Uint8Array(buf); let s = ""; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
+  // git's blob id, so an unchanged PDF isn't re-committed every time.
+  const blobSha = async (buf) => { const head = new TextEncoder().encode(`blob ${buf.byteLength}\0`); const all = new Uint8Array(head.length + buf.byteLength); all.set(head); all.set(new Uint8Array(buf), head.length); return [...new Uint8Array(await crypto.subtle.digest("SHA-1", all))].map((b) => b.toString(16).padStart(2, "0")).join(""); };
+
+  const committed = [], unchanged = [], deleted = [], errors = [...docErrors];
   let lastCommit = "";
-  for (const [path, content] of Object.entries(want)) {
-    const r = await gh(`contents/${path}`, { method: "PUT", body: JSON.stringify({ message: `${existing[path] ? "update" : "add"} ${path} (from Configure)`, content: b64(content), branch, ...(existing[path] ? { sha: existing[path] } : {}) }) });
+  const put = async (path, content, isText) => {
+    const r = await gh(`contents/${path}`, { method: "PUT", body: JSON.stringify({ message: `${existing[path] ? "update" : "add"} ${path} (from Configure)`, content, branch, ...(existing[path] ? { sha: existing[path] } : {}) }) });
     if (r.ok) { committed.push(path); lastCommit = r.body?.commit?.html_url || lastCommit; }
     else if (r.status === 422 && /same/i.test(JSON.stringify(r.body))) unchanged.push(path);
     else errors.push(`${path}: ${r.status} ${r.body?.message || ""}`);
+  };
+  for (const [path, content] of Object.entries(want)) await put(path, b64(content), true);
+  for (const [path, { bytes }] of Object.entries(docs)) {
+    if (existing[path] && existing[path] === (await blobSha(bytes))) { unchanged.push(path); continue; }
+    await put(path, b64bytes(bytes), false);
   }
+
+  // Delete what the form no longer has. Text files and prompt overrides are fully
+  // represented above, so a missing one was removed on purpose. Documents are
+  // deleted only when the library was read successfully (otherwise a hiccup in
+  // AI Search would wipe the repo's PDFs). APPROVED.txt is never deleted.
+  const libraryRead = libraryMeta(env, CONFIG).enabled && !docErrors.some((e) => e.startsWith("library list failed"));
+  const isText = (path) => /\.(md|txt|csv|json)$/i.test(path);
+  const leftAlone = [];
   for (const path of Object.keys(existing)) {
-    if (want[path]) continue;
+    if (want[path] || docs[path] || path === approvedPath) continue;
+    const doc = path.startsWith(`YourBots/${id}/knowledge/`) && !isText(path);
+    if (doc && !libraryRead) { leftAlone.push(path); continue; }
     const r = await gh(`contents/${path}`, { method: "DELETE", body: JSON.stringify({ message: `remove ${path} (from Configure)`, sha: existing[path], branch }) });
     if (r.ok) { deleted.push(path); lastCommit = r.body?.commit?.html_url || lastCommit; } else errors.push(`delete ${path}: ${r.status}`);
   }
-  return { ok: errors.length === 0, repo, branch, committed, deleted, unchanged, errors, commitUrl: lastCommit, note: "The folder is now in the repo. If the repo is connected to Cloudflare Workers Builds, this commit redeploys the bot in about a minute. The saved copy stays live meanwhile; remove it once the deploy lands so the folder is the single source." };
+  return { ok: errors.length === 0, repo, branch, committed, deleted, unchanged, leftAlone, documents: Object.keys(docs).length, errors, commitUrl: lastCommit, note: "The folder is now in the repo, documents included. If the repo is connected to Cloudflare Workers Builds, this commit redeploys the bot in about a minute, and the Sync library action re-files the documents from the repo (they show as 'from GitHub' afterwards — the repo is now their source). The saved copy stays live meanwhile; remove it once the deploy lands so the folder is the single source." };
 }
 
 // The version stamp written by scripts/snapshot-src.mjs at build time.
@@ -449,8 +551,12 @@ async function engineView(env, projectId) {
   let sources = [];
   try { sources = await (await env.ASSETS.fetch(new Request("https://x/engine/index.json"))).json(); } catch {}
   const { files, instructions, ...meta } = project;
+  const libMeta = libraryMeta(env, CONFIG);
+  const library = { ...libMeta, name: CONFIG.library?.name || "", files: [] };
+  if (libMeta.enabled) { try { library.files = await listFiles(env, CONFIG, project.id || String(projectId || "")); } catch (err) { library.error = String(err?.message || err); } }
   return {
     project: { id: projectId, ...meta, instructions },
+    library,
     prompt: prompt.text,
     promptFiles: PROMPT_FILES.map((f) => f.replace("<mode>", project.mode || "answer")),
     promptChars: prompt.text.length,
@@ -473,6 +579,7 @@ async function engineView(env, projectId) {
         "leak-blocked": "answer repeated the protected prompt; withheld",
         "leak-blocked:paraphrase": "answer described its rules in its own words; withheld",
         "handoff-appended": "a decline in a strict project was missing the contact; added",
+        "library-used": "excerpts from this bot's documents (AI Search) were put in the prompt for this question",
         "guard-blocked:S#": "Llama Guard flagged the user turn (category S1–S14)",
         "gateway-blocked": "AI Gateway Guardrails blocked it at the edge",
         "rate-limited": "over the per-visitor limit",

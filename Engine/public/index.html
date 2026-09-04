@@ -141,6 +141,10 @@
   .kfile .kh { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
   .kfile .kh input { flex:1; }
   .kfile textarea { min-height:90px; font-family:ui-monospace, Menlo, monospace; font-size:12.5px; }
+  .lrow { display:flex; align-items:center; gap:10px; padding:8px 12px; border:1px solid var(--edge); border-radius:10px; margin:6px 0; background:var(--side); font-size:13px; }
+  .lrow .lname { flex:1; word-break:break-all; }
+  .lrow .ok, .lline.ok { color:#15803d; } .lrow .bad, .lline.bad { color:var(--danger); } .lrow .muted, .lline.muted { color:var(--muted); }
+  .lline { font-size:13px; margin:6px 0; } .lline ul { padding-left:18px; }
   .caps label { display:flex; align-items:center; gap:8px; font-weight:400; margin:6px 0; }
   .caps .na { color:var(--muted); }
   .row2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
@@ -426,6 +430,7 @@ const FLAG_LABELS = {
   'injection-blocked': '🛡 blocked before the model', 'link-stripped': '🔗 link removed', 'leak-blocked': '🛡 answer withheld: it quoted the rules',
   'rate-limited': '⏱ rate limited', 'model-error': '⚠ model error', 'gateway-blocked': '🛡 blocked at the gateway',
   'invisible-text-stripped': '👁 hidden characters removed', 'handoff-appended': '📇 contact added by the firewall', 'secret-detected': '🔑 looks like a secret was pasted',
+  'library-used': '📚 answered with the document library',
 };
 function flagRow(flags) {
   const row = document.createElement('div'); row.className = 'flags';
@@ -545,7 +550,7 @@ function renderHood() {
   [...$('hoodtabs').children].forEach((b) => b.classList.toggle('on', b.dataset.tab === hoodTab));
   const box = $('hoodbody'); const pre = (t) => '<pre>' + esc(t).replace(/&lt;(\/?[a-z_]+)&gt;/g, '<span class="tag-xml">&lt;$1&gt;</span>') + '</pre>';
   if (hoodTab === 'prompt') box.innerHTML = '<h4>Edit these plain-text files to change it</h4><p style="color:var(--muted);margin:0 0 10px">' + (d.promptFiles || []).map((f) => '<code>' + esc(f) + '</code>').join(' · ') + ' · and this project\'s <code>instructions.md</code></p><h4>The exact system prompt sent to the model for this project · ' + d.promptChars + ' chars ≈ ' + d.promptTokensApprox + ' tokens</h4>' + pre(d.prompt) + '<h4>Job (mode: ' + esc(d.project.mode) + ')</h4><div class="kv"><b>Role</b><span>' + esc(d.mode.role) + '</span><b>Done when</b><span>' + esc(d.mode.done) + '</span></div>';
-  if (hoodTab === 'files') box.innerHTML = '<h4>instructions.md</h4>' + pre(d.project.instructions || '(none)') + Object.entries(d.files || {}).map(([n, t]) => '<h4>knowledge/' + esc(n) + ' · ' + t.length + ' chars</h4>' + pre(t)).join('') + '<h4>project.json</h4>' + pre(JSON.stringify({ ...d.project, instructions: undefined }, null, 2));
+  if (hoodTab === 'files') box.innerHTML = '<h4>instructions.md</h4>' + pre(d.project.instructions || '(none)') + Object.entries(d.files || {}).map(([n, t]) => '<h4>knowledge/' + esc(n) + ' · ' + t.length + ' chars</h4>' + pre(t)).join('') + '<h4>The library (AI Search' + (d.library?.name ? ' · ' + esc(d.library.name) : '') + ') — excerpts are pulled per question, not bundled</h4>' + (!d.library?.enabled ? '<p style="color:var(--muted)">Off: no ai_search_namespaces binding or no library.name in YourBots/config.js.</p>' : d.library.error ? '<p style="color:var(--danger)">' + esc(d.library.error) + '</p>' : !d.library.files.length ? '<p style="color:var(--muted)">No documents for this bot. Configure → Documents, or drop a PDF into its knowledge/ folder in GitHub.</p>' : '<div class="kv">' + d.library.files.map((f) => '<b>' + esc(f.name) + '</b><span>' + esc(f.status) + (f.chunks != null ? ' · ' + f.chunks + ' passages' : '') + (f.size ? ' · ' + Math.round(f.size / 1024) + ' KB' : '') + '</span>').join('') + '</div>') + '<h4>project.json</h4>' + pre(JSON.stringify({ ...d.project, instructions: undefined }, null, 2));
   if (hoodTab === 'firewall') { const f = d.firewall; box.innerHTML = '<h4>Switches (YourBots/config.js → firewall)</h4>' + pre(JSON.stringify(f.config, null, 2)) + '<div class="kv"><b>Door</b><span>' + esc(f.door) + '</span><b>Rate limit</b><span>' + esc(f.rateLimit) + '</span><b>Logging</b><span>' + esc(f.logging) + '</span><b>Llama Guard model</b><span>' + esc(f.llamaGuardModel) + '</span></div><h4>Injection patterns (' + f.injectionPatterns.length + ') — a hit never reaches the model</h4>' + pre(f.injectionPatterns.join('\n')) + '<h4>Secret shapes</h4>' + pre(f.secretPatterns.join('\n')) + '<h4>What the chips mean</h4><div class="kv">' + Object.entries(f.flags).map(([k, v]) => '<b>' + esc(k) + '</b><span>' + esc(v) + '</span>').join('') + '</div>'; }
   if (hoodTab === 'gateway') box.innerHTML = '<h4>Version</h4>' + pre(JSON.stringify(d.version, null, 2)) + '<h4>Provider &amp; model</h4>' + pre(JSON.stringify(d.gateway, null, 2)) + '<p style="color:var(--muted)">gateway.id empty = calls go straight to the model. Set it to route through Cloudflare AI Gateway: spend cap, logs, caching, edge Guardrails. See docs/DEPLOY.md.</p>';
   if (hoodTab === 'audit') { renderAudit(); return; }
@@ -584,6 +589,7 @@ function renderConfigForm() {
     field('Greeting', 'The first line people see.', '<input type="text" id="f_greeting" value="' + esc(d.greeting || '') + '" />', 'project.json → greeting') +
     field('Conversation starters', 'Up to four.', '<div class="starters-edit">' + [0, 1, 2, 3].map((i) => '<input type="text" data-starter="' + i + '" value="' + esc((d.starters || [])[i] || '') + '" placeholder="Starter ' + (i + 1) + '" />').join('') + '</div>', 'project.json → starters') +
     field('Knowledge', 'Conversations can reveal part or all of these files. Text only (.md .txt .csv). Everything the bot may state as fact.', '<div id="kfiles">' + Object.entries(d.files || {}).map(([n, t], i) => kfileHtml(n, t, i)).join('') + '</div><div class="btnrow"><input type="file" id="f_upload" accept=".md,.txt,.csv,text/plain,text/markdown,text/csv" multiple hidden /><button type="button" class="btn" id="f_uploadbtn">Upload files</button><button type="button" class="btn" id="f_newfile">Write a new file</button></div>', 'knowledge/') +
+    field('Documents (the library)', 'PDFs, Word, spreadsheets, transcripts, screenshots. Converted and indexed by Cloudflare AI Search; the bot gets the relevant passages per question, under the same rules as the files above. <b>Every file is scanned</b> for emails, card numbers, keys and "confidential" before it goes in — you decide what to do with what it finds. Up to 4 MB each.', '<div id="lfiles"><p class="thinking" style="margin:0"><span>Loading</span></p></div><div id="llog"></div><div class="btnrow" style="margin-top:8px"><input type="file" id="l_upload" multiple hidden /><button type="button" class="btn" id="l_uploadbtn">Upload documents</button><span id="ltypes" style="color:var(--muted);font-size:12px"></span></div>', 'knowledge/ (PDF etc. → AI Search)') +
     '<div class="row2">' +
     field('Job', 'One bot, one job. The role and shape come from YourBots/_prompt/jobs/&lt;job&gt;.md.', '<select id="f_mode">' + jobs + '</select>', 'project.json → mode') +
     field('What it may say', '', '<select id="f_grounding"><option value="strict"' + (d.grounding !== 'open' ? ' selected' : '') + '>Only what\'s in the files (strict)</option><option value="open"' + (d.grounding === 'open' ? ' selected' : '') + '>Anything, files first (open, ChatGPT-style)</option></select>') +
@@ -598,11 +604,64 @@ function renderConfigForm() {
   $('f_uploadbtn').onclick = () => $('f_upload').click();
   $('f_upload').onchange = async (e) => { for (const f of e.target.files) { const t = await f.text(); draft.files[f.name.replace(/[^\w. -]/g, '_')] = t; } renderConfigForm(); syncDraft(); };
   $('f_newfile').onclick = () => { let n = 'notes.md', i = 2; while (draft.files[n]) n = 'notes-' + (i++) + '.md'; draft.files[n] = ''; renderConfigForm(); };
+  $('l_uploadbtn').onclick = () => $('l_upload').click();
+  $('l_upload').onchange = async (e) => { const fs = [...e.target.files]; e.target.value = ''; for (const f of fs) await libUpload(f, false, libLine(f.name + ' — checking and uploading…', 'muted')); loadLibrary(); };
+  loadLibrary();
   $('kfiles').addEventListener('click', (e) => { const b = e.target.closest('button[data-del]'); if (b) { delete draft.files[b.dataset.del]; renderConfigForm(); syncDraft(); } });
   $('povr').addEventListener('change', (e) => { const c = e.target.closest('input[data-povr]'); if (!c) return; const ta = document.querySelector('textarea[data-pbody="' + CSS.escape(c.dataset.povr) + '"]'); ta.hidden = !c.checked; c.closest('.kh').querySelector('span').textContent = c.checked ? "this bot's copy" : 'shared'; syncDraft(); });
   $('cfgform').addEventListener('input', syncDraft);
 }
 function kfileHtml(n, t, i) { return '<div class="kfile"><div class="kh"><input type="text" data-kname="' + esc(n) + '" value="' + esc(n) + '" /><span style="color:var(--muted);font-size:12px">' + t.length + ' chars</span><button type="button" class="iconbtn" data-del="' + esc(n) + '" title="Remove">✕</button></div><textarea data-kbody="' + esc(n) + '">' + esc(t) + '</textarea></div>'; }
+
+// ---- The library (Configure → Documents). Talks to /api/admin/library for THIS bot. ----
+function libLine(text, cls) { const d = document.createElement('div'); d.textContent = text; d.className = 'lline ' + (cls || ''); const box = $('llog'); if (!box) return d; box.prepend(d); return d; }
+async function loadLibrary() {
+  const box = $('lfiles'); if (!box) return;
+  const m = cfgMeta?.library || {};
+  $('ltypes').textContent = m.enabled ? 'Up to ' + Math.round((m.maxBytes || 4194304) / 1048576) + ' MB · ' + (m.extensions || []).join(' ') : '';
+  $('l_upload').accept = (m.extensions || []).join(',');
+  if (!m.enabled) { box.innerHTML = '<p style="color:var(--muted);margin:0">The library isn\'t switched on for this deployment (wrangler.jsonc → ai_search_namespaces, YourBots/config.js → library). See docs/CUSTOMIZE.md → Give it documents.</p>'; $('l_uploadbtn').disabled = true; return; }
+  if (!draft.id || $('cfgsource').textContent === 'new') { box.innerHTML = '<p style="color:var(--muted);margin:0">Save the bot first, then add documents — they\'re filed under its name.</p>'; $('l_uploadbtn').disabled = true; return; }
+  $('l_uploadbtn').disabled = false;
+  try {
+    const r = await fetch('/api/admin/library?project=' + encodeURIComponent(draft.id), { headers: { 'x-admin-token': ADMIN } });
+    const d = await r.json();
+    if (!r.ok) { box.innerHTML = '<p style="color:var(--danger);margin:0">' + esc(d.error || r.status) + '</p>'; return; }
+    if (!d.files.length) { box.innerHTML = '<p style="color:var(--muted);margin:0">No documents yet. Also: anything you drop into <code>YourBots/' + esc(draft.id) + '/knowledge/</code> in GitHub that isn\'t .md/.txt/.csv lands here.</p>'; return; }
+    box.innerHTML = d.files.map((f) => '<div class="lrow"><span class="lname">' + esc(f.name) + (f.source === 'github' ? ' <span style="color:var(--muted);font-size:11.5px">from GitHub</span>' : '') + '</span><span class="' + (f.status === 'completed' || f.chunks > 0 ? 'ok' : (f.status === 'error' || f.status === 'skipped') ? 'bad' : 'muted') + '">' + (f.status === 'error' ? 'error — upload it again' : f.status === 'skipped' ? 'skipped by Cloudflare' : f.status === 'completed' || f.chunks > 0 ? 'ready' : 'indexing') + (f.chunks ? ' · ' + f.chunks + ' passages' : '') + '</span><button type="button" class="iconbtn" data-ldel="' + esc(f.id) + '" data-lname="' + esc(f.name) + '" title="Remove from the library">✕</button></div>').join('');
+    box.onclick = async (e) => { const b = e.target.closest('button[data-ldel]'); if (!b) return; b.disabled = true; const r2 = await fetch('/api/admin/library/' + encodeURIComponent(b.dataset.ldel) + '?project=' + encodeURIComponent(draft.id), { method: 'DELETE', headers: { 'x-admin-token': ADMIN } }); if (r2.ok) { libLine(b.dataset.lname + ' — removed.', 'muted'); loadLibrary(); } else { b.disabled = false; libLine('Could not remove ' + b.dataset.lname, 'bad'); } };
+  } catch (err) { box.innerHTML = '<p style="color:var(--danger);margin:0">Could not load the library (' + esc(err.message) + ').</p>'; }
+}
+async function libUpload(f, override, row) {
+  const m = cfgMeta?.library || {};
+  const ext = (f.name.toLowerCase().match(/\.[a-z0-9]+$/) || [''])[0];
+  if (!override && m.extensions?.length && !m.extensions.includes(ext)) { row.textContent = f.name + ' — we don\'t read ' + (ext || 'files without an extension') + '. Export it as PDF, .docx or .txt.'; row.className = 'lline bad'; return; }
+  if (f.size > (m.maxBytes || 4194304)) { row.textContent = f.name + ' — over 4 MB. Split it or export a smaller version.'; row.className = 'lline bad'; return; }
+  const fd = new FormData(); fd.append('file', f, f.name); if (override) fd.append('override', '1');
+  try {
+    const r = await fetch('/api/admin/library?project=' + encodeURIComponent(draft.id), { method: 'POST', headers: { 'x-admin-token': ADMIN }, body: fd });
+    const j = await r.json();
+    if (!r.ok) { row.textContent = f.name + ' — ' + (j.error || r.status); row.className = 'lline bad'; return; }
+    const res = (j.results || [])[0] || {};
+    if (res.ok) { row.textContent = res.name + ' — ' + (res.status === 'completed' ? 'ready (' + (res.chunks ?? '?') + ' passages)' : 'uploaded, still indexing. Give it a minute.'); row.className = 'lline ok'; }
+    else if (res.needsOverride) libFlags(f, res, row);
+    else { row.textContent = f.name + ' — ' + (res.reason || 'failed'); row.className = 'lline bad'; }
+  } catch { row.textContent = f.name + ' — network error'; row.className = 'lline bad'; }
+}
+// The scan found something. Show exactly what, and let the admin decide.
+function libFlags(f, res, row) {
+  row.className = 'lline bad'; row.textContent = '';
+  const head = document.createElement('div'); head.innerHTML = '<b></b> — held back. The scan found:'; head.querySelector('b').textContent = f.name;
+  const ul = document.createElement('ul'); ul.style.margin = '4px 0 6px';
+  for (const fl of res.flagged || []) { const li = document.createElement('li'); li.textContent = fl.count > 1 ? fl.count + ' ' + fl.label + ' (e.g. ' + fl.sample + ')' : fl.label + (fl.sample ? ': ' + fl.sample : ''); ul.appendChild(li); }
+  const note = document.createElement('div'); note.style.color = 'var(--muted)'; note.style.fontSize = '12px'; note.textContent = 'Anyone who talks to this bot can end up reading it. If it belongs on your website anyway, put it in. The override is written to the logs.';
+  const btns = document.createElement('div'); btns.className = 'btnrow'; btns.style.marginTop = '6px';
+  const go = document.createElement('button'); go.type = 'button'; go.className = 'btn'; go.textContent = 'Put it in anyway';
+  const skip = document.createElement('button'); skip.type = 'button'; skip.className = 'btn'; skip.textContent = 'Leave it out';
+  go.onclick = async () => { go.disabled = true; row.className = 'lline muted'; row.textContent = f.name + ' — uploading…'; await libUpload(f, true, row); loadLibrary(); };
+  skip.onclick = () => { row.className = 'lline muted'; row.textContent = f.name + ' — left out.'; };
+  btns.append(go, skip); row.append(head, ul, note, btns);
+}
 function syncDraft() {
   const v = (id) => ($(id) ? $(id).value : '');
   draft.name = v('f_name'); draft.tagline = v('f_tagline'); draft.instructions = v('f_instructions'); draft.greeting = v('f_greeting');
@@ -635,8 +694,8 @@ $('cfggit').onclick = async () => {
     if (cfgMeta.canSave) { const r0 = await fetch('/api/admin/project?id=' + encodeURIComponent(id), { method: 'PUT', headers: { 'content-type': 'application/json', 'x-admin-token': ADMIN }, body: JSON.stringify({ ...draft, id }) }); if (!r0.ok) throw new Error('save failed'); }
     const r = await fetch('/api/admin/project/sync?id=' + encodeURIComponent(id), { method: 'POST', headers: { 'x-admin-token': ADMIN } }); const d = await r.json();
     if (d.error) throw new Error(d.error);
-    $('cfgmsg').innerHTML = (d.ok ? 'Committed ' + d.committed.length + ' file' + (d.committed.length === 1 ? '' : 's') + (d.deleted.length ? ', removed ' + d.deleted.length : '') + (d.unchanged.length ? ', ' + d.unchanged.length + ' unchanged' : '') : 'Partly failed: ' + esc(d.errors.join('; '))) + (d.commitUrl ? ' · <a href="' + esc(d.commitUrl) + '" target="_blank" rel="noopener">view commit</a>' : '');
-    $('plog').innerHTML = '<div><h4 style="margin:0 0 8px">Commit to GitHub</h4><p>' + esc(d.note || '') + '</p><ul>' + [...d.committed.map((f) => '<li>' + esc(f) + '</li>'), ...d.deleted.map((f) => '<li>removed ' + esc(f) + '</li>')].join('') + '</ul></div>';
+    $('cfgmsg').innerHTML = (d.ok ? 'Committed ' + d.committed.length + ' file' + (d.committed.length === 1 ? '' : 's') + (d.documents ? ' incl. ' + d.documents + ' document' + (d.documents === 1 ? '' : 's') : '') + (d.deleted.length ? ', removed ' + d.deleted.length : '') + (d.unchanged.length ? ', ' + d.unchanged.length + ' unchanged' : '') : 'Partly failed: ' + esc(d.errors.join('; '))) + (d.commitUrl ? ' · <a href="' + esc(d.commitUrl) + '" target="_blank" rel="noopener">view commit</a>' : '');
+    $('plog').innerHTML = '<div><h4 style="margin:0 0 8px">Commit to GitHub</h4><p>' + esc(d.note || '') + '</p><ul>' + [...d.committed.map((f) => '<li>' + esc(f) + '</li>'), ...d.deleted.map((f) => '<li>removed ' + esc(f) + '</li>'), ...(d.leftAlone || []).map((f) => '<li>left alone (library unreadable): ' + esc(f) + '</li>'), ...(d.errors || []).map((f) => '<li style="color:var(--danger)">' + esc(f) + '</li>')].join('') + '</ul></div>';
   } catch (err) { $('cfgmsg').textContent = 'Not committed: ' + err.message; } finally { $('cfggit').disabled = false; }
 };
 $('cfgexport').onclick = () => {

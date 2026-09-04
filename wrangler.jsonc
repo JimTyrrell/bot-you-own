@@ -14,6 +14,14 @@
   // These paths must go through the Worker so the admin gate applies to /engine/*.
   "assets": { "directory": "./Engine/public", "binding": "ASSETS", "run_worker_first": ["/engine/*", "/api/*"] },
 
+  // The library — PDFs, docs, transcripts, images — lives in Cloudflare AI Search.
+  // "default" is a namespace every account already has; the Worker creates its
+  // own instance inside it on first upload (YourBots/config.js → library.name).
+  // Nothing to click. Uploads go through the admin code. docs/CUSTOMIZE.md → "Give it documents".
+  "ai_search_namespaces": [
+    { "binding": "AI_SEARCH", "namespace": "default", "remote": true }
+  ],
+
   // Lets the code read YourBots/**/*.md (and .txt/.csv) as plain text.
   "rules": [{ "type": "Text", "globs": ["**/*.md", "**/*.txt", "**/*.csv"], "fallthrough": true }],
 

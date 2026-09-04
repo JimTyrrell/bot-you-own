@@ -59,7 +59,17 @@ Bump `"version"` in `package.json`, commit, deploy. `public/version.json` is gen
    otherwise Worker → Settings → Builds → connect). Now: Configure → Save (live at
    once from the database) → **Commit to GitHub** (the bot's folder lands in the
    repo) → Workers Builds redeploys → the folder is the deployed version. Remove
-   the saved copy afterwards so the folder is the single source.
+   the saved copy afterwards so the folder is the single source. The commit includes
+   the bot's library documents (PDFs etc. under `knowledge/`) and its `APPROVED.txt`.
+
+## B6. The library (documents in AI Search)
+Nothing to create: `wrangler.jsonc` binds the `default` AI Search namespace and the
+Worker makes its own instance (`YourBots/config.js` → `library.name`) on the first
+upload. Uploads use the admin code from B3 — Configure → Documents. For the GitHub
+route (files in `YourBots/<bot>/knowledge/` synced by `.github/workflows/sync-library.yml`),
+add two **repository** secrets in GitHub: `BOT_URL` and `ADMIN_PASSPHRASE`. Check it's
+alive: under the hood → Files lists the bot's documents; Configure → Documents
+uploads. Details and the scan: `docs/CUSTOMIZE.md → Give it documents`.
 
 ## C. Your own domain
 Dashboard → Workers & Pages → the Worker → Settings → Domains & Routes → Add →

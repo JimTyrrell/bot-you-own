@@ -1,0 +1,36 @@
+# Sends each bot's documents (YourBots/<bot>/knowledge/*.pdf etc. and
+# knowledge/library/**) to the deployed bot's library on every commit.
+#
+# Needs two repository secrets (GitHub → Settings → Secrets and variables → Actions):
+#   BOT_URL           e.g. https://bot-you-own.you.workers.dev
+#   ADMIN_PASSPHRASE  the admin code (the same secret the Worker has)
+#
+# Without them the job exits quietly and does nothing. A file the scan holds
+# back fails the job so you see it; approve it in knowledge/APPROVED.txt.
+
+name: Sync library
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "YourBots/*/knowledge/**"
+      - "Engine/scripts/sync-library.mjs"
+      - ".github/workflows/sync-library.yml"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Workers Builds deploys on the same push. Give it a head start so a new
+      # bot folder exists on the server before we file documents under it.
+      - run: sleep 75
+      - run: node Engine/scripts/sync-library.mjs
+        env:
+          BOT_URL: ${{ secrets.BOT_URL }}
+          ADMIN_PASSPHRASE: ${{ secrets.ADMIN_PASSPHRASE }}

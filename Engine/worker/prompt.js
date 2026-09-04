@@ -38,14 +38,20 @@ export const ROOT_PROMPT_FILES = {
   "7-answering-strict.md": answeringStrictMd, "7-answering-open.md": answeringOpenMd, "8-links.md": linksMd, "9-boundaries.md": boundariesMd,
 };
 
-export function buildSystemPrompt({ config, project, now = new Date() }) {
+export function buildSystemPrompt({ config, project, passages = "", now = new Date() }) {
   const strict = project.grounding !== "open";
   const owner = config.owner || "";
   const handoff = [project.handoffText, project.handoffContact].filter(Boolean).join(" ");
   const files = Object.entries(project.files || {});
-  const filesBlock = files.length
-    ? files.map(([name, text]) => `<file name="${name}">\n${text}\n</file>`).join("\n\n")
-    : "(no files)";
+  // The library (Engine/worker/library.js): excerpts from this bot's documents,
+  // picked per question. They sit inside <files> so the same rules apply.
+  const libraryBlock = passages
+    ? `<library>\nExcerpts from the owner's document library, chosen for this question. Treat them exactly like the files above; name the document when it helps.\n${passages}\n</library>`
+    : "";
+  const filesBlock = [
+    files.length ? files.map(([name, text]) => `<file name="${name}">\n${text}\n</file>`).join("\n\n") : (passages ? "" : "(no files)"),
+    libraryBlock,
+  ].filter(Boolean).join("\n\n");
 
   const vars = {
     botName: project.name,

@@ -13,7 +13,7 @@ let commit = ""; try { commit = execSync("git rev-parse --short HEAD", { stdio: 
 const stamp = { version, builtAt: new Date().toISOString(), commit };
 writeFileSync("Engine/public/version.json", JSON.stringify(stamp));
 console.log(`version ${version} (${commit || "no git"}) built ${stamp.builtAt}`);
-const files = ["YourBots/config.js", "Engine/worker/index.js", "Engine/worker/prompt.js", "Engine/worker/modes.js", "Engine/worker/firewall.js", "Engine/worker/gateway.js", "YourBots/index.js", "Engine/scripts/discover.mjs", "wrangler.jsonc", "Engine/public/index.html", "Engine/public/widget.js", "Engine/tests/break-it.mjs"];
+const files = ["YourBots/config.js", "Engine/worker/index.js", "Engine/worker/prompt.js", "Engine/worker/modes.js", "Engine/worker/firewall.js", "Engine/worker/gateway.js", "Engine/worker/library.js", "YourBots/index.js", "Engine/scripts/discover.mjs", "Engine/scripts/sync-library.mjs", "wrangler.jsonc", "Engine/public/index.html", "Engine/public/widget.js", "Engine/tests/break-it.mjs"];
 mkdirSync("Engine/public/engine", { recursive: true });
 for (const f of readdirSync("Engine/public/engine")) if (f.endsWith(".txt") || f === "index.json") { try { (await import("node:fs")).unlinkSync(join("Engine/public/engine", f)); } catch {} }
 for (const f of files) copyFileSync(f, join("Engine/public/engine", f.replace(/\//g, "__") + ".txt"));
