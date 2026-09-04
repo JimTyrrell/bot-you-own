@@ -129,9 +129,10 @@ nothing to create in the dashboard. AI Search is free during its beta; the
 conversion of each file uses Workers AI out of the same daily allowance as chat.
 
 ### Two ways in, same place
-1. **Configure → Documents.** Admin code → ✎ Configure → drop files in. Usually
-   searchable in seconds; when Cloudflare's indexer is busy it can take a few
-   minutes, and the list shows *indexing* until then. A file that shows **error**
+1. **Configure → Documents.** Admin code → ✎ Configure → drop files in. A file is
+   searchable once the list says *ready* — usually under two minutes, sometimes
+   longer when Cloudflare's indexer is busy; until then it says *indexing — not
+   searchable yet*. A file that shows **error**
    hit a timeout on their side — upload it again (same name replaces it). Ask the
    preview something that's only in the file.
 2. **GitHub.** Drop the file into `YourBots/<bot>/knowledge/` (anything that isn't

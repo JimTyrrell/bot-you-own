@@ -524,7 +524,7 @@ export async function uploadFile(env, config, bot, name, bytes, { override = fal
     const opts = { metadata: { bot, source: source === "github" ? "github" : "upload", approved: override ? "yes" : "no" }, waitMs: 5000 };
     const item = await uploadBytes(lib, keyFor(bot, g.name), bytes, g.ext, opts);
     if (item?.status === "error" || item?.status === "skipped") return { ok: false, name: g.name, reason: `Cloudflare couldn't read that file (status: ${item.status}${item.error ? ": " + String(item.error).slice(0, 120) : ""}). Try exporting it again, or as PDF.` };
-    const indexed = item?.status === "completed" || (item?.chunks_count ?? 0) > 0;
+    const indexed = item?.status === "completed";
     return { ok: true, name: g.name, id: item?.id, status: indexed ? "completed" : "indexing", chunks: item?.chunks_count ?? null };
   } catch (err) {
     const msg = String(err?.message || err);
@@ -551,8 +551,9 @@ async function uploadBytes(lib, key, bytes, ext, opts) {
   // Small files index in a few seconds; big PDFs take a minute. Wait a little
   // so the common case comes back "ready", then report whatever status it has.
   // (The binding's own uploadAndPoll waits the full timeout — too slow for a form.)
-  // "completed" lags behind the chunks appearing, so chunks > 0 also counts as ready.
-  const ready = (it) => ["completed", "error", "skipped"].includes(it?.status) || (it?.chunks_count ?? 0) > 0;
+  // Only "completed" means searchable. Chunks appear a while before that and
+  // a search in between finds nothing, so we don't call it ready early.
+  const ready = (it) => ["completed", "error", "skipped"].includes(it?.status);
   const deadline = Date.now() + (opts.waitMs ?? 5000);
   while (Date.now() < deadline && !ready(item)) {
     await new Promise((r) => setTimeout(r, 1200));
