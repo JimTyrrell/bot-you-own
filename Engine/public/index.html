@@ -89,6 +89,7 @@
   .flags { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0 0 40px; width:100%; }
   .flag { font-size:11px; padding:2px 8px; border-radius:999px; background:var(--chip); color:var(--chipText); }
   .flag.hard { background:#fee2e2; color:#991b1b; }
+  .flag.source { max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
   .composer { padding:10px 16px 8px; }
   .composer form { max-width:760px; margin:0 auto; display:flex; align-items:flex-end; gap:8px; border:1px solid var(--edge); border-radius:22px; padding:8px 8px 8px 16px; background:var(--bg); box-shadow:0 2px 12px rgba(0,0,0,.06); }
@@ -412,17 +413,17 @@ function renderLog() {
     }
     log.appendChild(empty); return;
   }
-  state.chat.messages.forEach((m) => addMessage(m.role, m.content, m.flags));
+  state.chat.messages.forEach((m) => addMessage(m.role, m.content, m.flags, m.sources));
   scrollDown();
 }
 
-function addMessage(role, content, flags) {
+function addMessage(role, content, flags, sources) {
   const el = document.createElement('div'); el.className = 'msg ' + (role === 'user' ? 'user' : 'bot');
   const body = document.createElement('div'); body.className = 'body';
   if (role === 'user') body.textContent = content;
   else { el.innerHTML = '<div class="avatar">' + esc((state.project?.name || 'A')[0]) + '</div>'; body.innerHTML = md(content); }
   el.appendChild(body);
-  if (flags?.length) el.appendChild(flagRow(flags));
+  if (flags?.length || sources?.length) el.appendChild(flagRow(flags, sources));
   $('log').appendChild(el); return body;
 }
 
@@ -432,11 +433,18 @@ const FLAG_LABELS = {
   'invisible-text-stripped': '👁 hidden characters removed', 'handoff-appended': '📇 contact added by the firewall', 'secret-detected': '🔑 looks like a secret was pasted',
   'library-used': '📚 answered with the document library',
 };
-function flagRow(flags) {
+// The small chips under an answer. Two kinds share the row: firewall flags
+// (what the engine did to this turn) and citations — the documents the answer
+// drew on, as "📄 name". Names only, never a link: the files are admin-only.
+function flagRow(flags, sources) {
   const row = document.createElement('div'); row.className = 'flags';
-  flags.forEach((f) => {
+  (flags || []).forEach((f) => {
     const c = document.createElement('span'); c.className = 'flag' + (/blocked|error/.test(f) ? ' hard' : '');
     c.textContent = FLAG_LABELS[f] || f; row.appendChild(c);
+  });
+  (sources || []).forEach((s) => {
+    const c = document.createElement('span'); c.className = 'flag source';
+    c.textContent = '📄 ' + s; c.title = 'This answer drew on ' + s; row.appendChild(c);
   });
   return row;
 }
@@ -466,7 +474,7 @@ async function send(text) {
 
   state.busy = true; sendBtn.classList.add('stop'); sendBtn.textContent = '■'; sendBtn.title = 'Stop';
   state.abort = new AbortController();
-  let full = '', finalText = null, flags = [];
+  let full = '', finalText = null, flags = [], sources = [];
   try {
     const res = await fetch('/api/chat', {
       method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, signal: state.abort.signal,
@@ -475,7 +483,7 @@ async function send(text) {
     if (res.status === 401) { const d = await res.clone().json().catch(() => ({})); if (d.error === 'email') { VISITOR = ''; needEmail = true; showLock('Please enter your email address to start.'); } else { TOKEN = ''; try { localStorage.removeItem('byo:token'); } catch {} needKey = true; showLock('Enter the passphrase to continue.'); } }
     if (!(res.headers.get('content-type') || '').includes('event-stream')) {
       const data = await res.json().catch(() => ({}));
-      finalText = data.reply || data.error || 'Sorry — something went wrong on our end.'; flags = data.flags || [];
+      finalText = data.reply || data.error || 'Sorry — something went wrong on our end.'; flags = data.flags || []; sources = data.sources || [];
     } else {
       const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
       while (true) {
@@ -486,7 +494,7 @@ async function send(text) {
           if (!line.startsWith('data:')) continue;
           const ev = JSON.parse(line.slice(5));
           if (ev.type === 'delta') { if (!full) stopThinking(); full += ev.text; body.innerHTML = md(full); scrollDown(); }
-          if (ev.type === 'final') { finalText = ev.text; flags = ev.flags || []; }
+          if (ev.type === 'final') { finalText = ev.text; flags = ev.flags || []; sources = ev.sources || []; }
         }
       }
     }
@@ -496,8 +504,8 @@ async function send(text) {
   stopThinking(); body.classList.remove('cursor');
   const reply = finalText ?? full;
   body.innerHTML = md(reply);
-  if (flags.length) body.parentElement.appendChild(flagRow(flags));
-  chat.messages.push({ role: 'assistant', content: reply, flags });
+  if (flags.length || sources.length) body.parentElement.appendChild(flagRow(flags, sources));
+  chat.messages.push({ role: 'assistant', content: reply, flags, sources });
   store.upsert(chat); renderChats();
   state.busy = false; sendBtn.classList.remove('stop'); sendBtn.textContent = '↑'; sendBtn.title = 'Send';
   scrollDown(); input.focus();
@@ -740,7 +748,7 @@ $('cfgexport').onclick = () => {
 function renderPreview() {
   const log = $('plog'); log.innerHTML = '';
   if (!previewMsgs.length) { log.innerHTML = '<div class="empty"><p style="color:var(--muted)">Change something on the left, then ask it a question here. Nothing is saved until you press Save.</p></div>'; return; }
-  for (const m of previewMsgs) { const el = document.createElement('div'); el.className = 'msg ' + (m.role === 'user' ? 'user' : 'bot'); const body = document.createElement('div'); body.className = 'body'; if (m.role === 'user') body.textContent = m.content; else { el.innerHTML = '<div class="avatar">' + esc((draft.name || 'A')[0]) + '</div>'; body.innerHTML = md(m.content); } el.appendChild(body); if (m.flags?.length) el.appendChild(flagRow(m.flags)); log.appendChild(el); }
+  for (const m of previewMsgs) { const el = document.createElement('div'); el.className = 'msg ' + (m.role === 'user' ? 'user' : 'bot'); const body = document.createElement('div'); body.className = 'body'; if (m.role === 'user') body.textContent = m.content; else { el.innerHTML = '<div class="avatar">' + esc((draft.name || 'A')[0]) + '</div>'; body.innerHTML = md(m.content); } el.appendChild(body); if (m.flags?.length || m.sources?.length) el.appendChild(flagRow(m.flags, m.sources)); log.appendChild(el); }
   log.scrollTop = log.scrollHeight;
 }
 $('pform').addEventListener('submit', async (e) => {
@@ -749,7 +757,7 @@ $('pform').addEventListener('submit', async (e) => {
   const holder = $('plog').lastElementChild.querySelector('.body'); holder.className = 'body thinking'; holder.innerHTML = '<span>' + esc((draft.thinkingWords?.[0]) || (state.cfg?.thinkingWords?.[0]) || 'Thinking') + '</span>';
   try {
     const res = await fetch('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-token': ADMIN }, body: JSON.stringify({ draft, messages: previewMsgs.filter((m) => m.content || m.role === 'user').map(({ role, content }) => ({ role, content })), stream: false }) });
-    const d = await res.json(); const last = previewMsgs[previewMsgs.length - 1]; last.content = d.reply || d.error || 'Something went wrong.'; last.flags = d.flags || [];
+    const d = await res.json(); const last = previewMsgs[previewMsgs.length - 1]; last.content = d.reply || d.error || 'Something went wrong.'; last.flags = d.flags || []; last.sources = d.sources || [];
   } catch { previewMsgs[previewMsgs.length - 1].content = 'Something went wrong.'; }
   renderPreview();
 });

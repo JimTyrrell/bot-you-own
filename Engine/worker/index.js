@@ -226,9 +226,13 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
   }
 
   // --- LAYER 2b: the library. Relevant excerpts from this bot's documents
-  //     (PDFs, sheets, transcripts) for THIS question. "" if none, or if AI
-  //     Search isn't set up — the bot answers from knowledge/ regardless.
-  const passages = await retrieve(env, CONFIG, project.id || CONFIG.defaultProject, last.content);
+  //     (PDFs, sheets, transcripts) for THIS question. The search is given the
+  //     visitor's last few messages, not just the latest one, so a follow-up
+  //     like "and on Thursdays?" still finds the right page. "" if none, or if
+  //     AI Search isn't set up — the bot answers from knowledge/ regardless.
+  //     `sources` = the document names, shown under the answer as citations.
+  const userTurns = history.filter((m) => m.role === "user").map((m) => m.content);
+  const { passages, sources } = await retrieve(env, CONFIG, project.id || CONFIG.defaultProject, userTurns);
   if (passages) flags.push("library-used");
 
   // --- LAYER 1: build the prompt --------------------------------------------
@@ -250,7 +254,7 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
   if (!stream) {
     const out = await finish(String(result), { env, fw, flags, handoff, outboundOpts });
     ctx.waitUntil(logTurn(env, project, last.content, out.reply, out.flags, who));
-    return json({ reply: out.reply, flags: out.flags });
+    return json({ reply: out.reply, flags: out.flags, sources });
   }
 
   // --- Streaming path: send deltas as they come, then a "final" event with the
@@ -267,7 +271,7 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
           push({ type: "delta", text: chunk });
         }
         const out = await finish(full, { env, fw, flags, handoff, outboundOpts });
-        push({ type: "final", text: out.reply, flags: out.flags });
+        push({ type: "final", text: out.reply, flags: out.flags, sources });
         ctx.waitUntil(logTurn(env, project, last.content, out.reply, out.flags, who));
       } catch (err) {
         console.error("stream failed", err);
