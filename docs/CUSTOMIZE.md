@@ -40,8 +40,35 @@ authenticate anyone.
 
 ## Put a hard ceiling on cost
 Free plan: 10,000 neurons/day, then it stops. No surprise bill, no config.
-Paid plan: create an AI Gateway and set a **spend limit** — `docs/DEPLOY.md` §D.
+Paid plan: the bot already routes through an AI Gateway called `bot-you-own`
+(`config.js` → `gateway.id`). Create it in the dashboard and set a **spend limit** —
+`docs/DEPLOY.md` §D. Until it exists, calls go straight to the model, one warning
+goes in the log, and those turns show `gateway-direct` in the Audit tab.
 Budget *alerts* are informational and arrive a day late. Use limits for the ceiling.
+
+### Cheap turns · `config.js` → `routing`
+"hi", "thanks!", "ok", "bye", a thumbs-up — a fair share of a public bot's turns,
+and each one costs the same as a real question on a 120B model. With
+`routing.smallTurns: true` (the default), `Engine/worker/router.js` looks at the
+visitor's last message in plain code — no model call — and if **every word is
+small talk** it answers with `routing.smallModel` (default
+`@cf/meta/llama-3.1-8b-instruct-fast`), same system prompt, 200 tokens. The turn
+gets the `small-model` flag. Anything with a number, a link, an unknown word, a
+question mark (on a strict bot), more than six words, an attachment, or a job
+other than "answer" (intake, booking) goes to the main model as always. Words
+like "call" or "morning" only count as small talk if the bot's own files never
+use them. When it isn't sure, it's a real turn — the rules are in the file.
+
+What it saves (an estimate — Workers AI reports the tokens, the pricing page
+does the rest). Measured on `example-co`, ten small-talk turns averaged 1,684
+prompt + 13 output tokens each; ten real turns 1,688 + 128. On the main model
+(`gpt-oss-120b`, 31,818 / 68,182 neurons per M tokens) a small-talk turn is
+≈ 55 neurons. On the small model it's ≈ 24 neurons at the price of its `-fp8`
+sibling (13,778 / 26,128 — the `-fast` variant isn't on the pricing page), or
+≈ 44 at the base Llama 3.1 8B price — so **20–57 % off those turns**, nothing
+off the others. Under the hood → Gateway & model → `routing.split` shows the
+count and tokens each way since the isolate started. `smallTurns: false`
+switches it off.
 
 ## Read what your bot has been saying (audit log)
 On by default (`docs/DEPLOY.md` §F); the friendly view is under the hood → Audit. Raw SQL:

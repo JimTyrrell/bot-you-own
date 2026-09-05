@@ -35,14 +35,31 @@ export const CONFIG = {
   // model: "claude-opus-5",                   // provider: "anthropic"
   maxTokens: 900,
 
-  // ---- 4. THE GATEWAY (optional, recommended the day you go paid) -------------
-  // Create one in the Cloudflare dashboard: AI → AI Gateway → Create. Paste its
-  // name here. You get logs, caching, a per-minute rate limit and a DOLLAR SPEND
-  // CAP for free. Leave empty and the bot talks to the model directly.
+  // ---- 4. THE GATEWAY (on by default — the dollar ceiling) --------------------
+  // Every model call goes through Cloudflare AI Gateway named below. You get
+  // logs, caching, a per-minute rate limit and a DOLLAR SPEND LIMIT, all from the
+  // dashboard, none of it in code. The gateway has to EXIST on your account
+  // first: dashboard → AI → AI Gateway → Create Gateway, name it "bot-you-own"
+  // (or the curl in docs/DEPLOY.md §D). Until it does, the bot notices, logs one
+  // warning and talks to the model directly — a missing gateway never breaks a
+  // chat. Under the hood → Gateway & model shows which way the last call went.
   gateway: {
-    id: "",                 // e.g. "my-bot-gateway"
+    id: "bot-you-own",      // "" = talk to the model directly, no gateway
     accountId: "",          // only needed for provider "openai" / "anthropic"
     cacheTtl: 0,            // seconds; 0 = don't cache answers
+  },
+
+  // ---- 4a. CHEAP TURNS: "hi", "thanks", "ok" don't need a 120B model ----------
+  // Engine/worker/router.js looks at the visitor's last message in plain code —
+  // no model call — and if EVERY word is small talk (greeting, thanks, ok, bye,
+  // an emoji) it answers with the small model below, same system prompt, 200
+  // tokens. Anything with a question mark (strict bots), a number, an unknown
+  // word or more than six words goes to the main model as always. When it
+  // isn't sure, it's a real turn. Under the hood → Gateway & model shows the split.
+  routing: {
+    smallTurns: true,
+    smallModel: "@cf/meta/llama-3.1-8b-instruct-fast",   // Workers AI catalogue: developers.cloudflare.com/workers-ai/models
+    smallMaxTokens: 200,
   },
 
   // ---- 5. WHO CAN USE IT -----------------------------------------------------

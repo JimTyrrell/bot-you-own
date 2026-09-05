@@ -1,7 +1,8 @@
 import { CONFIG } from "../../YourBots/config.js";
 import { PROJECTS, getProject as folderProject, listProjects as folderList } from "../../YourBots/index.js";
 import { buildSystemPrompt, PROMPT_FILES, ROOT_PROMPT_FILES } from "./prompt.js";
-import { complete } from "./gateway.js";
+import { complete, gatewayStatus } from "./gateway.js";
+import { classifyTurn, recordRoute, routingStats } from "./router.js";
 import { screenInbound, screenOutbound, ensureHandoff, llamaGuard, redact, INJECTION_PATTERNS, SECRET_PATTERNS, LLAMA_GUARD_MODEL } from "./firewall.js";
 import { MODES } from "./modes.js";
 import { retrieve, uploadFile, listFiles, deleteFile, downloadFile, rescanLibrary, extractText, libraryMeta, allExtensions, gate, safeName, scanText, websiteOf, crawlWebsite, websiteStatus, deleteWebsite } from "./library.js";
@@ -319,19 +320,45 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
   // A second, non-streaming call with the same prompt — used only if the first reply came out as garbage (see finish()).
   const retry = () => complete({ env, config: CONFIG, system: prompt.text, messages: history, stream: false });
 
+  // --- LAYER 3c: the router. "hi" / "thanks" / "ok" go to the small model with
+  //     the same prompt; everything else to the main model. Engine/worker/router.js.
+  const routing = CONFIG.routing || {};
+  const route = routing.smallTurns && routing.smallModel
+    ? classifyTurn(last.content, { project, attachments: attachments.length })
+    : { kind: "real", reason: "routing off" };
+  let small = route.kind === "chit-chat";
+  if (small) console.log(JSON.stringify({ event: "route", project: project.name, kind: route.kind, reason: route.reason, model: routing.smallModel }));
+
   // --- LAYER 3b: call the model through the gateway --------------------------
+  //     `meta` comes back saying whether the call went via the gateway or direct,
+  //     and with token counts when the model reports them.
   let result;
+  const meta = {};
   try {
-    result = await complete({ env, config: CONFIG, system: prompt.text, messages: history, stream });
+    if (small) {
+      try {
+        result = await complete({ env, config: CONFIG, system: prompt.text, messages: history, stream, model: routing.smallModel, maxTokens: routing.smallMaxTokens || 200, meta });
+      } catch (err) {
+        // The small model is a saving, not a dependency: if it fails, the main model answers.
+        console.error("small model failed, using the main model", err?.message || err);
+        small = false;
+      }
+    }
+    if (!small) result = await complete({ env, config: CONFIG, system: prompt.text, messages: history, stream, meta });
   } catch (err) {
     console.error("model call failed", err?.code || "", err?.message || err);
     const f = [...flags, err?.code === "gateway-blocked" ? "gateway-blocked" : err?.code === "rate-limited" ? "provider-rate-limited" : "model-error"];
     ctx.waitUntil(afterReply(env, { project, question: last.content, reply: handoff, flags: f, who, history, url: request.url }));
     return send(handoff, f);
   }
+  if (small) flags.push("small-model");
+  if (meta.gateway === "direct (gateway missing)") flags.push("gateway-direct");
+  // the split for Under the hood: counted now for a full reply, after the last chunk for a stream
+  const countRoute = () => recordRoute(small ? "small" : "main", meta.usage);
 
   // --- Non-streaming path -----------------------------------------------------
   if (!stream) {
+    countRoute();
     const out = await finish(String(result), { env, fw, flags, handoff, outboundOpts, retry, who, history });
     ctx.waitUntil(afterReply(env, { project, question: last.content, reply: out.reply, flags: out.flags, who, history, url: request.url, booking: out.booking }));
     return json({ reply: out.reply, flags: out.flags, sources });
@@ -350,6 +377,7 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
           full += chunk;
           push({ type: "delta", text: chunk });
         }
+        countRoute();
         const out = await finish(full, { env, fw, flags, handoff, outboundOpts, retry, who, history });
         push({ type: "final", text: out.reply, flags: out.flags, sources });
         ctx.waitUntil(afterReply(env, { project, question: last.content, reply: out.reply, flags: out.flags, who, history, url: request.url, booking: out.booking }));
@@ -1196,10 +1224,16 @@ async function engineView(env, projectId) {
         "voice-in": "the visitor spoke this message (the mic → Whisper on Workers AI); the text was screened like any other",
         "guard-blocked:S#": "Llama Guard flagged the user turn (category S1–S14)",
         "gateway-blocked": "AI Gateway Guardrails blocked it at the edge",
+        "gateway-direct": "gateway.id is set but no such gateway exists yet; the call went straight to the model (no logs, no spend limit)",
+        "small-model": "small talk (\"hi\", \"thanks\", \"ok\") answered by routing.smallModel with the same prompt — Engine/worker/router.js",
         "rate-limited": "over the per-visitor limit",
       },
     },
-    gateway: { provider: CONFIG.provider, model: CONFIG.model, maxTokens: CONFIG.maxTokens, gateway: CONFIG.gateway },
+    gateway: {
+      provider: CONFIG.provider, model: CONFIG.model, maxTokens: CONFIG.maxTokens,
+      gateway: { ...CONFIG.gateway, ...gatewayStatus(CONFIG) },
+      routing: { ...(CONFIG.routing || {}), split: routingStats() },
+    },
     handoffActions: handoffActionsView(env, CONFIG, project),
     booking: bookingView(env, project),
     version: await versionStamp(env),
