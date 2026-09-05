@@ -13,6 +13,7 @@
 // ============================================================================
 
 import { modeBlock } from "./modes.js";
+import { languageVars } from "./language.js";
 import identityMd from "../../YourBots/_prompt/1-identity.md";
 import capabilitiesMd from "../../YourBots/_prompt/2-capabilities.md";
 import personalityMd from "../../YourBots/_prompt/3-personality.md";
@@ -38,7 +39,9 @@ export const ROOT_PROMPT_FILES = {
   "7-answering-strict.md": answeringStrictMd, "7-answering-open.md": answeringOpenMd, "8-links.md": linksMd, "9-boundaries.md": boundariesMd,
 };
 
-export function buildSystemPrompt({ config, project, passages = "", attachments = [], now = new Date() }) {
+// `language` comes from Engine/worker/language.js (chooseLanguage): which
+// language to answer in this turn. Omit it and the prompt reads as English.
+export function buildSystemPrompt({ config, project, passages = "", attachments = [], language = null, now = new Date() }) {
   const strict = project.grounding !== "open";
   const owner = config.owner || "";
   const handoff = [project.handoffText, project.handoffContact].filter(Boolean).join(" ");
@@ -70,6 +73,9 @@ export function buildSystemPrompt({ config, project, passages = "", attachments 
     links: (project.allowedLinks || []).map((l) => `- ${l}`).join("\n") || "- (none)",
     // "yes" when the paperclip is switched on, so 2-capabilities.md can mention it
     attachments: config.attachments?.enabled === false ? "" : "yes",
+    // language / filesLanguage / visitorLanguage / languageMenu — all "" for an
+    // English visitor, so 4-formatting.md and 7-answering-strict.md add nothing.
+    ...languageVars(language),
   };
   // Root file = global default. A copy in YourBots/<name>/prompt/ overrides it
   // for that bot only (registered in YourBots/index.js). Same name, same placeholders.

@@ -2,7 +2,8 @@ import { CONFIG } from "../../YourBots/config.js";
 import { PROJECTS, getProject as folderProject, listProjects as folderList } from "../../YourBots/index.js";
 import { buildSystemPrompt, PROMPT_FILES, ROOT_PROMPT_FILES } from "./prompt.js";
 import { complete } from "./gateway.js";
-import { screenInbound, screenOutbound, ensureHandoff, llamaGuard, redact, INJECTION_PATTERNS, SECRET_PATTERNS, LLAMA_GUARD_MODEL } from "./firewall.js";
+import { screenInbound, screenOutbound, ensureHandoff, stripHandoffMarker, llamaGuard, redact, INJECTION_PATTERNS, SECRET_PATTERNS, LLAMA_GUARD_MODEL } from "./firewall.js";
+import { detectLanguage, chooseLanguage, languageSettings } from "./language.js";
 import { MODES } from "./modes.js";
 import { retrieve, uploadFile, listFiles, deleteFile, downloadFile, rescanLibrary, extractText, libraryMeta, allExtensions, gate, safeName, scanText, websiteOf, crawlWebsite, websiteStatus, deleteWebsite } from "./library.js";
 import { normaliseHandoffActions, stripIntakeMarker, handoffEvent, runHandoffActions, handoffActionsView } from "./handoff.js";
@@ -277,8 +278,16 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
   if (found.library) flags.push("library-used");
   if (found.website) flags.push("website-used");
 
+  // --- LAYER 1a: which language to answer in. A cheap guess from the visitor's
+  //     last two messages — script and stopwords, no model call (Engine/worker/
+  //     language.js). Unsure = English, exactly as before. The flag records what
+  //     the visitor wrote in; config.languages decides what the bot replies in.
+  const language = chooseLanguage(languageSettings(CONFIG), detectLanguage(userTurns.slice(-2)));
+  if (language.detected) flags.push("language:" + language.detected);
+  if (language.unavailable) flags.push("language-unavailable");
+
   // --- LAYER 1: build the prompt --------------------------------------------
-  const prompt = buildSystemPrompt({ config: CONFIG, project, passages, attachments });
+  const prompt = buildSystemPrompt({ config: CONFIG, project, passages, attachments, language });
   const outboundOpts = { allowedLinks: project.allowedLinks, protectedText: prompt.protectedText, config: CONFIG, project };
   // A second, non-streaming call with the same prompt — used only if the first reply came out as garbage (see finish()).
   const retry = () => complete({ env, config: CONFIG, system: prompt.text, messages: history, stream: false });
@@ -345,7 +354,12 @@ async function finish(raw, { env, fw, flags, handoff, outboundOpts, retry = null
     else { f.push("degenerate-reply"); reply = ""; }
   }
   if (reply) {
-    const h = ensureHandoff(reply, outboundOpts.project);
+    // A strict bot ends a decline with "[HANDOFF]" (YourBots/_prompt/7-answering-strict.md)
+    // so the code can tell a decline in any language. Take the line out, then make
+    // sure the owner's contact is there — appended, verbatim, if the model dropped it.
+    const hm = stripHandoffMarker(reply);
+    if (hm.found) reply = hm.text;
+    const h = ensureHandoff(reply, outboundOpts.project, { declined: hm.found });
     if (h.added) { reply = h.text; f.push("handoff-appended"); }
     // An intake bot ends its final summary with "[INTAKE COMPLETE]" (YourBots/_prompt/jobs/intake.md).
     // Take the line out — the visitor and the audit log never see it — and remember it fired.

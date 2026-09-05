@@ -90,6 +90,21 @@ export const CONFIG = {
     crawlMaxPages: 200,            // pages per crawl. Keep it under the free plan's 500 a day; raise it on a paid plan
   },
 
+  // ---- 6a-0. MORE THAN ONE LANGUAGE ---------------------------------------------
+  // The model already speaks dozens of languages; nothing is translated. A visitor
+  // who writes in Spanish gets a Spanish answer built from your English files.
+  // The code guesses the visitor's language from their own words (no model call:
+  // Engine/worker/language.js), tells the model, and keeps the guardrails working.
+  // Detected: English, Spanish, French, German, Portuguese, Italian, Dutch, and
+  // by script Chinese, Japanese, Korean, Arabic, Russian/Ukrainian, Hindi. Anything
+  // else is treated as English. Your handoff contact line is never translated.
+  // docs/CUSTOMIZE.md → "More than one language".
+  languages: {
+    mode: "visitor",             // "visitor" = reply in the visitor's language; "owner" = always in yours
+    owner: "en",                 // the language your files and handoff line are written in (ISO code)
+    allowed: [],                 // only these, e.g. ["en", "es"]. Empty = any. Others get a polite "I can help in…"
+  },
+
   // ---- 6a'. VISITOR ATTACHMENTS: "here's my invoice, what does it say?" --------
   // The paperclip next to the send button. A visitor attaches ONE file (PDF,
   // Word, spreadsheet, text or an image) and the bot reads it for THAT
