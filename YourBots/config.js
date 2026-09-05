@@ -107,6 +107,33 @@ export const CONFIG = {
     maxChars: 20000,             // the text is cut here (about 8 pages); the bot is told it was cut
   },
 
+  // ---- 6a-i. VOICE IN AND OUT: talk to it, and hear it back --------------------
+  // The microphone next to the paperclip, and a small speaker on every reply.
+  // IN:  press the mic, talk, press again (or wait for maxSeconds). The browser's
+  //      own recorder sends the clip to /api/transcribe; Workers AI (Whisper)
+  //      turns it into text; the text lands in the input box for the visitor
+  //      to check and send. Nothing goes to Google or Apple — it's your Worker.
+  // OUT: the speaker under a reply reads it aloud (/api/speak → a Deepgram Aura
+  //      voice on Workers AI). Auto-speak in the header reads every reply; off
+  //      by default and remembered per browser.
+  // Every clip and every read-out is a normal Workers AI call on your account,
+  // through the same door and rate limit as the chat. Nothing is stored.
+  // What it costs (developers.cloudflare.com/workers-ai/platform/pricing, Sept 2026):
+  //   whisper-large-v3-turbo  $0.0005 per audio MINUTE  (46.63 neurons/min)
+  //   aura-1                  $0.015 per 1,000 CHARACTERS spoken (1,363.64 neurons/1k)
+  //   aura-2-en               $0.030 per 1,000 characters — the newer voice, twice the price
+  //   10,000 neurons a day are free. A 30-second question is a quarter of a cent;
+  //   a 400-character answer read aloud is six-tenths of a cent.
+  // Model ids and voice names are on developers.cloudflare.com/workers-ai/models/.
+  voice: {
+    enabled: true,                                 // false hides the mic and the speakers and switches both routes off
+    sttModel: "@cf/openai/whisper-large-v3-turbo", // speech → text. Also on the catalogue: @cf/openai/whisper (older, same shape)
+    ttsModel: "@cf/deepgram/aura-1",               // text → speech. @cf/deepgram/aura-2-en for the newer voice
+    ttsVoice: "asteria",                           // aura-1 voices: angus (default), asteria, arcas, orion, orpheus, athena, luna, zeus, perseus, helios, hera, stella
+    maxSeconds: 60,                                // the mic stops itself here
+    maxChars: 1500,                                // a reply longer than this is read up to here (about 90 seconds of speech)
+  },
+
   // ---- 6a-ii. WHEN IT HANDS OFF, TELL SOMEONE ----------------------------------
   // Each bot chooses a webhook and/or an email in its project.json → "handoffActions"
   // (Configure → "When it hands off, tell someone"). Email needs the send_email

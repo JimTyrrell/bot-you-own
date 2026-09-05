@@ -14,6 +14,8 @@ import { listLeads, getLead, summariseLead, sendLead, maybeAutoLead, leadsConfig
 //    POST /api/chat     → { project, messages, stream, attachments } → SSE stream (or JSON)
 //    POST /api/attach   → multipart "file" → { ok, name, chars, text } (the paperclip;
 //                         nothing is stored — the text goes back to the visitor's browser)
+//    POST /api/transcribe → multipart "audio" → { text, language } (the mic: Whisper on Workers AI)
+//    POST /api/speak    → { text } → audio bytes (the speaker: a Deepgram Aura voice on Workers AI)
 //    GET  /health       → "ok"
 //    *                  → public/ (the chat page, the widget)
 //  Admin (x-admin-token): /api/admin/engine, /audit, /projects, /project,
@@ -127,6 +129,8 @@ export default {
         projects: projects.length ? projects : all.slice(0, 1),
         // the paperclip: whether to show it, and what it accepts
         attachments: { enabled: attachmentRules().enabled, max: attachmentRules().max, maxBytes: attachmentRules().maxBytes, extensions: allExtensions() },
+        // the mic and the speaker: which halves are on (YourBots/config.js → voice)
+        voice: { enabled: voiceRules().enabled, in: voiceRules().in, out: voiceRules().out, maxSeconds: voiceRules().maxSeconds },
       });
     }
 
@@ -142,6 +146,16 @@ export default {
       if (request.method !== "POST") return json({ error: "POST only" }, 405);
       if (!authed) return json({ error: "locked", reply: "This bot is locked. Enter the passphrase to continue." }, 401);
       return handleAttach(request, env, ctx);
+    }
+
+    // The mic and the speaker. Same door as /api/chat; switched off = they don't exist.
+    if (url.pathname === "/api/transcribe" || url.pathname === "/api/speak") {
+      const v = voiceRules();
+      const half = url.pathname === "/api/transcribe" ? v.in : v.out;
+      if (!v.enabled || !half) return json({ error: "not found" }, 404);
+      if (request.method !== "POST") return json({ error: "POST only" }, 405);
+      if (!authed) return json({ error: "locked", reply: "This bot is locked. Enter the passphrase to continue." }, 401);
+      return url.pathname === "/api/transcribe" ? handleTranscribe(request, env) : handleSpeak(request, env);
     }
 
     return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Not found", { status: 404 });
@@ -223,6 +237,9 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
   const screen = screenInbound(last.content);
   last.content = screen.text;
   const flags = [];
+  // The page says so when the visitor spoke the message (the mic → /api/transcribe).
+  // A chip on the turn, a word in the log; the text itself is screened the same.
+  if (body.voice === "in" && voiceRules().in) flags.push("voice-in");
   if (screen.invisible) flags.push("invisible-text-stripped");
   if (screen.secret) flags.push("secret-detected");
   if (screen.injection && fw.blockInjections !== false) {
@@ -416,6 +433,105 @@ async function handleAttach(request, env, ctx) {
   if (isImage) notes.push("Images come back as a description from Cloudflare's converter — what it noticed, not the pixels.");
   log(v.text.length, []);
   return json({ ok: true, name: g.name, chars: v.text.length, text: v.text, notes });
+}
+
+// --- VOICE: the mic (speech → text) and the speaker (text → speech). ----------
+//     Both are ordinary Workers AI calls (YourBots/config.js → voice). Nothing is
+//     stored: the clip is read, sent to the model, and forgotten; the audio that
+//     comes back is streamed straight to the visitor's browser. Each half can be
+//     off on its own (no model id = that half is off); enabled:false = both are 404.
+function voiceRules() {
+  const v = CONFIG.voice || {};
+  const enabled = v.enabled === true;
+  const sttModel = String(v.sttModel || "").trim(), ttsModel = String(v.ttsModel || "").trim();
+  return {
+    enabled, sttModel, ttsModel,
+    in: enabled && Boolean(sttModel), out: enabled && Boolean(ttsModel),
+    ttsVoice: String(v.ttsVoice || "").trim(),
+    maxSeconds: Math.min(Math.max(Number(v.maxSeconds) || 60, 5), 300),
+    maxChars: Math.min(Math.max(Number(v.maxChars) || 1500, 50), 5000),
+  };
+}
+// Whisper wants the clip as a base64 string in `audio`
+// (developers.cloudflare.com/workers-ai/models/whisper-large-v3-turbo → API schema).
+function toBase64(buf) {
+  const u = new Uint8Array(buf); let s = "";
+  for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+// The mic. multipart "audio" (webm/opus from the browser, or wav/mp3) → { text, language }.
+// The clip is capped by size rather than by the clock: the page stops recording
+// at maxSeconds, and a minute of browser audio is well under a megabyte.
+async function handleTranscribe(request, env) {
+  if (!(await allowed(env, request))) return json({ error: "rate-limited", reason: "You're sending clips faster than I can listen. Give me a moment and try again.", flags: ["rate-limited"] }, 429);
+  const v = voiceRules();
+  if (!env.AI) return json({ error: "no-model", reason: "Voice needs Workers AI (wrangler.jsonc → ai binding)." }, 503);
+  let form;
+  try { form = await request.formData(); } catch { return json({ error: "bad request", reason: "Send the clip as multipart/form-data in an 'audio' field." }, 400); }
+  const clip = form.get("audio");
+  if (!clip || typeof clip.arrayBuffer !== "function") return json({ error: "bad request", reason: "No audio in the request." }, 400);
+  const maxBytes = 4 * 1024 * 1024;                         // 4 MB: minutes of opus, a minute or two of wav
+  if (clip.size > maxBytes) return json({ error: "too-long", reason: `That clip is too big (${(clip.size / 1048576).toFixed(1)} MB). Keep it under ${v.maxSeconds} seconds.` }, 413);
+  if (clip.size < 100) return json({ error: "empty", reason: "I didn't get any audio. Try again." }, 400);
+  const started = Date.now();
+  let out;
+  try {
+    out = await env.AI.run(v.sttModel, { audio: toBase64(await clip.arrayBuffer()) });
+  } catch (err) {
+    console.error("transcribe: model call failed", err?.message || err);
+    return json({ error: "model-error", reason: "I couldn't make out that clip. Try again, or type it." }, 502);
+  }
+  // Whisper's output: text (the transcription), word_count, segments; some builds add language.
+  const text = String(out?.text || "").trim();
+  const language = String(out?.language || out?.transcription_info?.language || "").trim();
+  console.log(JSON.stringify({ event: "transcribe", bytes: clip.size, type: String(clip.type || ""), chars: text.length, language, ms: Date.now() - started }));
+  if (!text) return json({ error: "empty", reason: "I couldn't hear any words in that clip. Try again a little closer to the mic." }, 422);
+  return json({ text, language });
+}
+// The speaker. { text } → audio bytes. The reply is a chat message with markdown
+// in it, so the marks are taken out first (nobody wants to hear "asterisk asterisk").
+function speakable(text, maxChars) {
+  let t = String(text || "");
+  t = t.replace(/```[\s\S]*?```/g, " ")                    // code blocks: skipped
+       .replace(/`([^`]*)`/g, "$1")
+       .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")               // images
+       .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")             // [label](url) → label
+       .replace(/\bhttps?:\/\/\S+/g, " a link ")
+       .replace(/^\s{0,3}#{1,6}\s+/gm, "")                  // headings
+       .replace(/^\s*[-*•]\s+/gm, "")                       // bullets
+       .replace(/(\*\*|__|\*|_|~~)/g, "")
+       .replace(/[ \t]+/g, " ").replace(/\n{2,}/g, "\n").trim();
+  return t.length > maxChars ? t.slice(0, maxChars).replace(/\s+\S*$/, "") : t;
+}
+async function handleSpeak(request, env) {
+  if (!(await allowed(env, request))) return json({ error: "rate-limited", reason: "Too many read-outs in a row. Give me a moment and try again.", flags: ["rate-limited"] }, 429);
+  const v = voiceRules();
+  if (!env.AI) return json({ error: "no-model", reason: "Voice needs Workers AI (wrangler.jsonc → ai binding)." }, 503);
+  let body;
+  try { body = await request.json(); } catch { return json({ error: "bad request", reason: "Send { text } as JSON." }, 400); }
+  const text = speakable(body?.text, v.maxChars);
+  if (!text) return json({ error: "empty", reason: "Nothing to read." }, 400);
+  const started = Date.now();
+  try {
+    // Aura takes { text, speaker }; with returnRawResponse the binding hands back the
+    // model's own Response — a stream of MPEG audio — which goes straight to the browser
+    // (developers.cloudflare.com/workers-ai/models/aura-1 → Usage, Output).
+    const input = { text, ...(v.ttsVoice ? { speaker: v.ttsVoice } : {}) };
+    const raw = await env.AI.run(v.ttsModel, input, { returnRawResponse: true });
+    console.log(JSON.stringify({ event: "speak", chars: text.length, model: v.ttsModel, voice: v.ttsVoice, ms: Date.now() - started }));
+    const headers = { "cache-control": "no-store", "x-spoken-chars": String(text.length) };
+    if (raw instanceof Response) {
+      if (!raw.ok) { console.error("speak: model returned", raw.status, (await raw.text().catch(() => "")).slice(0, 200)); return json({ error: "model-error", reason: "The voice model didn't answer. Try again." }, 502); }
+      headers["content-type"] = raw.headers.get("content-type") || "audio/mpeg";
+      return new Response(raw.body, { status: 200, headers });
+    }
+    // Older bindings ignore returnRawResponse and hand back the bytes or a stream.
+    headers["content-type"] = "audio/mpeg";
+    return new Response(raw?.audio ? Uint8Array.from(atob(raw.audio), (c) => c.charCodeAt(0)) : raw, { status: 200, headers });
+  } catch (err) {
+    console.error("speak: model call failed", err?.message || err);
+    return json({ error: "model-error", reason: "The voice model didn't answer. Try again." }, 502);
+  }
 }
 
 // --- After the reply has gone out: tell someone (if configured), then log. ----
@@ -870,6 +986,7 @@ async function engineView(env, projectId) {
         "attachment-injection-blocked": "the attached file contained instructions for the bot; refused before the model",
         "attachment-secret-blocked": "the attached file looked like it held a card number, key or ID number; refused",
         "website-used": "excerpts from this bot's crawled website (AI Search web crawler) were put in the prompt for this question",
+        "voice-in": "the visitor spoke this message (the mic → Whisper on Workers AI); the text was screened like any other",
         "guard-blocked:S#": "Llama Guard flagged the user turn (category S1–S14)",
         "gateway-blocked": "AI Gateway Guardrails blocked it at the edge",
         "rate-limited": "over the per-visitor limit",
