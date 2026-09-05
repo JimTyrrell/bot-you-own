@@ -11,6 +11,7 @@ import { normaliseHandoffActions, stripIntakeMarker, handoffEvent, runHandoffAct
 import { listLeads, getLead, summariseLead, sendLead, maybeAutoLead, leadsConfig, cleanVisitor } from "./leads.js";
 import { listGaps, getGap, setGapState, draftGap } from "./gaps.js";
 import { normaliseBooking, bookingLive, bookingStep, bookingView } from "./booking.js";
+import { handleTrack } from "./track.js";
 import { isHandoffId, createHandoff, readHandoff, addHandoffMessage, closeHandoff, listHandoffs, getHandoff, notifyHumanRequested, PERSON_LIMITS } from "./person.js";
 import { gate as accessGate, effectiveAccess, accessSettings, accessToken, safeEqual, tokenFor, accessView, cleanMode, cleanKeyName, cleanEmail, ACCESS_MODES, MODE_LINES } from "./access.js";
 import SETTINGS_FILE from "../../YourBots/settings.json";
@@ -79,6 +80,9 @@ export default {
       const given = await accessToken(String(b.passphrase || ""), adminLabel(env));
       return safeEqual(given, adminToken) ? json({ token: adminToken }) : json({ error: "wrong admin code" }, 401);
     }
+
+    // The food log (Engine/worker/track.js): /track, /api/track/*, /api/admin/track/*. Off = 404.
+    if (url.pathname === "/track" || url.pathname.startsWith("/track/") || url.pathname.startsWith("/api/track/") || url.pathname.startsWith("/api/admin/track/")) return handleTrack(request, env, url, { isAdmin, adminEnabled, allowed });
 
     if (url.pathname.startsWith("/api/admin/") || url.pathname.startsWith("/engine/")) {
       if (!isAdmin) return json({ error: "admin only" }, adminEnabled ? 401 : 404);
