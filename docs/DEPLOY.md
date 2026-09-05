@@ -81,17 +81,49 @@ Dashboard → Workers & Pages → the Worker → Settings → Domains & Routes �
 Custom Domain → `chat.yourdomain.com`. The domain has to be on Cloudflare. Pick
 a hostname that doesn't already have a record.
 
-## D. The gateway (the dollar ceiling) — do this the day you go paid
-1. Dashboard → **AI → AI Gateway → Create Gateway**. Name it `bot-you-own`.
-2. In `YourBots/config.js`: `gateway: { id: "bot-you-own", ... }`. Commit.
-3. In the gateway's settings, turn on:
-   - **Spend limit** — a dollar budget per day/month that *blocks* requests past it. $5/day is generous for an FAQ bot. (Alerts are not caps; use limits for the ceiling, alerts for the warning.)
-   - **Rate limiting** — requests per minute per gateway.
+## D. The gateway (the dollar ceiling) — on by default, one thing left to click
+`YourBots/config.js` ships with `gateway: { id: "bot-you-own" }`, so every model call
+already *tries* to go through Cloudflare AI Gateway. The gateway just has to exist
+on your account. Until it does, the Worker notices (Workers AI answers
+`2001: Please configure AI Gateway in the Cloudflare dashboard`), logs **one**
+warning per isolate — *AI Gateway "bot-you-own" doesn't exist on this account yet — calls
+are going direct…* — and answers from the model directly. Those turns carry the
+`gateway-direct` flag in the Audit tab, and Under the hood → Gateway & model says
+`lastCall: direct (gateway missing)`. A missing gateway never breaks a chat; it just
+means no logs and no spend limit yet.
+
+**1. Create it (dashboard, 30 seconds).** Dashboard → **AI → AI Gateway → Create Gateway**.
+Name: `bot-you-own`. Leave the rest default. That's it — the next model call goes through
+it and the Gateway tab flips to `via gateway`.
+
+Or with the API — needs an API token with **AI Gateway: Read + Edit** (My Profile →
+API Tokens → Create Token → Custom; the wrangler login token does *not* have this
+permission, so `wrangler` can't do it for you):
+```bash
+curl -X POST "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/ai-gateway/gateways" \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "content-type: application/json" \
+  --data '{ "id": "bot-you-own", "cache_invalidate_on_update": true, "cache_ttl": 0, "collect_logs": true,
+            "rate_limiting_interval": 60, "rate_limiting_limit": 120, "rate_limiting_technique": "sliding" }'
+```
+(120 requests a minute across the whole gateway; the Worker's own per-visitor limit
+in `wrangler.jsonc` is 30 a minute.)
+
+**2. Set the spend limit (dashboard).** AI → AI Gateway → `bot-you-own` → **Settings →
+Spend limits → Add rule**: limit type *cost*, e.g. **$5 per day** (generous for an FAQ
+bot), technique *sliding*. Past the limit, requests are *blocked* — the chat shows the
+handoff text and the Audit tab shows `model-error`. Budget *alerts* are not caps: use
+limits for the ceiling, alerts for the warning. The API can set it too, but only as an
+update after the gateway exists (`PUT …/ai-gateway/gateways/bot-you-own` with
+`spend_limits: { enabled: true, rules: [{ limitType: "cost", limit: 5, window: 86400, technique: "sliding" }] }`) —
+not in the create call.
+
+**3. Optional, same Settings page:**
    - **Guardrails** — Cloudflare runs Llama Guard on prompts and responses at the edge. Set categories to Flag (log) or Block. A blocked request shows in the chat as "blocked at the gateway".
-   - **Logs** — every request, with tokens and cost.
+   - **Logs** — on already (`collect_logs`): every request, with tokens and cost. Also `GET …/ai-gateway/gateways/bot-you-own/logs` with the same token.
    - **Caching** (optional) — set `cacheTtl` in `YourBots/config.js` to cache identical questions.
 
 Nothing in the code changes when you flip these. That's the point of a gateway.
+To switch the gateway off, set `gateway.id` to `""`.
 
 ## E. Other models (optional)
 Workers AI needs no key and is the default. To use OpenAI or Anthropic instead:
