@@ -17,6 +17,7 @@
     <div data-mybot style="height:560px"></div>
   </div>
   <p>The inline one is <code>&lt;div data-mybot&gt;</code> + the script. The bubble is the same script with <code>data-mode="bubble"</code>.</p>
+  <p>Everything the full page has is in here too: the 📎 paperclip (a visitor attaches one file for the conversation), the 🎤 microphone (talk instead of type; the text lands in the box to check before sending) and the 🔊 speaker under each reply. Each one only appears when it is switched on in <code>YourBots/config.js</code> (<code>attachments</code>, <code>voice</code>). The mic needs the page to be served over https — the browser won't open a microphone otherwise — and asks for permission the first time.</p>
   <script src="/widget.js" async></script>
   <script src="/widget.js" async data-mode="bubble"></script>
 </body>

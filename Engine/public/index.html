@@ -93,7 +93,10 @@
 
   .composer { padding:10px 16px 8px; }
   .composer form { max-width:760px; margin:0 auto; display:flex; align-items:flex-end; gap:8px; border:1px solid var(--edge); border-radius:22px; padding:8px 8px 8px 16px; background:var(--bg); box-shadow:0 2px 12px rgba(0,0,0,.06); }
-  textarea { flex:1; border:0; background:transparent; color:var(--text); font:inherit; resize:none; max-height:180px; outline:none; padding:6px 0; }
+  /* min-width:0 matters: a textarea's natural width is ~20 characters, and without it
+     the row overflows inside a narrow iframe (the phone-width bubble) once the
+     paperclip and the mic sit beside the send button. */
+  textarea { flex:1; min-width:0; border:0; background:transparent; color:var(--text); font:inherit; resize:none; max-height:180px; outline:none; padding:6px 0; }
   .send { width:36px; height:36px; border-radius:50%; border:0; background:var(--text); color:var(--bg); cursor:pointer; font-size:16px; flex:none; }
   .send.stop { background:var(--danger); color:#fff; }
   /* the paperclip (YourBots/config.js → attachments) and the chip for the attached file */
@@ -105,6 +108,18 @@
   .attachchip span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .attachchip button { border:0; background:transparent; color:inherit; cursor:pointer; font-size:13px; padding:0 4px; }
   .attachchip.pending { color:var(--muted); background:var(--panel); }
+  /* the mic (YourBots/config.js → voice): red while it listens, with a small timer */
+  .clip.rec { background:var(--danger); color:#fff; animation:pulse 1.2s ease-in-out infinite; }
+  .clip.busy { opacity:.6; cursor:progress; }
+  @keyframes pulse { 50% { box-shadow:0 0 0 6px rgba(180,35,24,.18); } }
+  @media (prefers-reduced-motion: reduce) { .clip.rec { animation:none; } }
+  .rectime { font-size:12px; color:var(--danger); font-variant-numeric:tabular-nums; align-self:center; flex:none; }
+  /* the speaker under a reply, and the auto-speak switch in the header */
+  .speak { border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:14px; padding:2px 6px; border-radius:6px; margin:2px 0 0 8px; line-height:1; flex:none; align-self:flex-start; }
+  .speak:hover { background:var(--panel); color:var(--text); }
+  .speak.on { color:var(--accent); }
+  .speak.busy { opacity:.6; cursor:progress; }
+  #autospeak.on { background:var(--panel); border-color:var(--accent); }
   .disclaimer { text-align:center; font-size:11px; color:var(--muted); padding:6px 0 4px; }
 
   /* ---- the door ---- */
@@ -179,6 +194,17 @@
     .starters { grid-template-columns:1fr; }
     .msg.user .body { max-width:92%; }
   }
+  /* A phone, or the bubble on a phone: tighter composer, and the model name goes (the
+     header would otherwise push the buttons off the edge inside a 320px iframe). */
+  @media (max-width: 480px) {
+    .composer { padding:8px 8px 6px; }
+    .composer form { gap:4px; padding:6px 6px 6px 12px; }
+    #modelpill { display:none; }
+    #hoodbtn.off, #cfgbtn.off { display:none; }   /* invisible anyway; on a phone the space they hold is the overflow */
+    main > header { flex-wrap:wrap; }              /* an admin on a phone: the admin buttons drop to a second line instead of off the edge */
+    header h1 { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .iconbtn { white-space:nowrap; }
+  }
 </style>
 </head>
 <body>
@@ -217,6 +243,7 @@
       <span class="pill" id="modepill"></span>
       <span class="spacer"></span>
       <span class="pill" id="modelpill"></span>
+      <button class="iconbtn" id="autospeak" title="Read every reply aloud" hidden>🔈 Auto</button>
       <button class="iconbtn" id="cfgbtn" title="Configure this bot (admin)" disabled>✎ Configure</button>
       <button class="iconbtn" id="hoodbtn" title="Under the hood (admin)" disabled>⚙ Under the hood</button>
     </header>
@@ -255,8 +282,11 @@
         <textarea id="input" rows="1" placeholder="Message…"></textarea>
         <input type="file" id="attachfile" hidden />
         <button class="clip" id="attachbtn" type="button" title="Attach a file (PDF, Word, spreadsheet, text or image) — read for this conversation only" hidden>📎</button>
+        <span class="rectime" id="rectime" hidden></span>
+        <button class="clip" id="micbtn" type="button" title="Talk instead of typing — press, speak, press again. The words land here for you to check." hidden>🎤</button>
         <button class="send" id="send" type="submit" title="Send">↑</button>
       </form>
+      <audio id="tts" hidden></audio>
       <div class="disclaimer" id="disclaimer">Can make mistakes. Check important information.</div>
     </div>
   </main>
@@ -343,6 +373,10 @@ function boot() { fetch('/api/config', { headers: authHeaders() }).then((r) => r
   // the paperclip: only when YourBots/config.js → attachments.enabled
   const att = cfg.attachments || {};
   $('attachbtn').hidden = !att.enabled; $('attachfile').accept = (att.extensions || []).join(',');
+  // the mic and the speakers: only the halves YourBots/config.js → voice switches on
+  state.voice = cfg.voice || {};
+  $('micbtn').hidden = !state.voice.in || micGone;
+  $('autospeak').hidden = !state.voice.out; renderAutoSpeak();
   $('hoodbtn').disabled = !cfg.adminEnabled; $('hoodbtn').classList.toggle('off', !cfg.adminEnabled);
   $('cfgbtn').disabled = !cfg.adminEnabled; $('cfgbtn').classList.toggle('off', !cfg.adminEnabled);
   $('newbot').hidden = !(cfg.adminEnabled && ADMIN);
@@ -483,7 +517,113 @@ function addMessage(role, content, flags, sources) {
   else { el.innerHTML = '<div class="avatar">' + esc((state.project?.name || 'A')[0]) + '</div>'; body.innerHTML = md(content); }
   el.appendChild(body);
   if (flags?.length || sources?.length) el.appendChild(flagRow(flags, sources));
+  if (role !== 'user' && content) addSpeaker(el, content);       // a finished reply gets its speaker; the "thinking" placeholder (empty) does not
   $('log').appendChild(el); return body;
+}
+
+// ---- voice out: the speaker under a reply (YourBots/config.js → voice) ----
+// Press → the reply text goes to /api/speak, the audio comes back and plays.
+// Press again → stops. One <audio> element for the page, so only one reply
+// speaks at a time. Auto-speak in the header does the same for every new reply.
+const tts = $('tts');
+let speaking = null;                                              // the button whose audio is playing
+function addSpeaker(el, text) {
+  if (!state.voice?.out || el.querySelector('.speak')) return;
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'speak'; b.textContent = '🔊'; b.title = 'Read this aloud';
+  b.onclick = () => speak(text, b);
+  el.appendChild(b);
+}
+function stopSpeaking() {
+  try { tts.pause(); } catch {}
+  if (tts.src && tts.src.startsWith('blob:')) { try { URL.revokeObjectURL(tts.src); } catch {} }
+  tts.removeAttribute('src');
+  if (speaking) { speaking.classList.remove('on', 'busy'); speaking.textContent = '🔊'; speaking.title = 'Read this aloud'; }
+  speaking = null;
+}
+tts.onended = stopSpeaking; tts.onerror = stopSpeaking;
+async function speak(text, btn) {
+  if (speaking === btn) return stopSpeaking();                    // second press: stop
+  stopSpeaking();
+  speaking = btn; btn.classList.add('busy'); btn.textContent = '…'; btn.title = 'Fetching the audio';
+  try {
+    const r = await fetch('/api/speak', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify({ text }) });
+    if (speaking !== btn) return;                                  // they pressed something else meanwhile
+    if (r.status === 401) { TOKEN = ''; try { localStorage.removeItem('byo:token'); } catch {} needKey = true; showLock('Enter the passphrase to continue.'); return stopSpeaking(); }
+    if (!r.ok) { const d = await r.json().catch(() => ({})); voiceNote(d.reason || (r.status === 404 ? 'Read-aloud is switched off for this bot.' : r.status === 429 ? 'Too many read-outs in a row. Give it a moment.' : 'Could not fetch the audio.')); return stopSpeaking(); }
+    const blob = await r.blob();
+    if (speaking !== btn) return;
+    tts.src = URL.createObjectURL(blob);
+    await tts.play();
+    btn.classList.remove('busy'); btn.classList.add('on'); btn.textContent = '⏹'; btn.title = 'Stop';
+  } catch (err) {
+    // play() is refused when nothing on the page was clicked first (auto-speak on a fresh load); say so and move on
+    if (speaking === btn) { voiceNote(err?.name === 'NotAllowedError' ? 'The browser wants a tap before it plays sound. Press 🔊 under the reply.' : 'Could not play the audio.'); stopSpeaking(); }
+  }
+}
+// A small grey line under the log, not a bot message: the bot didn't say it.
+function voiceNote(text) {
+  const p = document.createElement('p'); p.style.cssText = 'font-size:12.5px;color:var(--muted);margin:0 0 0 40px'; p.textContent = text;
+  $('log').appendChild(p); scrollDown();
+}
+let autoSpeak = false; try { autoSpeak = localStorage.getItem('byo:autospeak') === '1'; } catch {}
+function renderAutoSpeak() { const b = $('autospeak'); b.classList.toggle('on', autoSpeak); b.textContent = autoSpeak ? '🔊 Auto' : '🔈 Auto'; b.title = autoSpeak ? 'Auto-speak is on: every reply is read aloud. Press to stop.' : 'Read every reply aloud'; }
+$('autospeak').onclick = () => { autoSpeak = !autoSpeak; try { localStorage.setItem('byo:autospeak', autoSpeak ? '1' : '0'); } catch {} renderAutoSpeak(); if (!autoSpeak) stopSpeaking(); };
+
+// ---- voice in: the mic next to the paperclip ----
+// Press → the browser records (MediaRecorder, webm/opus or whatever it has) →
+// press again or hit maxSeconds → the clip goes to /api/transcribe → the words
+// land in the box for the visitor to check and send. No browser speech API:
+// it's inconsistent and sends the audio to Google/Apple. This sends it to YOUR Worker.
+let rec = null, recChunks = [], recTimer = null, recTick = null, micGone = false;
+const micSupported = () => typeof MediaRecorder !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
+function micRetire(why) {                                          // say it once, then the button goes
+  micGone = true; $('micbtn').hidden = true; $('rectime').hidden = true;
+  if (why) voiceNote(why);
+}
+$('micbtn').onclick = async () => {
+  if (rec) return stopRecording();                                 // second press: stop and transcribe
+  if (!micSupported()) return micRetire('Voice input isn\'t available in this browser (no recorder' + (location.protocol === 'https:' || location.hostname === 'localhost' ? '' : ' — the page needs https') + '). Typing works as usual.');
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch (err) { return micRetire(err?.name === 'NotAllowedError' || err?.name === 'SecurityError' ? 'The microphone was refused, so the mic button is gone for now. Typing works as usual.' : 'No microphone could be opened. Typing works as usual.'); }
+  const pick = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'].find((t) => MediaRecorder.isTypeSupported?.(t));
+  try { rec = new MediaRecorder(stream, pick ? { mimeType: pick } : undefined); } catch { stream.getTracks().forEach((t) => t.stop()); return micRetire('The recorder wouldn\'t start in this browser. Typing works as usual.'); }
+  recChunks = [];
+  rec.ondataavailable = (e) => { if (e.data && e.data.size) recChunks.push(e.data); };
+  rec.onstop = () => { stream.getTracks().forEach((t) => t.stop()); sendClip(new Blob(recChunks, { type: rec.mimeType || pick || 'audio/webm' })); rec = null; };
+  rec.start();
+  const max = Number(state.voice?.maxSeconds) || 60, t0 = Date.now();
+  const mic = $('micbtn'); mic.classList.add('rec'); mic.textContent = '■'; mic.title = 'Stop and turn it into text';
+  input.placeholder = 'Listening… press ■ when you\'re done';
+  $('rectime').hidden = false; $('rectime').textContent = '0:00';
+  recTick = setInterval(() => { const s = Math.floor((Date.now() - t0) / 1000); $('rectime').textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); }, 500);
+  recTimer = setTimeout(stopRecording, max * 1000);
+};
+function stopRecording() {
+  clearTimeout(recTimer); clearInterval(recTick);
+  const mic = $('micbtn'); mic.classList.remove('rec'); mic.classList.add('busy'); mic.textContent = '…'; mic.title = 'Turning it into text';
+  $('rectime').hidden = true; input.placeholder = 'Message…';
+  try { if (rec && rec.state !== 'inactive') rec.stop(); else rec = null; } catch { rec = null; }
+}
+async function sendClip(blob) {
+  const mic = $('micbtn');
+  const done = () => { mic.classList.remove('busy'); mic.textContent = '🎤'; mic.title = 'Talk instead of typing — press, speak, press again. The words land here for you to check.'; };
+  if (!blob || blob.size < 100) { done(); return voiceNote('I didn\'t catch anything. Try again.'); }
+  const fd = new FormData(); fd.append('audio', blob, 'clip.' + ((blob.type.split('/')[1] || 'webm').split(';')[0]));
+  let d = {};
+  try {
+    const r = await fetch('/api/transcribe', { method: 'POST', headers: authHeaders(), body: fd });
+    d = await r.json().catch(() => ({}));
+    if (r.status === 401) { TOKEN = ''; try { localStorage.removeItem('byo:token'); } catch {} needKey = true; showLock('Enter the passphrase to continue.'); }
+    if (r.status === 404) d = { reason: 'Voice input is switched off for this bot.' };
+    if (r.status === 429 && !d.reason) d = { reason: 'Too many clips in a row. Give it a moment.' };
+  } catch { d = { reason: 'Could not reach the server. Try again.' }; }
+  done();
+  if (!d.text) return voiceNote(d.reason || 'I couldn\'t make that out. Try again, or type it.');
+  // Into the box, after anything already typed. They read it, fix it, send it.
+  input.value = (input.value.trim() ? input.value.replace(/\s*$/, ' ') : '') + d.text;
+  input.dispatchEvent(new Event('input')); state.voiceIn = true; input.focus();
+  try { input.setSelectionRange(input.value.length, input.value.length); } catch {}
 }
 
 const FLAG_LABELS = {
@@ -495,6 +635,7 @@ const FLAG_LABELS = {
   'library-used': '📚 answered with the document library', 'intake-complete': '📋 intake complete',
   'handoff-webhook-sent': '📣 webhook sent', 'handoff-webhook-failed': '📣 webhook failed', 'handoff-email-sent': '✉ email sent', 'handoff-email-failed': '✉ email failed', 'handoff-email-skipped': '✉ email skipped (no binding)',
   'website-used': '🌐 answered from the website',
+  'voice-in': '🎤 spoken, not typed',
 };
 // The small chips under an answer. Two kinds share the row: firewall flags
 // (what the engine did to this turn) and citations — the documents the answer
@@ -514,13 +655,15 @@ function flagRow(flags, sources) {
 function scrollDown() { const s = $('scroll'); s.scrollTop = s.scrollHeight; }
 
 const form = $('form'), input = $('input'), sendBtn = $('send');
-input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 180) + 'px'; });
+input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 180) + 'px'; if (!input.value.trim()) state.voiceIn = false; });
 input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } });
 form.addEventListener('submit', (e) => { e.preventDefault(); if (state.busy) { state.abort?.abort(); return; } send(input.value.trim()); });
 
 async function send(text) {
   if (!text || state.busy) return;
   input.value = ''; input.style.height = 'auto';
+  const spoken = !!state.voiceIn; state.voiceIn = false;          // the mic put these words here → "voice-in" chip on the turn
+  stopSpeaking();
   const chat = state.chat;
   if (!chat.messages.length) { $('log').innerHTML = ''; chat.title = text.slice(0, 40); pushUrl(true); }
   chat.messages.push({ role: 'user', content: text });
@@ -541,7 +684,7 @@ async function send(text) {
   try {
     const res = await fetch('/api/chat', {
       method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, signal: state.abort.signal,
-      body: JSON.stringify({ project: state.project.id, visitor: VISITOR ? { email: VISITOR } : undefined, messages: chat.messages.map(({ role, content }) => ({ role, content })), attachments: (chat.attachments || []).map(({ name, text }) => ({ name, text })), stream: true }),
+      body: JSON.stringify({ project: state.project.id, visitor: VISITOR ? { email: VISITOR } : undefined, messages: chat.messages.map(({ role, content }) => ({ role, content })), attachments: (chat.attachments || []).map(({ name, text }) => ({ name, text })), voice: spoken ? 'in' : undefined, stream: true }),
     });
     if (res.status === 401) { const d = await res.clone().json().catch(() => ({})); if (d.error === 'email') { VISITOR = ''; needEmail = true; showLock('Please enter your email address to start.'); } else { TOKEN = ''; try { localStorage.removeItem('byo:token'); } catch {} needKey = true; showLock('Enter the passphrase to continue.'); } }
     if (!(res.headers.get('content-type') || '').includes('event-stream')) {
@@ -568,6 +711,9 @@ async function send(text) {
   const reply = finalText ?? full;
   body.innerHTML = md(reply);
   if (flags.length || sources.length) body.parentElement.appendChild(flagRow(flags, sources));
+  // The reply is final now, so it gets its speaker — never the "thinking" words, never the chips.
+  addSpeaker(body.parentElement, reply);
+  if (autoSpeak && state.voice?.out && reply && !(finalText === null && !full)) { const b = body.parentElement.querySelector('.speak'); if (b) speak(reply, b); }
   chat.messages.push({ role: 'assistant', content: reply, flags, sources });
   store.upsert(chat); renderChats();
   state.busy = false; sendBtn.classList.remove('stop'); sendBtn.textContent = '↑'; sendBtn.title = 'Send';
@@ -673,7 +819,7 @@ function renderConfigForm() {
     field('Thinking words', 'What the page says while it waits. One per line; blank = the global list.', '<textarea id="f_thinking" style="min-height:70px">' + esc((d.thinkingWords || []).join('\n')) + '</textarea>', 'project.json → thinkingWords') +
     field('This bot\'s own voice and rules', 'Every bot shares the <code>YourBots/_prompt/</code> files. Tick one to give this bot its own copy — the folder-wins rule. Leave unticked to stay with the shared text.', '<div id="povr">' + Object.entries(m.rootPrompt || {}).map(([n, root]) => { const own = (d.prompt || {})[n]; return '<div class="kfile"><div class="kh"><label style="margin:0;display:flex;gap:8px;align-items:center;font-weight:500"><input type="checkbox" data-povr="' + esc(n) + '"' + (own != null ? ' checked' : '') + ' /> ' + esc(n) + '</label><span style="color:var(--muted);font-size:12px">' + (own != null ? 'this bot\'s copy' : 'shared') + '</span></div><textarea data-pbody="' + esc(n) + '"' + (own != null ? '' : ' hidden') + '>' + esc(own != null ? own : root.replace(/<!--[\s\S]*?-->/g, '').trim()) + '</textarea></div>'; }).join('') + '</div>', 'prompt/ (overrides)') +
     field('Recommended model', 'Set for the whole deployment in YourBots/config.js.', '<input type="text" value="' + esc(m.model || '') + '" disabled />') +
-    field('Capabilities', 'What ChatGPT offers here, and what this bot has.', '<div class="caps"><label><input type="checkbox" disabled /> <span class="na">Web search — not in this bot</span></label><label><input type="checkbox" disabled /> <span class="na">Image generation — not in this bot</span></label><label><input type="checkbox" disabled /> <span class="na">Code interpreter &amp; data analysis — not in this bot</span></label><label><input type="checkbox" checked disabled /> File upload by visitors: one file per conversation, read for that chat only, screened, never stored (YourBots/config.js → attachments)</label><label><input type="checkbox" checked disabled /> Firewall: injection screen, link allowlist, leak check (always on)</label><label><input type="checkbox" checked disabled /> Audit log of every turn (when a database is bound)</label></div>') +
+    field('Capabilities', 'What ChatGPT offers here, and what this bot has.', '<div class="caps"><label><input type="checkbox" disabled /> <span class="na">Web search — not in this bot</span></label><label><input type="checkbox" disabled /> <span class="na">Image generation — not in this bot</span></label><label><input type="checkbox" disabled /> <span class="na">Code interpreter &amp; data analysis — not in this bot</span></label><label><input type="checkbox" checked disabled /> File upload by visitors: one file per conversation, read for that chat only, screened, never stored (YourBots/config.js → attachments)</label><label><input type="checkbox" checked disabled /> Voice: a mic (Whisper on Workers AI turns speech into text the visitor checks before sending) and a speaker under each reply (a Deepgram Aura voice reads it) — nothing stored, nothing sent to Google or Apple (YourBots/config.js → voice)</label><label><input type="checkbox" checked disabled /> Firewall: injection screen, link allowlist, leak check (always on)</label><label><input type="checkbox" checked disabled /> Audit log of every turn (when a database is bound)</label></div>') +
     field('Actions', '', '<p style="color:var(--muted);margin:0">Not available. API calls are rebuilt deliberately, in code, if you need them.</p>');
   $('f_uploadbtn').onclick = () => $('f_upload').click();
   $('f_upload').onchange = async (e) => { for (const f of e.target.files) { const t = await f.text(); draft.files[f.name.replace(/[^\w. -]/g, '_')] = t; } renderConfigForm(); syncDraft(); };

@@ -77,6 +77,12 @@ One script tag. Inline or bubble. See `https://YOUR-BOT-URL/embed-example`.
 <div data-mybot style="height:640px"></div>
 <script src="https://YOUR-BOT-URL/widget.js" async data-project="my-business"></script>
 ```
+The widget is the same page in an iframe, so everything the page can do the
+widget can do: the 📎 paperclip (a visitor attaches one file for that chat), the
+🎤 mic (talk instead of type — Whisper on Workers AI writes the words into the
+box, the visitor checks them, then sends) and the 🔊 speaker under each reply.
+Each appears only when it's switched on in `YourBots/config.js` (`attachments`,
+`voice`). `docs/CUSTOMIZE.md` → "Voice in and out".
 
 ---
 

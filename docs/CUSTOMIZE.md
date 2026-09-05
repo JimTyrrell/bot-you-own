@@ -330,6 +330,50 @@ with the filename, the character count and the flags — never the text.
 Knobs: `enabled: false` hides the paperclip and makes `/api/attach` a 404;
 `max` files per conversation (1); `maxBytes`; `maxChars`.
 
+## Voice in and out · `config.js` → `voice`
+Two more buttons a visitor notices: a 🎤 next to the paperclip and a 🔊 under
+every reply. Both are plain Workers AI calls on your account — no browser
+speech API, nothing sent to Google or Apple, nothing stored.
+
+**In (the mic).** Press, talk, press again (or it stops itself at `maxSeconds`,
+60). The browser's own recorder (`MediaRecorder`, webm/opus on most browsers)
+sends the clip to `POST /api/transcribe`; the Worker hands it to
+`sttModel` — `@cf/openai/whisper-large-v3-turbo` — and the words land **in the
+input box**, not in the chat. The visitor reads them, fixes a name, and presses
+send like any other message. The turn gets a 🎤 `voice-in` chip and the word in
+the audit log; the text itself goes through the same firewall as typed text. If
+the browser has no recorder, or the visitor refuses the microphone, the button
+explains once and disappears. Typing always works. (The mic needs https — a
+browser won't open a microphone on a plain http page; `localhost` is the exception.)
+
+**Out (the speaker).** 🔊 under a reply sends its text to `POST /api/speak`;
+the Worker asks `ttsModel` — `@cf/deepgram/aura-1`, voice `ttsVoice` — and
+streams the MPEG audio back to an `<audio>` element. Press again to stop. Only
+the finished reply is read — never the "thinking" words, never the chips.
+Markdown is stripped first, so nobody hears "asterisk asterisk"; a reply longer
+than `maxChars` (1,500, about ninety seconds) is read up to there. **🔈 Auto** in
+the header reads every new reply as it lands; off by default, remembered per
+browser (localStorage). A browser that hasn't been clicked yet won't play sound
+on its own — the page says so and the 🔊 button works.
+
+**Same door, same limits.** Both routes take the visitor token or the admin
+token like `/api/chat` and `/api/attach`, count against the same per-visitor
+rate limit, and log a line (`event: "transcribe"` with bytes and character
+count; `event: "speak"` with characters) — never the audio, never the words.
+
+**Cost** (developers.cloudflare.com/workers-ai/platform/pricing, Sept 2026):
+Whisper large-v3-turbo is **$0.0005 per audio minute** (46.63 neurons); Aura-1
+is **$0.015 per 1,000 characters** (1,363.64 neurons); Aura-2 is $0.030. The
+free 10,000 neurons a day cover roughly 200 minutes of listening or 7,000
+characters of speaking. A visitor who asks five spoken questions and hears five
+replies costs about three cents.
+
+Knobs: `enabled: false` hides both buttons and makes both routes a 404; an empty
+`sttModel` or `ttsModel` switches that half off on its own; `ttsVoice` picks
+an Aura voice (angus, asteria, arcas, orion, orpheus, athena, luna, zeus,
+perseus, helios, hera, stella — the model page lists them); `maxSeconds`;
+`maxChars`. `/api/config` tells the page which halves are on (`voice: {enabled, in, out}`).
+
 ## Two things to know about the iframe
 1. Your website analytics won't see chat activity (different origin). Log from the Worker instead — better data anyway.
 2. Don't build cookie sessions into it. Third-party cookies are blocked inside cross-origin iframes. Chats live in the page's localStorage, which works.
