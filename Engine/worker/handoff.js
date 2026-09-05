@@ -101,7 +101,7 @@ export async function runHandoffActions(env, config, { project, event, question,
   return out.filter(Boolean);
 }
 
-async function sendWebhook(env, webhook, payload, bot) {
+export async function sendWebhook(env, webhook, payload, bot) {
   let host = "";
   try { host = new URL(webhook).host; } catch {}
   const body = JSON.stringify(payload);

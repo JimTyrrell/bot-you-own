@@ -242,7 +242,7 @@
     <aside id="hood">
       <header><h1>Under the hood</h1><span class="pill" id="hoodproj"></span><span class="spacer"></span><button class="iconbtn" id="hoodclose">✕</button></header>
       <div class="tabs" id="hoodtabs">
-        <button data-tab="prompt" class="on">Prompt</button><button data-tab="files">Files</button><button data-tab="firewall">Firewall</button><button data-tab="gateway">Gateway &amp; model</button><button data-tab="audit">Audit</button><button data-tab="source">Source</button>
+        <button data-tab="prompt" class="on">Prompt</button><button data-tab="files">Files</button><button data-tab="firewall">Firewall</button><button data-tab="gateway">Gateway &amp; model</button><button data-tab="audit">Audit</button><button data-tab="leads">Leads</button><button data-tab="source">Source</button>
       </div>
       <div id="hoodbody"></div>
     </aside>
@@ -490,7 +490,7 @@ const FLAG_LABELS = {
   'injection-blocked': '🛡 blocked before the model', 'link-stripped': '🔗 link removed', 'leak-blocked': '🛡 answer withheld: it quoted the rules',
   'rate-limited': '⏱ rate limited', 'model-error': '⚠ model error', 'gateway-blocked': '🛡 blocked at the gateway',
   'invisible-text-stripped': '👁 hidden characters removed', 'handoff-appended': '📇 contact added by the firewall', 'secret-detected': '🔑 looks like a secret was pasted',
-  'library-used': '📚 answered with the document library',
+  'library-used': '📚 answered with the document library', 'degenerate-reply': '🛡 the model glitched twice; handed off instead', 'degenerate-retried': '🔁 the model glitched; asked again',
   'attachment-used': '📎 read your attached file', 'attachment-injection-blocked': '🛡 attachment refused: it contained instructions for the bot', 'attachment-secret-blocked': '🔑 attachment refused: looks like a card number or a key',
   'library-used': '📚 answered with the document library', 'intake-complete': '📋 intake complete',
   'handoff-webhook-sent': '📣 webhook sent', 'handoff-webhook-failed': '📣 webhook failed', 'handoff-email-sent': '✉ email sent', 'handoff-email-failed': '✉ email failed', 'handoff-email-skipped': '✉ email skipped (no binding)',
@@ -625,6 +625,7 @@ function renderHood() {
   if (hoodTab === 'firewall') { const f = d.firewall; box.innerHTML = '<h4>Switches (YourBots/config.js → firewall)</h4>' + pre(JSON.stringify(f.config, null, 2)) + '<div class="kv"><b>Door</b><span>' + esc(f.door) + '</span><b>Rate limit</b><span>' + esc(f.rateLimit) + '</span><b>Logging</b><span>' + esc(f.logging) + '</span><b>Llama Guard model</b><span>' + esc(f.llamaGuardModel) + '</span></div><h4>Injection patterns (' + f.injectionPatterns.length + ') — a hit never reaches the model</h4>' + pre(f.injectionPatterns.join('\n')) + '<h4>Secret shapes</h4>' + pre(f.secretPatterns.join('\n')) + '<h4>What the chips mean</h4><div class="kv">' + Object.entries(f.flags).map(([k, v]) => '<b>' + esc(k) + '</b><span>' + esc(v) + '</span>').join('') + '</div>'; }
   if (hoodTab === 'gateway') box.innerHTML = '<h4>Version</h4>' + pre(JSON.stringify(d.version, null, 2)) + '<h4>Provider &amp; model</h4>' + pre(JSON.stringify(d.gateway, null, 2)) + '<p style="color:var(--muted)">gateway.id empty = calls go straight to the model. Set it to route through Cloudflare AI Gateway: spend cap, logs, caching, edge Guardrails. See docs/DEPLOY.md.</p>' + (function (h) { h = h || {}; return '<h4>Handoff actions (project.json → handoffActions)</h4><div class="kv"><b>Webhook</b><span>' + esc(h.webhookHost) + '</span><b>Email</b><span>' + esc(h.email) + '</span><b>Fires on</b><span>' + esc((h.on || []).join(', ') || '(nothing — switched off)') + '</span><b>Signing secret</b><span>' + esc(h.secret) + '</span><b>Email binding</b><span>' + esc(h.emailBinding) + '</span><b>Email from</b><span>' + esc(h.emailFrom) + '</span></div><p style="color:var(--muted)">Runs after the reply is sent; the outcome lands in the Audit tab as handoff-webhook-sent / -failed, handoff-email-sent / -failed / -skipped. See docs/CUSTOMIZE.md → "When it hands off, tell someone".</p>'; })(d.handoffActions);
   if (hoodTab === 'audit') { renderAudit(); return; }
+  if (hoodTab === 'leads') { renderLeads(); return; }
   if (hoodTab === 'source') { box.innerHTML = '<h4>Engine source (snapshot taken at deploy)</h4><select id="srcsel">' + (d.sources || []).map((n) => '<option>' + esc(n) + '</option>').join('') + '</select><div id="srcbox"></div>'; const load = async () => { const n = $('srcsel').value; $('srcbox').innerHTML = '<p class="thinking"><span>Loading ' + esc(n) + '</span></p>'; try { const t = await (await fetch('/api/admin/source?name=' + encodeURIComponent(n), { headers: { 'x-admin-token': ADMIN } })).text(); $('srcbox').innerHTML = pre(t); } catch { $('srcbox').innerHTML = '<p style="color:var(--danger)">Could not load ' + esc(n) + '.</p>'; } }; $('srcsel').onchange = load; load(); }
 }
 
@@ -869,6 +870,52 @@ $('pform').addEventListener('submit', async (e) => {
   } catch { previewMsgs[previewMsgs.length - 1].content = 'Something went wrong.'; }
   renderPreview();
 });
+
+// ---- Leads tab: every visitor who gave an email, and the AI brief per lead ----
+let leadsScope = 'this', leadOpen = '';
+const scoreChip = (s) => s == null ? '<span class="flag">not summarised</span>' : '<span class="flag' + (s >= 70 ? ' hard' : '') + '">' + s + '</span>';
+async function renderLeads() {
+  const box = $('hoodbody');
+  box.innerHTML = '<h4>Leads</h4><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="leadsbar"><button class="iconbtn" data-s="this"' + (leadsScope === 'this' ? ' style="background:var(--panel)"' : '') + '>this project</button><button class="iconbtn" data-s="all"' + (leadsScope === 'all' ? ' style="background:var(--panel)"' : '') + '>all projects</button><span class="spacer"></span><button class="iconbtn" data-r="1">Refresh list</button></div><div id="leadsbody"><p class="thinking"><span>Reading the log</span></p></div>';
+  $('leadsbar').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.s) leadsScope = b.dataset.s; renderLeads(); };
+  try {
+    const r = await fetch('/api/admin/leads?project=' + encodeURIComponent(leadsScope === 'all' ? '*' : state.project.id) + '&limit=200', { headers: { 'x-admin-token': ADMIN } });
+    const d = await r.json();
+    const body = $('leadsbody');
+    if (!d.enabled) { body.innerHTML = '<p style="color:var(--muted)">' + esc(d.reason) + '</p>'; return; }
+    let html = '<p style="color:var(--muted);margin:0 0 10px">' + (d.emailMode ? 'Email mode is on: visitors leave an address before they chat.' : 'Email mode is <b>off</b> (YourBots/config.js → access.mode "email" or "key+email"), so only visitors who happened to send an address appear here.') + ' Automatic brief at turn ' + (d.settings.autoAfterTurns || '— (off)') + ', pushed to the webhook at score ≥ ' + d.settings.notifyScore + (d.settings.webhook ? ' (fallback webhook set)' : '') + '.</p>';
+    if (!d.rows.length) { body.innerHTML = html + '<p style="color:var(--muted)">No leads yet.</p>'; return; }
+    html += '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px"><tr style="color:var(--muted)"><th style="text-align:left;padding:4px 8px 4px 0">visitor</th><th style="text-align:left;padding:4px 8px">last seen</th><th style="text-align:right;padding:4px 8px">turns</th><th style="text-align:right;padding:4px 8px">refused</th><th style="text-align:left;padding:4px 8px">score</th><th></th></tr>'
+      + d.rows.map((row) => '<tr style="border-top:1px solid var(--edge)"><td style="padding:6px 8px 6px 0;word-break:break-all"><b>' + esc(row.visitor) + '</b><br><span style="color:var(--muted)">' + esc((row.bots || []).join(', ')) + '</span></td><td style="padding:6px 8px;white-space:nowrap;color:var(--muted)">' + esc(whenAt(row.last_seen)) + '</td><td style="padding:6px 8px;text-align:right">' + row.turns + '</td><td style="padding:6px 8px;text-align:right">' + (row.refused || 0) + '</td><td style="padding:6px 8px">' + scoreChip(row.score) + (row.stale ? ' <span style="color:var(--muted)">(older than their last turns)</span>' : '') + (row.sent_at ? ' <span style="color:var(--muted)">· sent</span>' : '') + '</td><td style="padding:6px 0;text-align:right"><button class="iconbtn" data-open="' + esc(row.visitor) + '">Open</button></td></tr>').join('') + '</table></div><div id="leaddetail"></div>';
+    html += '<p style="color:var(--muted);margin-top:12px">' + esc(d.note) + '</p>';
+    body.innerHTML = html;
+    body.onclick = (e) => { const b = e.target.closest('button[data-open]'); if (b) openLead(b.dataset.open); };
+    if (leadOpen && d.rows.some((x) => x.visitor === leadOpen)) openLead(leadOpen);
+  } catch (err) { $('leadsbody').innerHTML = '<p style="color:var(--danger)">Could not read the leads (' + esc(err.message) + ').</p>'; }
+}
+async function openLead(visitor, opts) {
+  leadOpen = visitor;
+  const box = $('leaddetail'); if (!box) return;
+  box.innerHTML = '<h4>' + esc(visitor) + '</h4><p class="thinking"><span>' + (opts?.busy || 'Loading') + '</span></p>';
+  try {
+    let d;
+    if (opts?.summarise) { const r = await fetch('/api/admin/leads/' + encodeURIComponent(visitor) + '/summarise' + (opts.refresh ? '?refresh=1' : ''), { method: 'POST', headers: { 'x-admin-token': ADMIN } }); d = await r.json(); if (d.error) { box.querySelector('.thinking').outerHTML = '<p style="color:var(--danger)">' + esc(d.error) + '</p>'; return; } }
+    else { const r = await fetch('/api/admin/leads/' + encodeURIComponent(visitor), { headers: { 'x-admin-token': ADMIN } }); d = await r.json(); if (d.error) throw new Error(d.error); }
+    const s = d.summary;
+    const li = (a) => (a || []).length ? '<ul style="margin:4px 0 8px;padding-left:18px">' + a.map((x) => '<li>' + esc(x) + '</li>').join('') + '</ul>' : '<p style="color:var(--muted);margin:2px 0 8px">—</p>';
+    let html = '<h4>' + esc(visitor) + ' <span style="font-weight:normal;color:var(--muted)">· ' + d.total + ' turn' + (d.total === 1 ? '' : 's') + ' · ' + esc(d.bot) + '</span></h4>';
+    html += '<div class="btnrow" style="margin-bottom:10px"><button class="btn" id="leadsum">' + (s ? 'Refresh the brief' : 'Write the brief') + '</button>' + (s ? '<button class="btn" id="leadsend">Send to webhook</button>' : '') + '<span id="leadmsg" style="color:var(--muted);font-size:12.5px">' + (s ? 'Written ' + esc(whenAt(d.summarisedAt)) + (d.stale ? ' — they have talked since' : '') + (d.sentAt ? ' · sent ' + esc(whenAt(d.sentAt)) : '') : 'One model call, a few seconds.') + '</span></div>';
+    if (s) {
+      html += '<div class="kv" style="margin-bottom:10px"><b>Score</b><span>' + scoreChip(s.score) + ' ' + esc(s.reason) + '</span><b>Situation</b><span>' + esc(s.situation) + '</span><b>Next step</b><span>' + esc(s.next_step) + '</span></div>';
+      html += '<h4>What they asked about</h4>' + li(s.asked) + '<h4>What they care about</h4>' + li(s.cares_about) + '<h4>Objections and gaps</h4>' + li(s.objections);
+    }
+    html += '<h4>The turns (redacted, most recent last)</h4><div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">' + d.turns.map((t) => '<tr style="border-top:1px solid var(--edge);vertical-align:top"><td style="padding:6px 8px 6px 0;white-space:nowrap;color:var(--muted)">' + esc(whenAt(t.created_at)) + '<br>' + esc(t.project) + '</td><td style="padding:6px 0"><b>' + esc(t.asked) + '</b><br><span style="color:var(--muted)">' + esc(t.answered) + '</span>' + (t.refused ? ' <span class="flag">refused / handed off</span>' : '') + '</td></tr>').join('') + '</table></div>';
+    box.innerHTML = html;
+    $('leadsum').onclick = () => openLead(visitor, { summarise: true, refresh: Boolean(s), busy: 'Reading ' + d.total + ' turns and writing the brief' });
+    const send = $('leadsend'); if (send) send.onclick = async () => { send.disabled = true; $('leadmsg').textContent = 'Sending…'; const r = await fetch('/api/admin/leads/' + encodeURIComponent(visitor) + '/send?project=' + encodeURIComponent(leadsScope === 'all' ? '*' : state.project.id), { method: 'POST', headers: { 'x-admin-token': ADMIN } }); const j = await r.json(); $('leadmsg').textContent = j.result === 'lead-webhook-sent' ? 'Sent to the ' + j.webhook + ' webhook.' : j.result === 'lead-webhook-skipped' ? 'No webhook configured (project.json → handoffActions.webhook, or config.leads.webhook).' : (j.error || 'The webhook did not accept it.'); send.disabled = false; };
+    if (opts?.summarise) renderLeads();
+  } catch (err) { box.innerHTML = '<p style="color:var(--danger)">Could not open ' + esc(visitor) + ' (' + esc(err.message) + ').</p>'; }
+}
 
 // ---- Audit tab: the D1 log, filtered ----
 let auditFilter = 'all', auditScope = 'this';

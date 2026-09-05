@@ -16,6 +16,7 @@ Drop a `.md`, `.txt` or `.csv` into `YourBots/<name>/knowledge/` and commit. Don
 | handoff enforcement (always on in `strict` projects) | on | a decline that doesn't include your `handoffContact` gets it appended, flagged `handoff-appended`. Models paraphrase the contact away about one time in three; code doesn't | LLM09 |
 | `llamaGuard` | **off** | runs `@cf/meta/llama-guard-3-8b` on the user's turn and on the answer. Doubles model calls. Turn on for anything public-facing with real risk | content safety |
 | `maxTurns` / `maxChars` | 12 / 4000 | how much history the model sees | LLM10 |
+| glitch guard (always on) | on | a reply that is one character or one word over and over is retried once, then replaced with the handoff (`degenerate-retried` / `degenerate-reply`) | LLM09 |
 
 Rate limiting per visitor lives in `wrangler.jsonc` (`ratelimits`), on by default at 30/min.
 The passphrase gate (`ACCESS_PASSPHRASE` secret, `docs/DEPLOY.md` §B2) sits in front of all of it.
@@ -111,6 +112,30 @@ logs, `handoff-email-skipped` on the Audit row) and the webhook still works. To 
 in `YourBots/config.js`, uncomment the `send_email` block in `wrangler.jsonc`, deploy.
 Under the hood → Gateway & model shows the webhook host, the email, `on`, and whether the
 secret and the email binding exist.
+
+## Leads: who asked, and what they want ⭐
+Turn on email mode (`YourBots/config.js` → `access.mode: "email"` or `"key+email"`)
+and every visitor leaves an address before they chat. From then on the bot is a
+lead magnet that qualifies itself: every conversation is a discovery call you
+didn't have to be on, and the refusals are the objections.
+
+**Under the hood → Leads** lists every visitor: bots they used, last seen, turns,
+how many the bot refused. Open one and **Write the brief**: one model call over
+their turns produces what they asked about, their situation, what they care
+about, objections and gaps, the single best next step, and a 0–100 score with
+the reason. It's stored; **Refresh** rewrites it after they've talked more.
+
+**Send to webhook** pushes the brief to the bot's webhook (`project.json` →
+`handoffActions.webhook`, or `config.leads.webhook` as a fallback) as event
+`lead-summary` — Slack, Zapier, Make, your CRM; same signature header as a
+handoff. **Automatic:** at a visitor's 4th turn (`leads.autoAfterTurns`) the
+brief is written and, if the score is at least `leads.notifyScore` (70), sent.
+Nothing here sends email.
+
+Honest notes: the brief reads the redacted log, so it can't contain a phone
+number the visitor typed; names are not redacted; the email is whatever they
+typed — nobody verified it. The score is a hint with a reason next to it, not
+a verdict. Tell people conversations are recorded.
 
 ## Give it documents ⭐ (PDFs, Word, spreadsheets, transcripts, screenshots)
 `knowledge/*.md` goes into the prompt on every message — right for a FAQ, wrong

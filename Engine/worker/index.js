@@ -6,6 +6,7 @@ import { screenInbound, screenOutbound, ensureHandoff, llamaGuard, redact, INJEC
 import { MODES } from "./modes.js";
 import { retrieve, uploadFile, listFiles, deleteFile, downloadFile, rescanLibrary, extractText, libraryMeta, allExtensions, gate, safeName, scanText, websiteOf, crawlWebsite, websiteStatus, deleteWebsite } from "./library.js";
 import { normaliseHandoffActions, stripIntakeMarker, handoffEvent, runHandoffActions, handoffActionsView } from "./handoff.js";
+import { listLeads, getLead, summariseLead, sendLead, maybeAutoLead, leadsConfig, cleanVisitor } from "./leads.js";
 
 // ============================================================================
 //  THE WORKER. Four routes and a static folder.
@@ -63,6 +64,7 @@ export default {
       if (url.pathname === "/api/admin/engine") return json(await engineView(env, url.searchParams.get("project")));
       if (url.pathname === "/api/admin/audit") return json(await auditView(env, url.searchParams));
       if (url.pathname === "/api/admin/library" || url.pathname.startsWith("/api/admin/library/")) return handleLibrary(request, env, url);
+      if (url.pathname === "/api/admin/leads" || url.pathname.startsWith("/api/admin/leads/")) return handleLeads(request, env, url);
       if (url.pathname === "/api/admin/projects") return json({ projects: await resolveList(env), jobs: Object.values(MODES).map((m) => ({ id: m.id, blurb: m.blurb, role: m.role, shape: m.shape, done: m.done })), model: CONFIG.model, canSave: Boolean(env.DB), rootPrompt: ROOT_PROMPT_FILES, github: { repo: CONFIG.github?.repo || "", branch: CONFIG.github?.branch || "main", ready: Boolean(CONFIG.github?.repo && env.GITHUB_TOKEN) }, library: libraryMeta(env, CONFIG) });
       if (url.pathname === "/api/admin/project") {
         const id = String(url.searchParams.get("id") || "").toLowerCase();
@@ -278,6 +280,8 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
   // --- LAYER 1: build the prompt --------------------------------------------
   const prompt = buildSystemPrompt({ config: CONFIG, project, passages, attachments });
   const outboundOpts = { allowedLinks: project.allowedLinks, protectedText: prompt.protectedText, config: CONFIG, project };
+  // A second, non-streaming call with the same prompt — used only if the first reply came out as garbage (see finish()).
+  const retry = () => complete({ env, config: CONFIG, system: prompt.text, messages: history, stream: false });
 
   // --- LAYER 3b: call the model through the gateway --------------------------
   let result;
@@ -292,7 +296,7 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
 
   // --- Non-streaming path -----------------------------------------------------
   if (!stream) {
-    const out = await finish(String(result), { env, fw, flags, handoff, outboundOpts });
+    const out = await finish(String(result), { env, fw, flags, handoff, outboundOpts, retry });
     ctx.waitUntil(afterReply(env, { project, question: last.content, reply: out.reply, flags: out.flags, who, history, url: request.url }));
     return json({ reply: out.reply, flags: out.flags, sources });
   }
@@ -310,7 +314,7 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
           full += chunk;
           push({ type: "delta", text: chunk });
         }
-        const out = await finish(full, { env, fw, flags, handoff, outboundOpts });
+        const out = await finish(full, { env, fw, flags, handoff, outboundOpts, retry });
         push({ type: "final", text: out.reply, flags: out.flags, sources });
         ctx.waitUntil(afterReply(env, { project, question: last.content, reply: out.reply, flags: out.flags, who, history, url: request.url }));
       } catch (err) {
@@ -324,10 +328,22 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
 }
 
 // LAYER 3a outbound: links, leaks, optional Llama Guard on the answer.
-async function finish(raw, { env, fw, flags, handoff, outboundOpts }) {
+async function finish(raw, { env, fw, flags, handoff, outboundOpts, retry = null }) {
   const out = screenOutbound(raw.trim(), outboundOpts);
   let reply = out.text;
   const f = [...flags, ...out.flags];
+  // Models occasionally come apart and emit "!!!!!!!!" or "Quick Quick Quick…"
+  // for a whole reply (seen three times in one evening's test runs, always
+  // gpt-oss). A visitor should never see that. Enforced in code: a reply that
+  // is mostly one repeated character or one repeated word becomes the handoff.
+  if (reply && isDegenerate(reply)) {
+    // One more go, non-streaming, before giving up on the answer. Costs one
+    // extra model call about once in thirty turns; saves a good answer most times.
+    let again = "";
+    try { again = retry ? String(await retry()).trim() : ""; } catch (err) { console.error("retry after degenerate reply failed", err?.message || err); }
+    if (again && !isDegenerate(again)) { f.push("degenerate-retried"); reply = screenOutbound(again, outboundOpts).text; }
+    else { f.push("degenerate-reply"); reply = ""; }
+  }
   if (reply) {
     const h = ensureHandoff(reply, outboundOpts.project);
     if (h.added) { reply = h.text; f.push("handoff-appended"); }
@@ -422,6 +438,63 @@ async function afterReply(env, { project, question, reply, flags, who, history, 
     console.error("handoff action failed (continuing)", err);
   }
   await logTurn(env, project, question, reply, f, who);
+  // Leads: after this visitor's Nth turn (config.leads.autoAfterTurns), write
+  // the summary and push it to the webhook if the score clears the bar. Runs
+  // AFTER the row is logged so the summary sees this turn too.
+  const leadFlags = await maybeAutoLead(env, CONFIG, project, who);
+  if (leadFlags.length) console.log(JSON.stringify({ event: "lead-auto", visitor: who, flags: leadFlags }));
+}
+
+// --- Leads (admin): the visitors who gave an email, and what they wanted. -------
+//   GET  /api/admin/leads?project=<id|*>&limit=100     the list
+//   GET  /api/admin/leads/<visitor>                    turns + stored summary
+//   POST /api/admin/leads/<visitor>/summarise[?refresh=1]
+//   POST /api/admin/leads/<visitor>/send               push to the bot's webhook
+async function handleLeads(request, env, url) {
+  if (!env.DB) return json({ enabled: false, reason: "No D1 database is bound (wrangler.jsonc → d1_databases), so there is nothing to list. Turns still go to Workers Logs.", rows: [] });
+  await ensureSchema(env);
+  const parts = url.pathname.split("/").filter(Boolean);        // api, admin, leads, <visitor>, <action>
+  const settings = leadsConfig(CONFIG);
+  const projectId = String(url.searchParams.get("project") || "*");
+  const project = projectId === "*" ? null : await resolveProject(env, projectId);
+  try {
+    if (parts.length === 3 && request.method === "GET") {
+      const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "100", 10) || 100, 1), 500);
+      return json({ ...(await listLeads(env, { projectName: project ? project.name : "*", limit })), settings: { ...settings, webhook: settings.webhook ? "set" : "" }, emailMode: /email/.test(CONFIG.access?.mode || ""), note: "The summary reads the redacted log (emails, phones and dates inside messages are already replaced). Names are not redacted. The visitor column is the email they typed; nobody verified it." });
+    }
+    const visitor = cleanVisitor(decodeURIComponent(parts[3] || ""));
+    if (!visitor) return json({ error: "which visitor?" }, 400);
+    const action = parts[4] || "";
+    if (!action && request.method === "GET") { const lead = await getLead(env, CONFIG, visitor); return lead ? json(lead) : json({ error: "no such visitor" }, 404); }
+    if (action === "summarise" && request.method === "POST") {
+      const lead = await summariseLead(env, CONFIG, visitor, { refresh: ["1", "true"].includes(String(url.searchParams.get("refresh") || "")) });
+      return json(lead, lead.error ? 422 : 200);
+    }
+    if (action === "send" && request.method === "POST") {
+      const lead = await getLead(env, CONFIG, visitor);
+      if (!lead?.summary) return json({ error: "Summarise first — there is nothing to send yet." }, 400);
+      const bot = project || await resolveProject(env, (await resolveList(env)).find((p) => p.name === lead.bot)?.id || "");
+      const result = await sendLead(env, CONFIG, lead, { project: bot });
+      return json({ result, webhook: bot?.handoffActions?.webhook ? "bot" : settings.webhook ? "config" : "none" }, result === "lead-webhook-failed" ? 502 : 200);
+    }
+  } catch (err) {
+    console.error("leads request failed", err);
+    return json({ error: "Leads hit an error: " + String(err?.message || err).slice(0, 200) }, 500);
+  }
+  return json({ error: "method" }, 405);
+}
+
+// One character over and over, or one word over and over, is not an answer.
+function isDegenerate(text) {
+  const t = String(text).trim();
+  if (t.length < 12) return false;
+  const chars = t.replace(/\s+/g, "");
+  const top = [...new Set(chars)].map((c) => chars.split(c).length - 1).sort((a, b) => b - a)[0] || 0;
+  if (top / chars.length > 0.8) return true;                         // "!!!!!!!!!!!!"
+  const words = t.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length < 8) return false;
+  const counts = {}; for (const w of words) counts[w] = (counts[w] || 0) + 1;
+  return Math.max(...Object.values(counts)) / words.length > 0.6;     // "Quick Quick Quick Quick…"
 }
 
 // --- Audit log (optional D1). Fail-open: no DB bound = no logging. ------------
@@ -619,6 +692,9 @@ async function ensureSchema(env) {
     // What the document scan did: held / override / upload / remove / rescan-held. See logLibraryEvent.
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS library_events (id INTEGER PRIMARY KEY AUTOINCREMENT, bot TEXT, file TEXT, event TEXT NOT NULL, detail TEXT, who TEXT, created_at TEXT NOT NULL)`),
     env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_libev_bot ON library_events(bot, id)`),
+    // Leads: one row per visitor email, with the stored AI summary. See Engine/worker/leads.js.
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS leads (visitor TEXT PRIMARY KEY, bot TEXT, summary TEXT, score INTEGER, updated_at TEXT NOT NULL, turns_at_summary INTEGER DEFAULT 0, sent_at TEXT)`),
+    env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_conv_visitor ON conversations(visitor, id)`),
   ]);
   SCHEMA_OK = true;
 }
@@ -788,6 +864,8 @@ async function engineView(env, projectId) {
         "handoff-webhook-sent / handoff-webhook-failed": "the bot's handoff webhook was called after the reply; Audit tab only",
         "handoff-email-sent / -failed / -skipped": "the handoff email; skipped = no send_email binding or no handoffEmailFrom",
         "library-used": "excerpts from this bot's documents (AI Search) were put in the prompt for this question",
+        "degenerate-reply": "the model emitted one character or one word over and over, twice; replaced with the handoff",
+        "degenerate-retried": "the first reply was garbage; a second call gave a proper answer",
         "attachment-used": "the visitor's attached file was put in the prompt (outside <files>; never a fact about the business)",
         "attachment-injection-blocked": "the attached file contained instructions for the bot; refused before the model",
         "attachment-secret-blocked": "the attached file looked like it held a card number, key or ID number; refused",

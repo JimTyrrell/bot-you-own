@@ -115,6 +115,21 @@ export const CONFIG = {
   // docs/CUSTOMIZE.md → "When it hands off, tell someone".
   handoffEmailFrom: "",            // e.g. "bot@yourdomain.com"
 
+  // ---- 6a-iii. LEADS: who asked, and what they want ----------------------------
+  // Needs email mode (access.mode "email" or "key+email") so visitors leave an
+  // address. Under the hood → Leads lists every visitor with their turns and
+  // refusals, and can write an AI brief per lead: what they asked, their
+  // situation, what they care about, objections, the next step, a 0–100 score
+  // with the reason. Stored in D1, refreshed on demand. No email is sent from
+  // here — a lead is pushed to the bot's webhook (project.json → handoffActions
+  // .webhook, or the one below) as event "lead-summary". docs/CUSTOMIZE.md → "Leads".
+  leads: {
+    autoAfterTurns: 4,             // summarise automatically at a visitor's 4th turn; 0 = only by hand
+    notifyScore: 70,               // push to the webhook automatically when the score is at least this
+    webhook: "",                   // fallback webhook for leads when the bot has none of its own
+    maxTurns: 40,                  // how many of the visitor's most recent turns the summary reads
+  },
+
   // ---- 6b. GITHUB (for "Commit to GitHub" on the Configure screen) --------------
   // The repo this bot deploys from. With the GITHUB_TOKEN secret set (a fine-grained
   // token with Contents: read & write on ONLY this repo), the Configure screen can

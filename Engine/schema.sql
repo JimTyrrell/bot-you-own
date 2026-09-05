@@ -27,3 +27,16 @@ CREATE TABLE IF NOT EXISTS library_events (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_libev_bot ON library_events(bot, id);
+
+-- Leads: one row per visitor email, with the stored AI summary (Engine/worker/leads.js).
+-- The Worker creates this itself on first use; kept here for reading.
+CREATE TABLE IF NOT EXISTS leads (
+  visitor          TEXT PRIMARY KEY,   -- the email they gave (email mode); never "admin"
+  bot              TEXT,               -- the bot of their latest turn when summarised
+  summary          TEXT,               -- JSON: asked[], situation, cares_about[], objections[], next_step, score, reason
+  score            INTEGER,            -- 0-100
+  updated_at       TEXT NOT NULL,
+  turns_at_summary INTEGER DEFAULT 0,  -- how many turns the summary covered (more since = stale)
+  sent_at          TEXT                -- last time it was pushed to the webhook
+);
+CREATE INDEX IF NOT EXISTS idx_conv_visitor ON conversations(visitor, id);
