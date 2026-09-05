@@ -1,4 +1,4 @@
-# The food log · `/track`
+# The food log · `/food`
 
 A photo food log a coach deploys for their clients. Not a chat bot: a page with a
 camera button. Snap the plate → the model names the foods and guesses the numbers →
@@ -6,8 +6,8 @@ fix the portion with a tap → the day is a ring and three bars. It also reads b
 nutrition labels and receipts, takes weigh-ins, and lets a household share.
 
 It lives inside this Worker. Nothing extra to deploy. **On by default** —
-`YourBots/config.js → foodLog.enabled: false` switches it off (`/track` and every
-`/api/track/*` route become 404s).
+`YourBots/config.js → foodLog.enabled: false` switches it off (`/food` and every
+`/api/food/*` route become 404s).
 
 ![the day screen](food-log.png)
 
@@ -19,8 +19,8 @@ It lives inside this Worker. Nothing extra to deploy. **On by default** —
    user ids so an email can't be turned into an id from outside). Until it's set the
    log warns and uses a dev value.
 3. Put your name in `foodLog.coachName` so the page says "Your coach: …".
-4. Send clients to `https://YOUR-BOT-URL/track`. Their phone. That's it.
-5. You look at `https://YOUR-BOT-URL/track/coach` with the admin code (the
+4. Send clients to `https://YOUR-BOT-URL/food`. Their phone. That's it.
+5. You look at `https://YOUR-BOT-URL/food/coach` with the admin code (the
    `ADMIN_PASSPHRASE`, same one as "Under the hood"): every client, targets, streak,
    last log, 7-day adherence, weight trend, household; click for their week; **Export
    CSV**; link a second device.
@@ -73,19 +73,19 @@ It lives inside this Worker. Nothing extra to deploy. **On by default** —
   *"This email is already logging on another device. Sign in with Google to link
   devices, or ask your coach to link them."* The page keeps checking; the moment
   it's linked, it opens.
-  - **Coach links it:** `/track/coach` → "Link a second device" → email + code.
-    Codes expire after 7 days. Or `POST /api/admin/track/link {email, deviceCode}`.
+  - **Coach links it:** `/food/coach` → "Link a second device" → email + code.
+    Codes expire after 7 days. Or `POST /api/admin/food/link {email, deviceCode}`.
   - **Sign in with Google / Microsoft / Apple:** proves the email, links the device.
 - The device key check **fails closed** (bad key = 401). Features **fail open**
   (no barcode database → a message, the page still works).
-- Household reads are checked server-side on every call: `GET /api/track/day?user=X`
+- Household reads are checked server-side on every call: `GET /api/food/day?user=X`
   is allowed only when X shares your household. Everything else is yours alone.
 
 ## "Sign in with …" (optional)
 
 A provider's own button gives the browser a signed ID token (a JWT). The browser
-posts it to `POST /api/track/signin {provider, idToken}` with its device key; the
-Worker (`Engine/worker/track-signin.js`) fetches the provider's published public
+posts it to `POST /api/food/signin {provider, idToken}` with its device key; the
+Worker (`Engine/worker/food-signin.js`) fetches the provider's published public
 keys (JWKS, cached an hour), checks the **RS256 signature**, the **issuer**, the
 **audience** (= your client id), the **expiry**, and that the email is **verified**.
 Only then is the device linked. No client secret, no redirect, no callback route.
@@ -110,18 +110,18 @@ No ids = no buttons; the coach code still links devices.
 **Microsoft** (free): entra.microsoft.com → Identity → Applications → **App
 registrations** → New → name it → Supported account types: **Accounts in any
 organizational directory and personal Microsoft accounts** → Redirect URI: platform
-**Single-page application**, value = your bot origin + `/track/` → Register → copy
+**Single-page application**, value = your bot origin + `/food/` → Register → copy
 the **Application (client) ID** → `npx wrangler secret put MICROSOFT_CLIENT_ID`.
 
 **Apple**: needs the **paid** Apple Developer account ($99/yr). Certificates, IDs &
 Profiles → Identifiers → a **Services ID** with Sign in with Apple enabled, your
-domain and `https://YOUR-BOT/track/` as the return URL; the Services ID is the
+domain and `https://YOUR-BOT/food/` as the return URL; the Services ID is the
 client id → `npx wrangler secret put APPLE_CLIENT_ID`.
 
 Facebook is not included: Facebook Login returns an access token, not an OpenID
 ID token, so verifying it needs a Graph API call — a different mechanism.
 
-The verifier is unit-tested without any provider: `node Engine/tests/track-signin.mjs`
+The verifier is unit-tested without any provider: `node Engine/tests/food-signin.mjs`
 signs tokens with a throwaway RSA key against a local fake JWKS and checks that a
 good token passes and wrong audience, expired, bad signature, wrong issuer,
 unverified email, tampered payload and `alg: none` are all refused (16/16).
@@ -179,9 +179,9 @@ is the ceiling.
 
 ## Under the hood
 
-`Engine/worker/track.js` (routes, identity, meals, day/week, coach) ·
+`Engine/worker/food.js` (routes, identity, meals, day/week, coach) ·
 `track-vision.js` (the model, prompts, JSON checks, barcode check digit, image
 header sizes) · `track-extras.js` (barcodes, labels, receipts, weights,
 households) · `track-signin.js` (ID-token verifier) · `track-common.js`.
 Tables are in `Engine/schema.sql` (`track_*`), created on first use.
-Pages: `Engine/public/track/index.html` (the app) and `coach.html`.
+Pages: `Engine/public/food/index.html` (the app) and `coach.html`.

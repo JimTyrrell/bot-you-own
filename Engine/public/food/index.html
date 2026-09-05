@@ -7,7 +7,7 @@
 <title>Food log</title>
 <!-- ======================================================================
   THE FOOD LOG PAGE. Camera first, one tap, a ring and three bars.
-  Everything it needs is in Engine/worker/track.js. No framework, no build.
+  Everything it needs is in Engine/worker/food.js. No framework, no build.
   Identity: the email + a random device key live in localStorage — that's the
   whole "remembered forever on this browser". docs/FOOD-LOG.md.
 ====================================================================== -->
@@ -254,14 +254,14 @@ if (!S.deviceKey) { const b = crypto.getRandomValues(new Uint8Array(32)); S.devi
 async function api(path, opts = {}) {
   const headers = Object.assign({ 'x-device-key': S.deviceKey }, opts.headers || {});
   if (opts.json) { headers['content-type'] = 'application/json'; opts.body = JSON.stringify(opts.json); }
-  const r = await fetch('/api/track/' + path, { method: opts.method || (opts.body ? 'POST' : 'GET'), headers, body: opts.body });
+  const r = await fetch('/api/food/' + path, { method: opts.method || (opts.body ? 'POST' : 'GET'), headers, body: opts.body });
   let data = {}; try { data = await r.json(); } catch {}
   return { ok: r.ok, status: r.status, ...data };
 }
 
 // ---------- boot ----------
 (async function boot() {
-  try { const c = await fetch('/api/track/config'); if (c.ok) CFG = await c.json(); } catch {}
+  try { const c = await fetch('/api/food/config'); if (c.ok) CFG = await c.json(); } catch {}
   if (CFG.coachName) $('coachline').textContent = 'Your coach: ' + CFG.coachName;
   $('honesty').textContent = CFG.honesty || '';
   renderSignIn();
@@ -323,12 +323,12 @@ async function signIn(s) {
       idToken = await new Promise((res, rej) => { google.accounts.id.initialize({ client_id: s.clientId, callback: (r) => res(r.credential), ux_mode: 'popup' }); google.accounts.id.prompt((n) => { if (n.isNotDisplayed && n.isNotDisplayed() || n.isSkippedMoment && n.isSkippedMoment()) { /* fall back to a rendered button */ sheet('<h2 style="margin-top:0">Sign in with Google</h2><div id="gbtn"></div>'); google.accounts.id.renderButton($('gbtn'), { theme: 'outline', size: 'large', width: 300 }); } }); });
     } else if (s.provider === 'microsoft') {
       await loadScript('https://alcdn.msauth.net/browser/2.38.1/js/msal-browser.min.js');
-      const app = new msal.PublicClientApplication({ auth: { clientId: s.clientId, authority: 'https://login.microsoftonline.com/common', redirectUri: location.origin + '/track/' } });
+      const app = new msal.PublicClientApplication({ auth: { clientId: s.clientId, authority: 'https://login.microsoftonline.com/common', redirectUri: location.origin + '/food/' } });
       const r = await app.loginPopup({ scopes: ['openid', 'email', 'profile'] });
       idToken = r.idToken;
     } else if (s.provider === 'apple') {
       await loadScript('https://appleid.cdn-apple.com/appleauth/static/jssdk/v1/appleid.auth.js');
-      AppleID.auth.init({ clientId: s.clientId, scope: 'email', redirectURI: location.origin + '/track/', usePopup: true });
+      AppleID.auth.init({ clientId: s.clientId, scope: 'email', redirectURI: location.origin + '/food/', usePopup: true });
       const r = await AppleID.auth.signIn();
       idToken = r.authorization.id_token;
     }

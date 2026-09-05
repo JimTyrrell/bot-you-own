@@ -107,7 +107,7 @@ CREATE TABLE IF NOT EXISTS admin_events (
 );
 CREATE INDEX IF NOT EXISTS idx_adminev_created ON admin_events(id);
 
--- The food log (Engine/worker/track.js; docs/FOOD-LOG.md). Created by the Worker on first use.
+-- The food log (Engine/worker/food.js; docs/FOOD-LOG.md). Created by the Worker on first use.
 CREATE TABLE IF NOT EXISTS track_users (
   id           TEXT PRIMARY KEY,   -- sha256(lowercased email + FOODLOG_PEPPER)
   email        TEXT UNIQUE,        -- the identity; the only personal thing stored

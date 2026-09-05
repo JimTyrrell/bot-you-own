@@ -247,8 +247,8 @@
     <div class="section">Chats</div>
     <div class="list chats" id="chats"></div>
     <div class="foot" id="foot"></div>
-    <div class="foot" id="trackfoot" hidden><a href="/track" style="color:var(--muted)">📷 Food log</a></div>
-    <script>fetch("/api/track/config").then((r) => r.ok && r.json()).then((c) => { if (c && c.enabled) document.getElementById("trackfoot").hidden = false; }).catch(() => {});</script>
+    <div class="foot" id="trackfoot" hidden><a href="/food" style="color:var(--muted)">📷 Food log</a></div>
+    <script>fetch("/api/food/config").then((r) => r.ok && r.json()).then((c) => { if (c && c.enabled) document.getElementById("trackfoot").hidden = false; }).catch(() => {});</script>
     <div class="foot" id="signout" hidden><button class="iconbtn" id="signoutbtn">Sign out</button> <span id="whoami"></span></div>
   </aside>
 

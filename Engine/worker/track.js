@@ -1,11 +1,11 @@
 // ============================================================================
-//  FOOD LOG — /track. A photo food log a coach deploys for their clients.
+//  FOOD LOG — /food. A photo food log a coach deploys for their clients.
 //
 //  Not a chat bot: a page with a camera button. Snap the plate, the vision
 //  model names the foods and guesses the numbers, the person fixes the
 //  portion with a tap, the day shows a ring and three bars. Also: type a
 //  meal, scan a barcode, read a nutrition label, scan a receipt, weigh in,
-//  share a household with a spouse. The coach sees every client at /track/coach.
+//  share a household with a spouse. The coach sees every client at /food/coach.
 //
 //  IDENTITY, in plain English (docs/FOOD-LOG.md says the same at length):
 //   · A person types their email once. Their browser makes a random 32-byte
@@ -22,7 +22,7 @@
 //     Features fail OPEN: no thumbnail, no barcode database, no model → the
 //     page still works, with less.
 //
-//  ROUTES (all under /api/track/, device key in the x-device-key header):
+//  ROUTES (all under /api/food/, device key in the x-device-key header):
 //   GET  config                       what the page needs (coach name, sign-in buttons)
 //   POST join {email}                 → { linked, userId } or { linked:false, code, message }
 //   GET  me                           who am I, my targets, my household, still pending?
@@ -35,18 +35,18 @@
 //   POST barcode {code}               · POST weight {date, value, unit}
 //   GET/POST household, POST household/join, POST household/leave
 //   GET  receipts · DELETE receipt/<id>
-//  Admin (x-admin-token): GET /api/admin/track/clients · GET client/<id> ·
+//  Admin (x-admin-token): GET /api/admin/food/clients · GET client/<id> ·
 //   GET export.csv · POST link {email, deviceCode}
-//  Pages: /track (the app) · /track/coach (the coach view). Both are static
-//  files in Engine/public/track/, served through here so foodLog.enabled=false
+//  Pages: /food (the app) · /food/coach (the coach view). Both are static
+//  files in Engine/public/food/, served through here so foodLog.enabled=false
 //  really does make them disappear.
 // ============================================================================
 
 import { CONFIG } from "../../YourBots/config.js";
-import { foodLogConfig, json, sha256hex, nowIso, pickDate, addDays, todayUtc, randomCode, randomId, clamp, round1, cleanEmail, readJson, toBase64, DEV_PEPPER } from "./track-common.js";
-import { runVision, PROMPTS, extractJson, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize } from "./track-vision.js";
-import { verifyIdToken } from "./track-signin.js";
-import { lookupBarcode, rememberLabel, saveReceipt, listReceipts, deleteReceipt, setWeight, listWeights, householdOf, createHousehold, joinHousehold, leaveHousehold, canView } from "./track-extras.js";
+import { foodLogConfig, json, sha256hex, nowIso, pickDate, addDays, todayUtc, randomCode, randomId, clamp, round1, cleanEmail, readJson, toBase64, DEV_PEPPER } from "./food-common.js";
+import { runVision, PROMPTS, extractJson, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize } from "./food-vision.js";
+import { verifyIdToken } from "./food-signin.js";
+import { lookupBarcode, rememberLabel, saveReceipt, listReceipts, deleteReceipt, setWeight, listWeights, householdOf, createHousehold, joinHousehold, leaveHousehold, canView } from "./food-extras.js";
 
 const DEVICE_KEY_RE = /^[0-9a-f]{64}$/;
 const THUMB_MAX_PX = 256, THUMB_MAX_BYTES = 48 * 1024;
@@ -76,24 +76,24 @@ export async function ensureTrackSchema(env) {
   TRACK_SCHEMA_OK = true;
 }
 
-// --- The router. Called from index.js for /track*, /api/track/*, /api/admin/track/*.
+// --- The router. Called from index.js for /food*, /api/food/*, /api/admin/food/*.
 export async function handleTrack(request, env, url, { isAdmin = false, adminEnabled = false, allowed = async () => true } = {}) {
   const cfg = foodLogConfig(CONFIG, env);
   const p = url.pathname;
   if (!cfg.enabled) return p.startsWith("/api/") ? json({ error: "not found" }, 404) : new Response("Not found", { status: 404 });
 
-  // The pages. /track → the app; /track/coach → the coach view. Static files, gated here.
-  if (p === "/track" || p === "/track/") return env.ASSETS.fetch(new Request(`${url.origin}/track/`, { headers: request.headers }));
-  if (p.startsWith("/track/")) return env.ASSETS.fetch(request);
+  // The pages. /food → the app; /food/coach → the coach view. Static files, gated here.
+  if (p === "/food" || p === "/food/") return env.ASSETS.fetch(new Request(`${url.origin}/food/`, { headers: request.headers }));
+  if (p.startsWith("/food/")) return env.ASSETS.fetch(request);
 
-  if (p.startsWith("/api/admin/track/")) {
+  if (p.startsWith("/api/admin/food/")) {
     if (!isAdmin) return json({ error: "admin only" }, adminEnabled ? 401 : 404);
     if (!env.DB) return json({ error: "No D1 database is bound (wrangler.jsonc → d1_databases)." }, 503);
     await ensureTrackSchema(env);
     return handleCoach(request, env, url, cfg);
   }
 
-  if (p === "/api/track/config") return json({ enabled: true, coachName: cfg.coachName, honesty: HONESTY, signIn: cfg.signIn.filter((s) => s.clientId), dailyPhotoLimit: cfg.dailyPhotoLimit, maxPhotoBytes: cfg.maxPhotoBytes });
+  if (p === "/api/food/config") return json({ enabled: true, coachName: cfg.coachName, honesty: HONESTY, signIn: cfg.signIn.filter((s) => s.clientId), dailyPhotoLimit: cfg.dailyPhotoLimit, maxPhotoBytes: cfg.maxPhotoBytes });
   if (!env.DB) return json({ error: "The food log needs the D1 database (wrangler.jsonc → d1_databases)." }, 503);
   await ensureTrackSchema(env);
   if (cfg.pepper === DEV_PEPPER) console.warn("FOODLOG_PEPPER is not set — user ids use the dev pepper. Set it before real people use this: npx wrangler secret put FOODLOG_PEPPER");
@@ -101,7 +101,7 @@ export async function handleTrack(request, env, url, { isAdmin = false, adminEna
   const deviceKey = String(request.headers.get("x-device-key") || "");
   const keyHash = DEVICE_KEY_RE.test(deviceKey) ? await sha256hex(deviceKey) : null;
 
-  if (p === "/api/track/join") {
+  if (p === "/api/food/join") {
     if (request.method !== "POST") return json({ error: "POST only" }, 405);
     if (!(await allowed(env, request))) return json({ error: "rate-limited", reason: "Too many tries. Give it a minute." }, 429);
     if (!keyHash) return json({ error: "no device key", reason: "This browser didn't send a device key. Reload the page." }, 400);
@@ -110,13 +110,13 @@ export async function handleTrack(request, env, url, { isAdmin = false, adminEna
 
   // Everything below needs a known device. Unknown → 401, no exceptions.
   const me = keyHash ? await userForDevice(env, keyHash) : null;
-  if (p === "/api/track/signin") {
+  if (p === "/api/food/signin") {
     if (request.method !== "POST") return json({ error: "POST only" }, 405);
     if (!(await allowed(env, request))) return json({ error: "rate-limited" }, 429);
     if (!keyHash) return json({ error: "no device key" }, 400);
     return signIn(env, cfg, await readJson(request), keyHash, me);
   }
-  if (p === "/api/track/me") {
+  if (p === "/api/food/me") {
     if (me) return json({ linked: true, ...(await profile(env, me)) });
     const pend = keyHash ? await env.DB.prepare(`SELECT code, email FROM track_pending WHERE key_hash = ?`).bind(keyHash).first() : null;
     return json(pend ? { linked: false, code: pend.code, email: pend.email, message: PENDING_MESSAGE } : { linked: false }, 401);
@@ -124,7 +124,7 @@ export async function handleTrack(request, env, url, { isAdmin = false, adminEna
   if (!me) return json({ error: "unknown device", reason: "This browser isn't linked to a log. Enter your email to start." }, 401);
   touch(env, me);
 
-  const sub = p.slice("/api/track/".length);
+  const sub = p.slice("/api/food/".length);
   const body = request.method === "POST" || request.method === "PATCH" ? await readJson(request.clone()) : {};
 
   if (sub === "targets") {
@@ -419,7 +419,7 @@ function cleanTargets(t) {
 
 // --- THE COACH (admin token). ------------------------------------------------------------
 async function handleCoach(request, env, url, cfg) {
-  const sub = url.pathname.slice("/api/admin/track/".length);
+  const sub = url.pathname.slice("/api/admin/food/".length);
   if (sub === "clients") return json({ clients: await clientRows(env), coachName: cfg.coachName });
   if (sub.startsWith("client/")) {
     const who = await userById(env, sub.slice(7));

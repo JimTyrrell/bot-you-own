@@ -211,14 +211,14 @@ export const CONFIG = {
   // Cloudflare Workers Builds, that commit redeploys the bot: the round trip.
   github: { repo: "JimTyrrell/bot-you-own", branch: "main" },
 
-  // ---- 6c. THE FOOD LOG: /track — snap a plate, get the numbers ----------------
+  // ---- 6c. THE FOOD LOG: /food — snap a plate, get the numbers ----------------
   // A photo food log a coach deploys for their clients. Not a chat bot: a page
   // with a camera button. People type their email once and are remembered on
   // that browser forever (a random device key, no password). Photos are read
   // by the vision model below and thrown away; only a 256 px thumbnail and
   // the numbers are kept. Barcodes (Open Food Facts), nutrition labels,
   // receipts, weigh-ins and a shared household for a spouse are all in.
-  // The coach's view is /track/coach (the admin code). docs/FOOD-LOG.md.
+  // The coach's view is /food/coach (the admin code). docs/FOOD-LOG.md.
   // Secrets: FOODLOG_PEPPER (required for real use: npx wrangler secret put
   // FOODLOG_PEPPER), and GOOGLE_CLIENT_ID / MICROSOFT_CLIENT_ID / APPLE_CLIENT_ID
   // if you want "Sign in with …" to link a second device (optional).
@@ -227,7 +227,7 @@ export const CONFIG = {
   //   A plate photo is about 400 input + 150 output tokens ≈ 10 neurons ≈ $0.0001
   //   — a hundredth of a cent. The free 10,000 neurons a day cover ~1,000 photos.
   foodLog: {
-    enabled: true,                              // false = /track and /api/track/* don't exist
+    enabled: true,                              // false = /food and /api/food/* don't exist
     model: "@cf/google/gemma-4-26b-a4b-it",     // the vision model. Chosen by testing 5 plates — see docs/FOOD-LOG.md
     maxPhotoBytes: 2 * 1024 * 1024,             // the page shrinks photos to ≤1024 px first; this is the hard cap
     dailyPhotoLimit: 60,                        // vision calls per person per day (plates, labels, receipts, barcodes)

@@ -1,8 +1,8 @@
 // The ID-token verifier, tested without Google or Microsoft: a throwaway RSA key
 // signs tokens, a local HTTP server plays the provider's JWKS endpoint.
-//   node Engine/tests/track-signin.mjs
+//   node Engine/tests/food-signin.mjs
 import http from "node:http";
-import { verifyIdToken, clearJwksCache } from "../worker/track-signin.js";
+import { verifyIdToken, clearJwksCache } from "../worker/food-signin.js";
 
 const b64u = (buf) => Buffer.from(buf).toString("base64url");
 async function makeKey(kid) {
