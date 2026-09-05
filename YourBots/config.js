@@ -73,8 +73,11 @@ export const CONFIG = {
   // bot gets when it doesn't say (default), and the most OPEN any bot may be (floor).
   // The modes, most open first:
   // "open"      — anyone with the link. For a public website bot.
-  // "email"     — visitors type an email address before chatting; it is logged with
-  //               every turn. Identification, not authentication: nobody checks it.
+  // "email"     — visitors type an email address once; that browser is remembered
+  //               (Engine/identity/). Identification, not authentication: nobody checks it.
+  // "allow"     — email, AND the address must be on the allowlist: this bot's own
+  //               list or the one for every bot (Under the hood → Settings → Allowlist).
+  //               Invited people only. Needs the ALLOWLIST_KEY secret (docs/DEPLOY.md → B2c).
   // "key"       — a shared passphrase (the ACCESS_PASSPHRASE secret). Demos, internal bots.
   // "key+email" — both: the passphrase to get in, then an email so you know who asked.
   // "admin"     — only the admin code opens it. Bots only you should talk to.
@@ -86,6 +89,21 @@ export const CONFIG = {
   // Under the hood → Settings changes both without a commit (the saved copy wins,
   // then YourBots/settings.json, then this). docs/CUSTOMIZE.md → "Who can use it".
   access: { default: "key", floor: "open" },
+
+  // ---- 5a. IDENTITY: the return window ----------------------------------------
+  // A visitor in email/allow mode is remembered per browser (a device key). A
+  // SECOND browser typing the same email normally waits for the owner to link it.
+  // The return window is the exception: if that email was active within the last
+  // graceMinutes, the new browser is trusted at once and their conversation
+  // history follows them (it is kept on the server for identified visitors —
+  // docs/IDENTITY.md → "History on any computer"). Closing the laptop and opening
+  // the phone just works. The trade-off, said plainly: inside the window, anyone
+  // who knows the email can pick up that person's recent conversation from their
+  // own computer. 0 = off (every new browser waits for a link). A bot can set its
+  // own in project.json → "identity": { "graceMinutes": 15 }. Passkeys and
+  // Google/Microsoft/Apple sign-in are trusted on any device regardless.
+  // Under the hood → Settings edits this without a commit, like access above.
+  identity: { graceMinutes: 60 },
 
   // ---- 6. THE FIREWALL ---------------------------------------------------------
   // All enforced in code (Engine/worker/firewall.js). Each one fails OPEN: if it can't run,

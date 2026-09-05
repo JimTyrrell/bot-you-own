@@ -108,6 +108,44 @@ CREATE TABLE IF NOT EXISTS admin_events (
 );
 CREATE INDEX IF NOT EXISTS idx_adminev_created ON admin_events(id);
 
+-- The allowlist (Engine/worker/allowlist.js; access mode "allow"). Encrypted at rest: a keyed
+-- hash (HMAC-SHA256, the blind index) to check one address, and the address under AES-256-GCM
+-- so the owner can read the list. Both keys derive from the ALLOWLIST_KEY secret. scope is a
+-- bot id, or '*' for every bot.
+CREATE TABLE IF NOT EXISTS allowlist (
+  scope      TEXT NOT NULL,
+  email_hmac TEXT NOT NULL,        -- HMAC(email) hex — never the email
+  email_enc  TEXT NOT NULL,        -- base64(iv).base64(ciphertext)
+  added_at   TEXT NOT NULL,
+  added_by   TEXT,                 -- 'admin'
+  PRIMARY KEY (scope, email_hmac)
+);
+
+-- History on any computer (Engine/worker/chats.js; docs/IDENTITY.md → "History on any computer").
+-- An identified visitor's own threads, FULL text — separate from `conversations`, which stays
+-- redacted for the owner's Audit/Leads views. Readable with their device key, or by the admin
+-- read-only ("see what they see").
+CREATE TABLE IF NOT EXISTS chat_threads (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  bot        TEXT NOT NULL,
+  user_id    TEXT NOT NULL,        -- id_users.id
+  client_id  TEXT NOT NULL,        -- the page's own chat id
+  title      TEXT,
+  meta       TEXT,                 -- JSON: { handoff, attachments }
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_threads_owner ON chat_threads(bot, user_id, client_id);
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  thread_id  INTEGER NOT NULL,
+  role       TEXT NOT NULL,        -- user | assistant | person
+  content    TEXT NOT NULL,        -- raw, not redacted
+  meta       TEXT,                 -- JSON: { flags, sources, note, talk, toPerson }
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_thread ON chat_messages(thread_id, id);
+
 -- Identity (Engine/identity/; docs/IDENTITY.md). Shared by every kind of bot; every
 -- table has a `bot` column. Created by the Worker on first use.
 CREATE TABLE IF NOT EXISTS id_users (
@@ -115,14 +153,14 @@ CREATE TABLE IF NOT EXISTS id_users (
   bot        TEXT NOT NULL,
   email      TEXT NOT NULL,        -- the only personal thing stored
   created_at TEXT NOT NULL,
-  last_seen  TEXT
+  last_seen  TEXT                  -- bumped on every identified request; the return window measures from here
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_id_users_bot_email ON id_users(bot, email);
 CREATE TABLE IF NOT EXISTS id_devices (
   key_hash   TEXT NOT NULL,        -- sha256 of the browser's random device key; the key itself never leaves the browser
   bot        TEXT NOT NULL,
   user_id    TEXT NOT NULL,
-  label      TEXT,                 -- 'first device' | 'linked with a passkey' | 'signed in with google' | 'linked with an authenticator code' | 'linked by the owner'
+  label      TEXT,                 -- 'first device' | 'return window' | 'linked with a passkey' | 'signed in with google' | 'linked with an authenticator code' | 'linked by the owner'
   created_at TEXT NOT NULL,
   PRIMARY KEY (key_hash, bot)
 );

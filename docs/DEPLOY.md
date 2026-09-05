@@ -33,7 +33,7 @@ The passphrase screens allow ten tries a minute per visitor (`UNLOCK_LIMITER` in
 ## B2b. Who can use it: a default, a floor, and each bot's own say
 Every bot can say in its `project.json → "access"` how it opens; the deployment
 sets what a bot gets when it doesn't say (**default**) and the most open any bot
-may be (**floor**). Most open first: `open < email < key < key+email < admin < draft`.
+may be (**floor**). Most open first: `open < email < allow < key < key+email < admin < draft`.
 A bot's effective mode is the stricter of (its own mode, or the default) and the floor.
 
 Three places set the default and the floor — later wins:
@@ -50,12 +50,33 @@ opens another. The floor is the panic switch: `floor: "key"` and every bot needs
 the passphrase whatever its file says. The full story, modes table and what none
 of it is (sign-in): `docs/CUSTOMIZE.md → Who can use it`.
 
-**Prove it:** `node Engine/tests/access-check.mjs --url http://localhost:8797 --passphrase "…" --admin "…"`
-saves six test bots (open, draft, admin-only, own key, unlisted, email), proves each door
-with curl-style calls — no model calls, so no cost — checks the floor, the admin
-events and the body caps, then deletes them. For the own-key check put
-`ACCESS_PASSPHRASE_CLIENTX=clientx-secret` in `.dev.vars` (or pass `--clientx`). It uses
-three of the ten passphrase tries a minute, so wait a minute between runs.
+**Prove it:** `node Engine/tests/access-check.mjs --url http://localhost:8797 --passphrase "…" --admin "…" [--unlock "…"]`
+saves eight test bots (open, draft, admin-only, own key, unlisted, email, the return
+window, allow), proves each door with curl-style calls — no model calls, so no cost —
+checks the floor, history on any computer, the allowlist, the admin events, the body
+caps and (with `--unlock`) the break-glass key, then deletes them. For the own-key
+check put `ACCESS_PASSPHRASE_CLIENTX=clientx-secret` in `.dev.vars` (or pass `--clientx`).
+It uses five of the ten passphrase tries a minute and pauses twice for the visitor
+rate limit, so it takes about four minutes; wait a minute between runs.
+
+## B2c. The allowlist key (access mode `allow`)
+A bot in `allow` mode lets in only the emails the owner listed (Settings → The
+allowlist; per bot, or for every bot). The list is encrypted at rest and needs one
+secret — 32 random bytes, base64:
+```bash
+printf "$(openssl rand -base64 32)" | npx wrangler secret put ALLOWLIST_KEY
+```
+Local: `ALLOWLIST_KEY=…` in `.dev.vars`. Both the hash key (to check one address)
+and the cipher key (so you can read the list) derive from it. **Without it, allow
+mode refuses everyone** and the log says so once. Rotating it empties the list
+the same way (the old hashes no longer match) — add people again afterwards.
+
+## B2d. The return window
+`YourBots/config.js → identity.graceMinutes` (default 60; Settings edits it live;
+a bot can set its own in `project.json → identity`). A visitor in email / allow
+mode who types their email on a *new* computer within that many minutes of their
+last activity is trusted at once and their chats follow them. Set `0` to make every
+new computer wait for your link. The trade-off is spelled out in `docs/IDENTITY.md`.
 If you created the D1 tables before v2.2, add the column: `ALTER TABLE conversations ADD COLUMN visitor TEXT;`
 
 ## B3. The admin code (Under the hood)
@@ -82,6 +103,20 @@ request; uploads keep their own 4 MB cap.
 The source snapshot in `Engine/public/engine/` is produced by `Engine/scripts/snapshot-src.mjs`
 before every dev/deploy (`build.command` in `wrangler.jsonc`) and is git-ignored;
 `run_worker_first` keeps `/engine/*` behind the gate.
+
+## B3d. The break-glass key (get back in when the authenticator is lost)
+Set a second, long, random secret:
+```bash
+printf "$(openssl rand -base64 24)" | npx wrangler secret put ADMIN_UNLOCK_KEY
+```
+Typed where the admin code goes (leave the authenticator field empty), it opens
+"Under the hood" on its own: no passphrase check, no six digits — even when
+`ADMIN_TOTP_SECRET` is set, lost or wrong. Every use lands in `admin_events` as
+`admin-break-glass`, and the page sends you straight to Settings with the commands
+to re-set `ADMIN_TOTP_SECRET` and bump `ADMIN_TOKEN_VERSION`. It is a recovery
+credential, not a login: keep it somewhere the authenticator isn't, use it once,
+then set a new one. Shorter than 16 characters and it is ignored (the log says so).
+Owner checklist item 7.
 
 ## B3b. Handoff webhook signature (optional)
 `printf 'a long random string' | npx wrangler secret put HANDOFF_WEBHOOK_SECRET` — every handoff

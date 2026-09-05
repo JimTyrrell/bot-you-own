@@ -70,7 +70,7 @@ export async function ensureTrackSchema(env) {
 // --- The router. Called from index.js for one food bot: the app's page, its API, its coach API.
 //     `bot` is the resolved project (kind food); api/page/admin are the path prefixes it answers on
 //     ("/api/apps/plate/", "/apps/plate", "/api/admin/apps/plate/" — or the /food aliases).
-export async function handleTrack(request, env, url, { bot, api, page, admin, isAdmin = false, adminEnabled = false, allowed = async () => true } = {}) {
+export async function handleTrack(request, env, url, { bot, api, page, admin, isAdmin = false, adminEnabled = false, allowed = async () => true, graceMinutes = 60 } = {}) {
   const cfg = foodConfig(bot, env);
   HONESTY = cfg.honesty;
   const p = url.pathname;
@@ -99,7 +99,7 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
     if (request.method !== "POST") return json({ error: "POST only" }, 405);
     if (!(await allowed(env, request))) return json({ error: "rate-limited", reason: "Too many tries. Give it a minute." }, 429);
     if (!keyHash) return json({ error: "no device key", reason: "This browser didn't send a device key. Reload the page." }, 400);
-    return join(env, cfg, await readJson(request), keyHash);
+    return join(env, cfg, await readJson(request), keyHash, graceMinutes);
   }
 
   // Everything below needs a known device. Unknown → 401, no exceptions.
@@ -199,10 +199,10 @@ function foodConfig(bot, env) {
 }
 
 // --- JOIN: first device creates the log; a second device gets a code instead (Engine/identity/devices.js). ---
-async function join(env, cfg, body, keyHash) {
+async function join(env, cfg, body, keyHash, graceMinutes) {
   const email = cleanEmail(body.email);
   if (!email) return json({ error: "email", reason: "That doesn't look like an email address." }, 400);
-  const r = await idJoin(env, cfg.id, { email, keyHash });
+  const r = await idJoin(env, cfg.id, { email, keyHash, graceMinutes });
   if (r.linked) return json({ linked: true, ...(await profile(env, await withProfile(env, r.user))), ...(r.fresh ? { fresh: true } : {}) });
   return json({ linked: false, code: r.code, email, message: PENDING_MESSAGE, signIn: cfg.signIn.map((s) => s.provider), methods: { passkeys: cfg.methods.passkeys, totp: cfg.methods.totp } }, 202);
 }

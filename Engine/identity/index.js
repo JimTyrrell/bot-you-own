@@ -17,7 +17,8 @@
 //    POST /api/id/totp/confirm               {bot, code}                   → { ok }
 //    POST /api/id/totp/link                  {bot, email, code}            → { linked: true } (an unknown device, six digits)
 //    GET  /api/id/methods?bot=<id>                                          → what's on for this bot, and for this device
-//    POST /api/id/join                       {bot, email}                  → { linked: true, email } (first device)
+//    POST /api/id/join                       {bot, email}                  → { linked: true, email } (first device, or a second one
+//                                                                            inside the return window — devices.js)
 //                                                                            or { linked: false, code, email } (a second device: the
 //                                                                            owner links it with the code, or a passkey / six digits do)
 //    GET  /api/id/me?bot=<id>                                               → { linked, email } or { linked: false, pending: {code, email} }
@@ -26,8 +27,8 @@
 //  Never an email is sent. Nothing here can be "reset by email".
 // ============================================================================
 
-import { deviceHash, userForDevice, userById, userByEmail, pendingFor, bindDevice, cleanEmail, ensureIdentitySchema, nowIso, deviceCount, join as joinDevice, linkByCode } from "./devices.js";
-export { linkByCode };
+import { deviceHash, userForDevice, userById, userByEmail, pendingFor, bindDevice, cleanEmail, ensureIdentitySchema, nowIso, deviceCount, join as joinDevice, linkByCode, touch, cleanGrace, DEFAULT_GRACE_MINUTES } from "./devices.js";
+export { linkByCode, cleanGrace, DEFAULT_GRACE_MINUTES };
 import { verifyRegistration, verifyAssertion, randomChallenge } from "./passkeys.js";
 import { newSecret, totp, verifyTotp, otpauthUri } from "./totp.js";
 
@@ -38,12 +39,20 @@ const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
 
 // Who is this browser, for this bot? Fails closed: no key, malformed key, unknown key → user null.
+// A known person gets their last_seen bumped: that is what the return window measures.
 export async function identify(request, env, bot) {
   await ensureIdentitySchema(env);
   const keyHash = await deviceHash(request);
   const user = keyHash ? await userForDevice(env, bot.id, keyHash) : null;
+  if (user) touch(env, user);
   const pending = user ? null : await pendingFor(env, bot.id, keyHash);
   return { keyHash, user, pending };
+}
+
+// The return window for a bot: the bot's own number, else the deployment's (settings), else 60.
+export function graceMinutesFor(bot, globalMinutes) {
+  const own = bot?.identity?.graceMinutes;
+  return cleanGrace(own !== undefined && own !== null && own !== "" ? own : globalMinutes);
 }
 
 // The methods a bot has switched on. What the join screen draws, and what Settings lists.
@@ -72,7 +81,7 @@ export async function adminCodeOk(env, code) {
 }
 
 // --- The routes. `bot` is already resolved by the caller; `allowed` is the rate limiter. ----
-export async function handleIdentity(request, env, url, { bot, allowed = async () => true, unlockAllowed = async () => true }) {
+export async function handleIdentity(request, env, url, { bot, allowed = async () => true, unlockAllowed = async () => true, graceMinutes = DEFAULT_GRACE_MINUTES }) {
   if (!env.DB) return json({ error: "Identity needs the D1 database (wrangler.jsonc → d1_databases)." }, 503);
   await ensureIdentitySchema(env);
   const path = url.pathname.slice("/api/id/".length);
@@ -105,8 +114,8 @@ export async function handleIdentity(request, env, url, { bot, allowed = async (
       const email = cleanEmail(body.email);
       if (!email) return json({ error: "email", reason: "That doesn't look like an email address." }, 400);
       if (me && me.email !== email) return json({ error: "different person", reason: "This browser is already linked to a different email. Sign out first." }, 409);
-      const r = await joinDevice(env, bot.id, { email, keyHash });
-      if (r.linked) return json({ ok: true, linked: true, email: r.user.email, fresh: Boolean(r.fresh) });
+      const r = await joinDevice(env, bot.id, { email, keyHash, graceMinutes });
+      if (r.linked) return json({ ok: true, linked: true, email: r.user.email, fresh: Boolean(r.fresh), ...(r.grace ? { grace: true } : {}) });
       return json({ ok: true, linked: false, code: r.code, email: r.email, reason: "This email is already in use on another device. The owner can link this one with the code." });
     }
 

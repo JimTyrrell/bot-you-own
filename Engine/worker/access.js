@@ -4,12 +4,12 @@
 //  /api/config so the page knows which lock screen to show).
 //
 //  Three layers, each in plain words:
-//    1. The bot says what it wants   project.json → "access": "open" | "email" | "key"
+//    1. The bot says what it wants   project.json → "access": "open" | "email" | "allow" | "key"
 //                                     | "key+email" | "admin" | "draft"   (omit = the default)
 //    2. The deployment sets a default and a floor   YourBots/config.js → access.default / access.floor
 //                                     (YourBots/settings.json and the Settings screen override it)
 //    3. The floor wins when it is stricter.  Order, most open first:
-//                                     open < email < key < key+email < admin < draft
+//                                     open < email < allow < key < key+email < admin < draft
 //       So floor "key" makes every bot need the passphrase, even one that says "open".
 //       That is the panic switch: one setting, every bot locked, no code change.
 //
@@ -21,15 +21,22 @@
 //  nobody checks the address is theirs, but a second browser can't just type it — the
 //  owner links it with a code. The chat handler finds the email (visitorOf in index.js)
 //  and passes it here; the gate only asks "is there one?".
+//  "allow" is email PLUS a list: the visitor is identified the same way, and then
+//  their address has to be on this bot's allowlist (or the deployment-wide one).
+//  In the list → able to do things. Not in it → 403. The list is encrypted at rest
+//  (Engine/worker/allowlist.js); no ALLOWLIST_KEY secret = nobody is on it = closed.
 // ============================================================================
 
-export const ACCESS_MODES = ["open", "email", "key", "key+email", "admin", "draft"];
-const RANK = { open: 0, email: 1, key: 2, "key+email": 3, admin: 4, draft: 5 };
+import { isAllowed } from "./allowlist.js";
+
+export const ACCESS_MODES = ["open", "email", "allow", "key", "key+email", "admin", "draft"];
+const RANK = { open: 0, email: 1, allow: 2, key: 3, "key+email": 4, admin: 5, draft: 6 };
 
 // One line per mode — the Settings screen and the Configure form show these.
 export const MODE_LINES = {
   open: "Anyone with the link. For a public website bot (rely on the rate limit and a spend cap).",
   email: "Visitors type an email address once; this browser is then remembered (Engine/identity, the same as Plate). A second browser waits for the owner to link it. Feeds Leads.",
+  allow: "Email, and the address must be on the allowlist (Settings → Allowlist: this bot's list or the one for every bot). Invited people only. Needs the ALLOWLIST_KEY secret.",
   key: "The shared passphrase (the ACCESS_PASSPHRASE secret). Demos, internal bots.",
   "key+email": "Both: the passphrase to get in, then an email so you know who asked.",
   admin: "Only the admin code opens it. For bots only you should talk to.",
@@ -82,7 +89,7 @@ export function effectiveAccess(project, settings) {
   const keyName = cleanKeyName(p.accessKey);
   const said = botMode ? `bot says ${botMode}` : `bot doesn't say (default ${s.default})`;
   const reason = mode !== asked ? `${said}, floor says ${s.floor} → ${mode}` : s.floor !== "open" ? `${said}, floor ${s.floor} doesn't change it → ${mode}` : `${said} → ${mode}`;
-  return { mode, botMode, listed, keyName, reason, wantKey: /key/.test(mode), wantEmail: /email/.test(mode) };
+  return { mode, botMode, listed, keyName, reason, wantKey: /key/.test(mode), wantEmail: /email/.test(mode) || mode === "allow", wantList: mode === "allow" };
 }
 
 // --- The key a bot is opened with: which secret, and the token that secret makes.
@@ -158,9 +165,15 @@ export async function gate(request, env, project, settings, { isAdmin = false, d
         console.warn(`bot "${project?.id}" wants a key but no ACCESS_PASSPHRASE is set — running open`);
       }
     }
-    // email / key+email: an address before chatting. Identification, not authentication.
+    // email / allow / key+email: an address before chatting. Identification, not authentication.
     if (a.wantEmail && !isAdmin && email !== undefined && !cleanEmail(email)) {
       return { ok: false, status: 401, error: "email", reply: "Please enter your email address to start.", ...base };
+    }
+    // allow: identified, AND on the list. This bot's list or the deployment-wide one ("*").
+    // No key, a broken lookup, an address that isn't there: all the same closed door.
+    if (a.wantList && !isAdmin && email !== undefined) {
+      const r = await isAllowed(env, project?.id, cleanEmail(email));
+      if (!r.ok) return { ok: false, status: 403, error: "allow", reply: r.reason || `${cleanEmail(email)} isn't on the list for ${project?.name || "this bot"}. Ask the owner to add it.`, ...base, list: true };
     }
     return { ok: true, ...base, who };
   } catch (err) {
@@ -173,5 +186,5 @@ export async function gate(request, env, project, settings, { isAdmin = false, d
 // What /api/config tells the page about a bot (never the secret's name — just whether it has its own).
 export function accessView(project, settings) {
   const a = effectiveAccess(project, settings);
-  return { mode: a.mode, key: a.wantKey, email: a.wantEmail, admin: a.mode === "admin", draft: a.mode === "draft", ownKey: Boolean(a.keyName), listed: a.listed };
+  return { mode: a.mode, key: a.wantKey, email: a.wantEmail, list: a.wantList, admin: a.mode === "admin", draft: a.mode === "draft", ownKey: Boolean(a.keyName), listed: a.listed };
 }

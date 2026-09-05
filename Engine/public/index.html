@@ -33,15 +33,25 @@
   .newchat:hover { background:var(--panel); }
   .section { padding:10px 14px 4px; font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); }
   .list { overflow-y:auto; padding:0 8px; }
+  /* Many bots must not squeeze the chat list to nothing: the bot list gives way at 45% of the sidebar. */
+  #projects { flex:0 1 auto; max-height:45%; }
   .item { padding:8px 10px; border-radius:8px; cursor:pointer; font-size:14px; color:var(--text); display:flex; flex-direction:column; gap:1px; }
   .item:hover { background:var(--panel); }
   .item.active { background:var(--panel); font-weight:600; }
   .item small { color:var(--muted); font-weight:400; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .chats { flex:1; }
+  .chats { flex:1 1 0; min-height:90px; }
   .chat-row { display:flex; align-items:center; }
   .chat-row .item { flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; }
   .chat-row button { border:0; background:transparent; color:var(--muted); cursor:pointer; padding:4px 6px; font-size:13px; }
   .chat-row button:hover { color:var(--danger); }
+  .chat-row button.rename:hover { color:var(--text); }
+  .chat-row input.retitle { flex:1; min-width:0; padding:6px 8px; border:1px solid var(--edge); border-radius:8px; background:var(--bg); color:var(--text); font:inherit; font-size:14px; }
+  .chatsearch { margin:0 8px 6px; padding:7px 10px; border:1px solid var(--edge); border-radius:8px; background:var(--bg); color:var(--text); font:inherit; font-size:13px; width:calc(100% - 16px); box-sizing:border-box; flex:none; }
+  .chatsearch:placeholder-shown { opacity:.85; }
+  .viewas { display:none; align-items:center; gap:10px; padding:8px 16px; background:#b45309; color:#fff; font-size:13.5px; font-weight:600; }
+  .viewas.show { display:flex; }
+  .viewas button { margin-left:auto; border:1px solid rgba(255,255,255,.6); background:transparent; color:#fff; border-radius:8px; padding:4px 10px; cursor:pointer; font:inherit; font-weight:600; }
+  body.viewing .composer { opacity:.5; pointer-events:none; }
   .foot { padding:10px 14px; border-top:1px solid var(--edge); font-size:12px; color:var(--muted); line-height:1.4; }
   .foot b { color:var(--text); }
 
@@ -172,7 +182,7 @@
   #cfgform { overflow:auto; padding:18px 24px 40px; border-right:1px solid var(--edge); min-width:0; }   /* min-width:0: a long <select> option must not widen the whole page on a phone */
   #cfgform label { display:block; font-weight:600; font-size:13.5px; margin:16px 0 6px; }
   #cfgform label small { display:block; font-weight:400; color:var(--muted); font-size:12px; margin-top:2px; }
-  #cfgform input[type=text], #cfgform input[type=url], #cfgform textarea, #cfgform select { width:100%; min-width:0; max-width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid var(--edge); border-radius:10px; background:var(--bg); color:var(--text); font:inherit; }
+  #cfgform input[type=text], #cfgform input[type=url], #cfgform input[type=number], #cfgform textarea, #cfgform select { width:100%; min-width:0; max-width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid var(--edge); border-radius:10px; background:var(--bg); color:var(--text); font:inherit; }
   #cfgform textarea { min-height:120px; resize:vertical; }
   #cfgform textarea.big { min-height:200px; }
   .starters-edit input { margin-bottom:6px; }
@@ -244,6 +254,7 @@
   <input id="email" type="email" placeholder="Your email address" autocomplete="email" />
   <div style="display:flex;gap:8px"><button type="submit" id="lockgo" style="flex:1">Continue</button><button type="button" id="lockback" style="flex:1;background:var(--panel);color:var(--text)" hidden>Back</button></div>
   <button type="button" id="lockcfg" hidden>✎ Configure this bot</button>
+  <button type="button" id="lockswitch" hidden style="background:var(--panel);color:var(--text)">Use a different email</button>
   <div id="lockmsg"></div>
 </form></div>
 <div class="app">
@@ -254,6 +265,7 @@
     <div class="section">Your bots</div>
     <div class="list" id="projects"></div>
     <div class="section">Chats</div>
+    <input class="chatsearch" id="chatsearch" type="search" placeholder="Search chats…" autocomplete="off" />
     <div class="list chats" id="chats"></div>
     <div class="foot" id="foot"></div>
     <div class="foot" id="trackfoot" hidden><a href="/food" style="color:var(--muted)">📷 Food log</a></div>
@@ -273,6 +285,7 @@
       <button class="iconbtn" id="cfgbtn" title="Configure this bot (admin)" disabled>✎ Configure</button>
       <button class="iconbtn" id="hoodbtn" title="Under the hood (admin)" disabled>⚙ Under the hood</button>
     </header>
+    <div class="viewas" id="viewas">👁 <span id="viewaswho"></span> <button type="button" id="viewasexit">Exit</button></div>
     <section id="cfg" aria-label="Configure">
       <header>
         <button class="iconbtn" id="cfgback">‹ Back</button>
@@ -340,12 +353,55 @@ $('theme').onclick = () => {
 };
 $('menu').onclick = () => $('side').classList.toggle('open');
 
+// "Viewing as": the owner looking at a visitor's history, READ ONLY (Under the hood → Leads).
+// While it is set, the chat list is that person's threads from the server and nothing is written anywhere.
+let viewAs = null;                                     // { bot, email, threads }
 const store = {
   key: (pid) => 'byo:chats:' + pid,
-  list(pid) { try { return JSON.parse(localStorage.getItem(this.key(pid)) || '[]'); } catch { return []; } },
-  save(pid, chats) { try { localStorage.setItem(this.key(pid), JSON.stringify(chats.slice(0, 50))); } catch {} },
-  upsert(chat) { const all = this.list(chat.project).filter((c) => c.id !== chat.id); all.unshift(chat); this.save(chat.project, all); },
-  remove(pid, id) { this.save(pid, this.list(pid).filter((c) => c.id !== id)); },
+  list(pid) { if (viewAs && viewAs.bot === pid) return viewAs.threads; try { return JSON.parse(localStorage.getItem(this.key(pid)) || '[]'); } catch { return []; } },
+  save(pid, chats) { if (viewAs) return; try { localStorage.setItem(this.key(pid), JSON.stringify(chats.slice(0, 50))); } catch {} },
+  upsert(chat) { if (viewAs) return; if (sync.on(chat.project)) chat.owner = VISITOR; const all = this.list(chat.project).filter((c) => c.id !== chat.id); all.unshift(chat); this.save(chat.project, all); sync.push(chat); },
+  remove(pid, id) { if (viewAs) return; this.save(pid, this.list(pid).filter((c) => c.id !== id)); sync.remove(pid, id); },
+};
+// ---- history on any computer (Engine/worker/chats.js) ----
+// For a visitor the server has identified on a bot (email / allow / key+email), every chat is
+// mirrored to the server as it changes, and pulled back on the next machine. The local copy
+// stays the working copy; the server is the one that follows you. Anonymous visitors, open
+// bots and the admin's own chats stay in this browser only. Everything here fails quietly:
+// the server being down never stops a chat.
+const identified = {};                                 // bot id → the server knows this browser's email
+const sync = {
+  on(pid) { return !!(pid && identified[pid] && VISITOR && !ADMIN && !viewAs); },
+  timers: {},
+  body(chat) { return { bot: chat.project, title: chat.title || '', messages: (chat.messages || []).map(({ role, content, flags, sources, note, talk, toPerson }) => ({ role, content, flags, sources, note, talk, toPerson })), meta: { handoff: chat.handoff || undefined, attachments: (chat.attachments || []).map(({ name, chars, text }) => ({ name, chars, text })) } }; },
+  push(chat) {
+    if (!this.on(chat.project) || !(chat.messages?.length || chat.attachments?.length)) return;
+    clearTimeout(this.timers[chat.id]);
+    this.timers[chat.id] = setTimeout(() => {
+      fetch('/api/chats/' + encodeURIComponent(chat.id), { method: 'PUT', headers: { 'content-type': 'application/json', ...authHeaders(chat.project) }, body: JSON.stringify(this.body(chat)) }).catch(() => {});
+    }, 600);
+  },
+  rename(chat) { if (!this.on(chat.project)) return; fetch('/api/chats/' + encodeURIComponent(chat.id), { method: 'PATCH', headers: { 'content-type': 'application/json', ...authHeaders(chat.project) }, body: JSON.stringify({ bot: chat.project, title: chat.title || '' }) }).catch(() => {}); },
+  remove(pid, id) { if (!this.on(pid)) return; fetch('/api/chats/' + encodeURIComponent(id) + '?bot=' + encodeURIComponent(pid), { method: 'DELETE', headers: authHeaders(pid) }).catch(() => {}); },
+  // On arrival: the server's threads win for the ids it has; threads only this browser has go up.
+  async pull(pid) {
+    if (!this.on(pid)) return;
+    let d; try { const r = await fetch('/api/chats?bot=' + encodeURIComponent(pid), { headers: authHeaders(pid) }); if (!r.ok) return; d = await r.json(); } catch { return; }
+    if (!Array.isArray(d.threads) || this.on(pid) === false) return;
+    // Only this person's local threads count (a chat made under another email on this browser stays out).
+    const local = (viewAs ? [] : store.list(pid)).filter((c) => !c.owner || c.owner === VISITOR);
+    const fromServer = d.threads.map((t) => ({ id: t.id, project: pid, owner: VISITOR, title: t.title || '', messages: t.messages || [], attachments: t.attachments || [], ...(t.handoff ? { handoff: t.handoff } : {}), updated_at: t.updated_at }));
+    const seen = new Set(fromServer.map((t) => t.id));
+    const onlyHere = local.filter((c) => !seen.has(c.id) && (c.messages?.length || c.attachments?.length)).map((c) => ({ ...c, owner: VISITOR }));
+    const merged = [...fromServer, ...onlyHere].sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
+    store.save(pid, merged);
+    for (const c of onlyHere) fetch('/api/chats/' + encodeURIComponent(c.id), { method: 'PUT', headers: { 'content-type': 'application/json', ...authHeaders(pid) }, body: JSON.stringify(this.body(c)) }).catch(() => {});
+    if (state.project?.id !== pid) return;
+    // The open chat may have a newer copy from another machine.
+    const cur = state.chat && merged.find((c) => c.id === state.chat.id);
+    if (cur && JSON.stringify(cur.messages) !== JSON.stringify(state.chat.messages)) { state.chat = cur; renderLog(); renderAttachments(); setComposerMode(); }
+    renderChats();
+  },
 };
 
 // ---- the door: each bot has its own (project.json → access; Engine/worker/access.js) ----
@@ -369,17 +425,19 @@ const authHeaders = (pid) => { const t = tokenFor(pid || state.project?.id); ret
 const saveTokens = () => { try { localStorage.setItem('byo:token', TOKEN); localStorage.setItem('byo:tokens', JSON.stringify(TOKENS)); } catch {} };
 function dropToken(pid) { if (pid && TOKENS[pid]) delete TOKENS[pid]; else TOKEN = ''; saveTokens(); }
 // What the lock screen is asking for, and for which bot.
-let lock = { project: '', name: '', mode: 'open', key: false, email: false, admin: false, draft: false };
+let lock = { project: '', name: '', mode: 'open', key: false, email: false, admin: false, draft: false, list: false };
 let needKey = false, needEmail = false, needAdmin = false;
 const checked = {};                                   // bot id → its door was checked this page-load
 function showLock(msg, l) {
-  if (l) lock = { ...lock, ...l };
+  if (l) lock = { ...lock, list: false, ...l };
   needAdmin = !!lock.admin; needKey = !!lock.key && !needAdmin; needEmail = !!lock.email && !VISITOR && !lock.draft;
-  $('pass').hidden = !needKey; $('adminkey').hidden = !needAdmin; $('email').hidden = !needEmail; $('lockgo').hidden = !!lock.draft;
+  $('pass').hidden = !needKey; $('adminkey').hidden = !needAdmin; $('email').hidden = !needEmail; $('lockgo').hidden = !!lock.draft || !!lock.list;
+  $('lockswitch').hidden = !lock.list;
   // Back: to the bot list when we have one, else (a direct link to a locked bot) home to the default bot.
   $('lockback').hidden = !((state.projects && state.projects.length) || new URLSearchParams(location.search).get('project'));
-  $('locktitle').textContent = lock.draft ? 'This bot is a draft' : lock.admin ? 'Owner only' : 'Before we start';
+  $('locktitle').textContent = lock.draft ? 'This bot is a draft' : lock.admin ? 'Owner only' : lock.list ? 'Invited people only' : 'Before we start';
   $('lockhint').textContent = lock.draft ? 'It only answers in the Configure preview. The owner can publish it from ✎ Configure.'
+    : lock.list ? (lock.name || 'This bot') + ' is for people on its list. You\'re signed in as ' + (VISITOR || 'nobody') + '. Ask ' + (state.cfg?.owner || 'the owner') + ' to add that address, or use a different email.'
     : lock.admin ? (lock.name ? lock.name + ' opens' : 'This bot opens') + ' with the admin code only.'
     : needKey && needEmail ? 'Enter the passphrase and your email address.'
     : needEmail ? 'Enter your email address to start. It is kept with your conversation so the owner knows who asked.'
@@ -390,6 +448,7 @@ function showLock(msg, l) {
   (needAdmin ? $('adminkey') : needKey ? $('pass') : needEmail ? $('email') : $('lockback')).focus();
 }
 $('lockcfg').onclick = () => { $('lock').classList.remove('show'); openConfigure(lock.project); };
+$('lockswitch').onclick = () => signOut();
 $('lockback').onclick = () => { if (!(state.projects && state.projects.length)) { location.href = location.pathname; return; } $('lock').classList.remove('show'); const p = state.projects?.find((x) => x.id === state.cfg?.defaultProject) || state.projects?.[0]; if (p && p.id !== state.project?.id) selectProject(p); };
 // A second browser typing a known email: the server hands it a 6-character code instead of
 // the chat. The owner types the code (under the hood → Leads) and this page, which asks
@@ -414,7 +473,7 @@ $('lockform').addEventListener('submit', async (e) => {
       const res = await fetch('/api/admin/unlock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ passphrase: $('adminkey').value, code: $('adminkeycode').value }) });
       const data = await res.json().catch(() => ({}));
       if (!(res.ok && data.token)) { $('adminkeycode').hidden = !data.needsCode; $('lockmsg').textContent = res.status === 429 ? 'Too many attempts. Wait a minute.' : data.needsCode && data.error !== 'wrong admin code' ? 'This deployment also asks for the authenticator code.' : 'Wrong admin code.'; return; }
-      ADMIN = data.token; try { localStorage.setItem('byo:admin', ADMIN); } catch {} $('adminkey').value = '';
+      ADMIN = data.token; try { localStorage.setItem('byo:admin', ADMIN); if (data.breakGlass) localStorage.setItem('byo:breakglass', '1'); } catch {} $('adminkey').value = '';
     }
     if (needKey) {
       const res = await fetch('/api/unlock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ passphrase: $('pass').value, project: lock.project }) });
@@ -431,13 +490,15 @@ $('lockform').addEventListener('submit', async (e) => {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { $('lockmsg').textContent = res.status === 429 ? 'Too many tries. Wait a minute.' : (data.reason || 'Could not join. Try again.'); return; }
       if (!data.linked) return showPending(data.code, em.toLowerCase());
-      VISITOR = data.email || em.toLowerCase();
+      VISITOR = data.email || em.toLowerCase(); identified[lock.project] = true;
     }
     $('lock').classList.remove('show'); boot(lock.project);
   } catch { $('lockmsg').textContent = 'Could not reach the server. Try again.'; }
   finally { go.disabled = false; go.textContent = 'Continue'; }
 });
 function signOut() {
+  // Chats the server holds for this person leave this browser with them; the next person starts clean.
+  try { for (const pid of Object.keys(identified)) localStorage.removeItem(store.key(pid)); } catch {}
   TOKEN = ''; VISITOR = ''; ADMIN = ''; TOKENS = {};
   // byo:device goes too: the next load makes a fresh key, so this browser is nobody again.
   try { localStorage.removeItem('byo:token'); localStorage.removeItem('byo:tokens'); localStorage.removeItem('byo:visitor'); localStorage.removeItem('byo:admin'); localStorage.removeItem('byo:device'); } catch {}
@@ -449,6 +510,7 @@ function lockedOut(d, pid) {
   pid = pid || state.project?.id || ''; const name = state.projects?.find((p) => p.id === pid)?.name || '';
   const base = { project: pid, name, key: false, email: false, admin: false, draft: false };
   if (d.error === 'email') { VISITOR = ''; showLock('Please enter your email address to start.', { ...base, email: true }); }
+  else if (d.error === 'allow') showLock(d.reply || 'That email isn\'t on the list for this bot.', { ...base, email: true, list: true });
   else if (d.error === 'admin') { ADMIN = ''; try { localStorage.removeItem('byo:admin'); } catch {} showLock('', { ...base, admin: true }); }
   else if (d.error === 'draft') showLock('', { ...base, draft: true });
   else { dropToken(pid); showLock('Enter the passphrase to continue.', { ...base, key: true, email: /email/.test(d.access || '') }); }
@@ -471,8 +533,10 @@ function boot(pid) {
   // cfg.identity is the server's answer for THIS browser: linked (and to whom), or waiting on a code.
   if (a.email && !ADMIN) {
     const idn = cfg.identity || null;
-    if (idn && idn.linked) VISITOR = idn.email || '';
+    if (idn && idn.linked) { VISITOR = idn.email || ''; identified[l.project] = true; }
     else { VISITOR = ''; showLock(idn && idn.reason ? idn.reason : '', { ...l, key: false }); if (idn && idn.pending) showPending(idn.pending.code, idn.pending.email); return; }
+    // allow mode: identified, but not on the list. Nothing to type — the owner adds them, or they use another email.
+    if (idn.allowed === false) return showLock(idn.reason || (VISITOR + ' isn\'t on the list for this bot.'), { ...l, key: false, email: true, list: true });
   }
   checked[l.project] = true;
   const gated = a.key || a.email || ADMIN || TOKEN || Object.keys(TOKENS).length;
@@ -500,6 +564,7 @@ function boot(pid) {
   const wantId = cfg.current || want || cfg.defaultProject;
   selectProject(state.projects.find((p) => p.id === wantId) || state.projects.find((p) => p.id === cfg.defaultProject) || state.projects[0]);
   const wantChat = qs.get('chat'); if (wantChat) { const c = store.list(state.project.id).find((x) => x.id === wantChat); if (c) loadChat(c, true); }
+  sync.pull(state.project.id);                       // history from other machines, if the server knows us here
   // "Talk to a person" is always in the header; the chip under a refusal is the other way in.
   $('talkbtn').hidden = false;
   // The owner's deep link from the webhook: ?handoff=<id> opens that conversation under the hood (admin code first if needed).
@@ -507,6 +572,27 @@ function boot(pid) {
   if (wantHandoff && cfg.adminEnabled && /^[0-9a-f]{48}$/.test(wantHandoff)) { pendingConv = wantHandoff; hoodTab = 'conversations'; $('hoodbtn').click(); }
 }).catch(() => { $('log').innerHTML = '<p style="color:var(--muted)">Could not load /api/config.</p>'; }); }
 boot();
+
+// ---- "Viewing as": what one visitor sees, read only (Under the hood → Leads → See what they see) ----
+// The admin picks a visitor; their threads come from the server (GET /api/admin/chats — no
+// writes exist on that route). The banner says who; the composer is off; ✎ and ✕ are gone.
+async function enterViewAs(email) {
+  const bot = state.project?.id; if (!bot || !email) return;
+  let d; try { const r = await fetch('/api/admin/chats?bot=' + encodeURIComponent(bot) + '&email=' + encodeURIComponent(email), { headers: adminHeaders() }); d = await r.json(); if (!r.ok) throw new Error(d.error || r.status); } catch (err) { alert('Could not load ' + email + ': ' + err.message); return; }
+  stopPolling();
+  viewAs = { bot, email: d.email, threads: (d.threads || []).map((t) => ({ id: t.id, project: bot, title: t.title || '', messages: t.messages || [], attachments: t.attachments || [], ...(t.handoff ? { handoff: t.handoff } : {}), updated_at: t.updated_at })) };
+  document.body.classList.add('viewing'); $('viewas').classList.add('show');
+  $('viewaswho').textContent = 'Viewing as ' + d.email + ' (read only) · ' + viewAs.threads.length + ' chat' + (viewAs.threads.length === 1 ? '' : 's') + ' on ' + (state.project?.name || bot);
+  $('hood').classList.remove('show'); clearInterval(convTicker); convTicker = null;
+  input.disabled = true; $('talkbtn').disabled = true;
+  if (viewAs.threads.length) loadChat(viewAs.threads[0], true); else { state.chat = { id: 'none', project: bot, title: '', messages: [], attachments: [] }; renderChats(); renderLog(); renderAttachments(); }
+}
+function exitViewAs() {
+  if (!viewAs) return;
+  viewAs = null; document.body.classList.remove('viewing'); $('viewas').classList.remove('show');
+  input.disabled = false; newChat(true);
+}
+$('viewasexit').onclick = exitViewAs;
 
 // ---- history: every project or chat switch is a Back-able step ----
 function pushUrl(replace) {
@@ -526,6 +612,7 @@ window.addEventListener('popstate', (e) => {
 });
 
 function selectProject(p, silent) {
+  if (viewAs && viewAs.bot !== p.id) exitViewAs();
   state.project = p;
   $('title').textContent = p.name;
   $('modepill').textContent = p.mode + ' · ' + (p.grounding === 'open' ? 'open' : 'files only');
@@ -536,6 +623,7 @@ function selectProject(p, silent) {
   if ($('hood').classList.contains('show')) openHood();
   // A bot with its own door is checked on the way in, not after the first message.
   if (p.access && p.access !== 'open' && !checked[p.id]) checkDoor(p);
+  else sync.pull(p.id);
 }
 async function checkDoor(p) {
   try {
@@ -547,10 +635,12 @@ async function checkDoor(p) {
     if (cfg.locked && !cfg.projects) { if (cfg.reason === 'locked' && tokenFor(p.id)) dropToken(p.id); return showLock('', l); }
     if (a.email && !ADMIN) {
       const idn = cfg.identity || null;
-      if (idn && idn.linked) VISITOR = idn.email || '';
+      if (idn && idn.linked) { VISITOR = idn.email || ''; identified[p.id] = true; }
       else { VISITOR = ''; showLock(idn && idn.reason ? idn.reason : '', { ...l, key: false }); if (idn && idn.pending) showPending(idn.pending.code, idn.pending.email); return; }
+      if (idn.allowed === false) return showLock(idn.reason || '', { ...l, key: false, email: true, list: true });
     }
     checked[p.id] = true;
+    sync.pull(p.id);
   } catch {}
 }
 
@@ -576,18 +666,50 @@ function renderProjects() {
   });
 }
 
+// The chat list: searchable (title and every turn), each row renamable (✎) and deletable (✕).
+let chatQuery = '';
+$('chatsearch').oninput = () => { chatQuery = $('chatsearch').value.trim().toLowerCase(); renderChats(); };
+const chatMatches = (c, q) => !q || (c.title || '').toLowerCase().includes(q) || (c.messages || []).some((m) => String(m.content || '').toLowerCase().includes(q));
 function renderChats() {
   const box = $('chats'); box.innerHTML = '';
-  store.list(state.project.id).forEach((c) => {
+  const all = store.list(state.project.id);
+  const shown = all.filter((c) => chatMatches(c, chatQuery));
+  if (chatQuery && !shown.length) { const p = document.createElement('div'); p.className = 'item'; p.style.color = 'var(--muted)'; p.textContent = all.length ? 'Nothing matches.' : 'No chats yet.'; box.appendChild(p); }
+  shown.forEach((c) => {
     const row = document.createElement('div'); row.className = 'chat-row';
     const el = document.createElement('div');
     el.className = 'item' + (c.id === state.chat?.id ? ' active' : '');
-    el.textContent = c.title || 'New chat';
+    el.textContent = c.title || 'New chat'; el.title = c.title || 'New chat';
     el.onclick = () => { loadChat(c); $('side').classList.remove('open'); };
-    const del = document.createElement('button'); del.textContent = '✕'; del.title = 'Delete';
-    del.onclick = (e) => { e.stopPropagation(); store.remove(state.project.id, c.id); if (state.chat?.id === c.id) newChat(); else renderChats(); };
-    row.append(el, del); box.appendChild(row);
+    row.appendChild(el);
+    if (!viewAs) {
+      const ren = document.createElement('button'); ren.textContent = '✎'; ren.title = 'Rename'; ren.className = 'rename';
+      ren.onclick = (e) => { e.stopPropagation(); renameChat(row, el, c); };
+      const del = document.createElement('button'); del.textContent = '✕'; del.title = 'Delete';
+      del.onclick = (e) => { e.stopPropagation(); store.remove(state.project.id, c.id); if (state.chat?.id === c.id) newChat(); else renderChats(); };
+      row.append(ren, del);
+    }
+    box.appendChild(row);
   });
+}
+// Inline rename: the row becomes an input; Enter or leaving saves, Escape cancels.
+function renameChat(row, el, c) {
+  const inp = document.createElement('input'); inp.className = 'retitle'; inp.value = c.title || ''; inp.placeholder = 'Name this chat'; inp.maxLength = 120;
+  let done = false;
+  const finish = (save) => {
+    if (done) return; done = true;
+    const t = inp.value.trim();
+    if (save && t !== (c.title || '')) {
+      c.title = t; if (state.chat?.id === c.id) state.chat.title = t;
+      // upsert writes it here; rename tells the server the title alone (no turns re-sent).
+      const all = store.list(c.project).map((x) => (x.id === c.id ? { ...x, title: t } : x)); store.save(c.project, all); sync.rename(c);
+      if (state.chat?.id === c.id) pushUrl(true);
+    }
+    renderChats();
+  };
+  inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); finish(true); } if (e.key === 'Escape') finish(false); };
+  inp.onblur = () => finish(true); inp.onclick = (e) => e.stopPropagation();
+  row.replaceChild(inp, el); [...row.querySelectorAll('button')].forEach((b) => (b.hidden = true)); inp.focus(); inp.select();
 }
 
 function newChat(silent) {
@@ -598,7 +720,7 @@ function newChat(silent) {
 }
 $('newchat').onclick = () => newChat();
 // A chat that asked for a person carries the handoff id; opening it again picks the polling back up.
-function loadChat(c, silent) { stopPolling(); state.chat = c; renderChats(); renderLog(); renderAttachments(); setComposerMode(); startPolling(); if (!silent) pushUrl(); }
+function loadChat(c, silent) { stopPolling(); state.chat = c; renderChats(); renderLog(); renderAttachments(); setComposerMode(); if (!viewAs) startPolling(); if (!silent) pushUrl(); }
 
 // ---- the paperclip: one file, read for this conversation only ----
 // The server reads the file and hands the TEXT back; it keeps nothing. The text
@@ -818,7 +940,7 @@ input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey)
 form.addEventListener('submit', (e) => { e.preventDefault(); if (state.busy) { state.abort?.abort(); return; } send(input.value.trim()); });
 
 async function send(text) {
-  if (!text || state.busy) return;
+  if (!text || state.busy || viewAs) return;
   if (inHandoff(state.chat)) return sendToPerson(text);      // a person is on the line: the bot stays out of it
   input.value = ''; input.style.height = 'auto';
   const spoken = !!state.voiceIn; state.voiceIn = false;          // the mic put these words here → "voice-in" chip on the turn
@@ -876,7 +998,6 @@ async function send(text) {
   // The reply is final now, so it gets its speaker — never the "thinking" words, never the chips.
   addSpeaker(body.parentElement, reply);
   if (autoSpeak && state.voice?.out && reply && !(finalText === null && !full)) { const b = body.parentElement.querySelector('.speak'); if (b) speak(reply, b); }
-  chat.messages.push({ role: 'assistant', content: reply, flags, sources });
   store.upsert(chat); renderChats();
   state.busy = false; sendBtn.classList.remove('stop'); sendBtn.textContent = '↑'; sendBtn.title = 'Send';
   scrollDown(); input.focus();
@@ -979,8 +1100,10 @@ $('adminform').addEventListener('submit', async (e) => {
     const r = await fetch('/api/admin/unlock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ passphrase: $('adminpass').value, code: $('admincode').value }) });
     const d = await r.json().catch(() => ({}));
     if (!r.ok || !d.token) { $('adminmsg').textContent = r.status === 429 ? 'Too many attempts. Wait a minute.' : d.needsCode && d.error !== 'wrong admin code' ? 'This deployment also asks for the six digits from the owner\'s authenticator app.' : 'Wrong admin code.'; return; }
-    ADMIN = d.token; try { localStorage.setItem('byo:admin', ADMIN); } catch {}
+    ADMIN = d.token; try { localStorage.setItem('byo:admin', ADMIN); if (d.breakGlass) localStorage.setItem('byo:breakglass', '1'); } catch {}
     $('signout').hidden = false; if (!VISITOR) $('whoami').textContent = 'admin';
+    // In with the break-glass key: straight to Settings, where the second factor gets re-set.
+    if (d.breakGlass) { hoodTab = 'settings'; pendingAfterAdmin = null; }
     $('adminlock').classList.remove('show'); const next = pendingAfterAdmin || openHood; pendingAfterAdmin = null; next();
   } catch { $('adminmsg').textContent = 'Could not reach the server. Try again.'; }
   finally { btn.disabled = false; btn.textContent = 'Open'; }
@@ -1071,6 +1194,7 @@ function renderConfigForm() {
       return '<select id="f_access"><option value=""' + (!d.access ? ' selected' : '') + '>Deployment default (' + esc(acc.default || 'key') + ')</option>' + modes.map((x) => '<option value="' + esc(x.id) + '"' + (d.access === x.id ? ' selected' : '') + '>' + esc(x.id) + ' — ' + esc(x.line) + '</option>').join('') + '</select>'
         + '<div class="caps" style="margin-top:6px"><label><input type="checkbox" id="f_listed"' + (d.listed !== false ? ' checked' : '') + ' /> Listed in the sidebar. Unticked = reachable by its link (?project=' + esc(d.id) + ') and in the widget only — visibility, not security; its door still applies.</label></div>'
         + '<input type="text" id="f_accessKey" value="' + esc(d.accessKey || '') + '" placeholder="Its own passphrase secret, e.g. ACCESS_PASSPHRASE_CLIENTX (optional — the NAME of a Worker secret; falls back to the shared one)" style="margin-top:6px" />'
+        + '<div class="row2" style="margin-top:6px;align-items:center"><input type="number" id="f_grace" min="0" max="10080" value="' + esc(d.identity?.graceMinutes ?? '') + '" placeholder="Return window, minutes (blank = the deployment\'s)" /><span style="color:var(--muted);font-size:12px">Email/allow modes: a new computer typing this email within so many minutes of the last activity is trusted at once. 0 = it always waits for your link. Blank = Settings decides.</span></div>'
         + (d.access === 'draft' ? '<div class="btnrow" style="margin-top:8px"><button type="button" class="btn primary" id="f_publish">Publish</button><span style="color:var(--muted);font-size:12px">A draft only answers in the preview on the right. Publish sets it to the deployment default (' + esc(acc.default || 'key') + ') and saves.</span></div>' : '');
     })(m.access || {}), 'project.json → access · listed · accessKey') +
     '<div class="row2">' +
@@ -1115,7 +1239,8 @@ function renderFoodForm(commonTop) {
     field('Greeting', 'The first line people see on the app\'s join screen.', '<input type="text" id="f_greeting" value="' + esc(d.greeting || '') + '" />', 'project.json → greeting') +
     field('Who can use it', 'A food log identifies people by email + device key, then passkeys / sign-in / authenticator codes (docs/IDENTITY.md). The access mode still applies on top: <b>key</b> means visitors need the passphrase before the app loads.', '<select id="f_access"><option value=""' + (!d.access ? ' selected' : '') + '>Deployment default (' + esc(acc.default || 'key') + ')</option>' + (acc.modes || []).map((x) => '<option value="' + esc(x.id) + '"' + (d.access === x.id ? ' selected' : '') + '>' + esc(x.id) + ' — ' + esc(x.line) + '</option>').join('') + '</select>'
       + '<div class="caps" style="margin-top:6px"><label><input type="checkbox" id="f_listed"' + (d.listed !== false ? ' checked' : '') + ' /> Listed in the sidebar (opens /apps/' + esc(d.id) + ').</label></div>'
-      + '<input type="text" id="f_accessKey" value="' + esc(d.accessKey || '') + '" placeholder="Its own passphrase secret, e.g. ACCESS_PASSPHRASE_CLIENTX (optional)" style="margin-top:6px" />', 'project.json → access · listed · accessKey') +
+      + '<input type="text" id="f_accessKey" value="' + esc(d.accessKey || '') + '" placeholder="Its own passphrase secret, e.g. ACCESS_PASSPHRASE_CLIENTX (optional)" style="margin-top:6px" />'
+      + '<div class="row2" style="margin-top:6px;align-items:center"><input type="number" id="f_grace" min="0" max="10080" value="' + esc(d.identity?.graceMinutes ?? '') + '" placeholder="Return window, minutes (blank = the deployment\'s)" /><span style="color:var(--muted);font-size:12px">A new device typing a known email within so many minutes of the last activity is linked at once. 0 = it always waits for a code. Blank = Settings decides.</span></div>', 'project.json → access · listed · accessKey · identity') +
     '<h3 style="margin:18px 0 4px">Food log settings <code style="font-weight:400;font-size:11.5px;margin-left:6px">project.json → food</code></h3>' +
     '<div class="row2">' +
     field('Vision model', 'Workers AI model that reads the plate.', '<input type="text" id="ff_model" value="' + esc(f.model || '') + '" placeholder="@cf/google/gemma-4-26b-a4b-it" />') +
@@ -1256,6 +1381,7 @@ function syncDraft() {
   if (draft.kind !== 'chat') {
     // the app-shaped kinds: common fields + their own block, nothing else to read
     draft.access = v('f_access'); draft.listed = $('f_listed') ? $('f_listed').checked : true; draft.accessKey = v('f_accessKey');
+    draft.identity = v('f_grace') === '' ? {} : { graceMinutes: Number(v('f_grace')) };
     if (draft.kind === 'food') draft.food = { model: v('ff_model'), coachName: v('ff_coachName'), dailyPhotoLimit: Number(v('ff_dailyPhotoLimit')) || 60, maxPhotoBytes: Number(v('ff_maxPhotoBytes')) || 2097152, honesty: v('ff_honesty'), passkeys: $('ff_passkeys') ? $('ff_passkeys').checked : true, totp: $('ff_totp') ? $('ff_totp').checked : true, signIn: ['google', 'microsoft', 'apple'].map((p) => ({ provider: p, clientId: v('ff_' + p) })) };
     return;
   }
@@ -1263,6 +1389,7 @@ function syncDraft() {
   draft.starters = [...document.querySelectorAll('[data-starter]')].map((x) => x.value.trim()).filter(Boolean);
   draft.mode = v('f_mode'); draft.grounding = v('f_grounding'); draft.handoffText = v('f_handoffText'); draft.handoffContact = v('f_handoffContact');
   draft.access = v('f_access'); draft.listed = $('f_listed') ? $('f_listed').checked : true; draft.accessKey = v('f_accessKey').trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_');
+  draft.identity = v('f_grace') === '' ? {} : { graceMinutes: Number(v('f_grace')) };
   draft.handoffActions = { webhook: v('f_ha_webhook').trim(), email: v('f_ha_email').trim(), on: [...document.querySelectorAll('input[data-ha-on]')].filter((c) => c.checked).map((c) => c.dataset.haOn) };
   if ($('f_bk_provider')) { draft.bookingFitRules = v('f_bookingFit'); draft.bookingUrl = v('f_bookingUrl').trim(); draft.booking = { ...(draft.booking || {}), provider: v('f_bk_provider'), eventTypeId: Number(v('f_bk_event')) || 0, timezone: v('f_bk_tz').trim() || 'America/New_York', durationNote: v('f_bk_note').trim() }; }
   draft.allowedLinks = v('f_links').split('\n').map((x) => x.trim()).filter(Boolean);
@@ -1340,19 +1467,25 @@ async function renderSettings() {
     const line = (id) => (d.modes.find((m) => m.id === id) || {}).line || '';
     const sel = (id, val) => '<select id="' + id + '" style="margin:0">' + d.modes.map((m) => '<option value="' + esc(m.id) + '"' + (m.id === val ? ' selected' : '') + '>' + esc(m.id) + '</option>').join('') + '</select>';
     const s = $('setbody');
-    s.innerHTML = '<div class="row2"><div><label style="margin-top:0">Default<small>What a bot gets when its project.json doesn\'t say. Now from: ' + esc(d.source.default) + '.</small></label>' + sel('s_default', d.access.default) + '<div id="s_default_line" style="color:var(--muted);font-size:12px;margin-top:4px">' + esc(line(d.access.default)) + '</div></div>'
+    let bg = ''; try { bg = localStorage.getItem('byo:breakglass') || ''; } catch {}
+    s.innerHTML = (bg ? '<div style="border:2px solid #b45309;border-radius:10px;padding:10px 12px;margin:0 0 14px;background:rgba(180,83,9,.08)"><b>🔑 You are in with the break-glass key (ADMIN_UNLOCK_KEY).</b><p style="margin:6px 0 8px;font-size:12.5px">This login skipped the admin code and the authenticator step, and it is in the record below. Re-set the second factor now, from a terminal (secrets can\'t be changed from this page):</p><pre style="margin:0 0 8px"># 1. a new authenticator entry (or remove the second factor: npx wrangler secret delete ADMIN_TOTP_SECRET)\nprintf \'NEWBASE32SECRET\' | npx wrangler secret put ADMIN_TOTP_SECRET\n# 2. log every admin out, this session included\nprintf \'2\' | npx wrangler secret put ADMIN_TOKEN_VERSION</pre><p style="margin:0;font-size:12.5px">Then set a NEW break-glass key too (<code>ADMIN_UNLOCK_KEY</code>) if the old one may have been seen. docs/DEPLOY.md → B3d. <button class="iconbtn" id="s_bgok">I\'ve done it</button></p></div>' : '')
+      + '<div class="row2"><div><label style="margin-top:0">Default<small>What a bot gets when its project.json doesn\'t say. Now from: ' + esc(d.source.default) + '.</small></label>' + sel('s_default', d.access.default) + '<div id="s_default_line" style="color:var(--muted);font-size:12px;margin-top:4px">' + esc(line(d.access.default)) + '</div></div>'
       + '<div><label style="margin-top:0">Floor<small>The most open ANY bot may be — the panic switch. Now from: ' + esc(d.source.floor) + '.</small></label>' + sel('s_floor', d.access.floor) + '<div id="s_floor_line" style="color:var(--muted);font-size:12px;margin-top:4px">' + (d.access.floor === 'open' ? 'No floor: each bot decides for itself.' : esc(line(d.access.floor))) + '</div></div></div>'
       + '<p style="color:var(--muted);font-size:12.5px;margin:10px 0">Order, most open first: <code>' + esc(d.order) + '</code>. A bot\'s effective mode is the stricter of what it says (or the default) and the floor. Save is live within seconds; Commit to GitHub writes <code>YourBots/settings.json</code> so the repo carries it.</p>'
       + '<div class="btnrow"><button class="btn primary" id="s_save"' + (d.canSave ? '' : ' disabled title="No database bound: edit YourBots/config.js → access instead"') + '>Save</button><button class="btn" id="s_git"' + (d.github.ready ? '' : ' disabled') + ' title="' + (d.github.ready ? 'Write YourBots/settings.json into ' + esc(d.github.repo) : d.github.repo ? 'Set the GITHUB_TOKEN secret to enable (docs/DEPLOY.md §B5)' : 'Set github.repo in YourBots/config.js to enable') + '">Commit to GitHub</button><span id="s_msg" style="color:var(--muted);font-size:13px"></span></div>'
-      + '<div class="kv" style="margin-top:12px"><b>Shared key</b><span>' + (d.sharedKey ? 'ACCESS_PASSPHRASE is set.' : 'ACCESS_PASSPHRASE is NOT set — a bot that wants a key runs open and says so in the logs.') + '</span><b>Admin token</b><span>version ' + esc(d.adminTokenVersion) + ' — set the ADMIN_TOKEN_VERSION secret to a new value to log every admin out (docs/DEPLOY.md §B3).</span><b>Admin second factor</b><span>' + (d.adminTotp ? 'ON — ADMIN_TOTP_SECRET is set; the admin code needs the six digits too.' : 'off — set the ADMIN_TOTP_SECRET secret (a base32 key from an authenticator app) to require six digits with the admin code (docs/IDENTITY.md).') + '</span></div>'
+      + '<div class="kv" style="margin-top:12px"><b>Shared key</b><span>' + (d.sharedKey ? 'ACCESS_PASSPHRASE is set.' : 'ACCESS_PASSPHRASE is NOT set — a bot that wants a key runs open and says so in the logs.') + '</span><b>Admin token</b><span>version ' + esc(d.adminTokenVersion) + ' — set the ADMIN_TOKEN_VERSION secret to a new value to log every admin out (docs/DEPLOY.md §B3).</span><b>Admin second factor</b><span>' + (d.adminTotp ? 'ON — ADMIN_TOTP_SECRET is set; the admin code needs the six digits too.' : 'off — set the ADMIN_TOTP_SECRET secret (a base32 key from an authenticator app) to require six digits with the admin code (docs/IDENTITY.md).') + '</span><b>Break-glass key</b><span>' + (d.breakGlass ? 'SET — ADMIN_UNLOCK_KEY typed where the admin code goes opens this door with no code and no authenticator step; every use is in the record below. Keep it somewhere the authenticator isn\'t.' : 'not set — set the ADMIN_UNLOCK_KEY secret (16+ random characters) so you can always get back in here if the authenticator is lost (docs/DEPLOY.md → B3d).') + '</span></div>'
+      + '<h4>The return window</h4><p style="color:var(--muted);font-size:12.5px;margin:0 0 6px">A visitor in email / allow mode who types their email on a <b>new</b> computer within this many minutes of their last activity is trusted at once and their chats follow them (docs/IDENTITY.md). After it, the new computer waits for you to link it (Leads). <b>The trade-off:</b> inside the window, anyone who knows the email can pick up that person\'s recent conversation from their own computer. 0 = off. A bot can set its own in Configure. Now from: ' + esc(d.identity?.source || 'built-in') + '.</p><div class="row2"><input type="number" id="s_grace" min="0" max="10080" step="1" value="' + esc(String(d.identity?.graceMinutes ?? 60)) + '" style="max-width:160px" /><span style="color:var(--muted);font-size:12.5px;align-self:center">minutes</span></div>'
       + '<h4>The badge under the chat</h4><div class="caps"><label><input type="checkbox" id="s_badge_show"' + (d.createYourOwn.show ? ' checked' : '') + ' /> Show "create your own" (now from: ' + esc(d.createYourOwn.source) + ')</label></div><div class="row2" style="margin-top:6px"><input type="text" id="s_badge_text" value="' + esc(d.createYourOwn.text) + '" placeholder="Create your own bot" /><input type="url" id="s_badge_url" value="' + esc(d.createYourOwn.url) + '" placeholder="https://…" /></div>'
-      + '<h4>Every bot, every kind, and what it actually requires</h4><div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">' + d.bots.map((b) => '<tr style="border-top:1px solid var(--edge);vertical-align:top"><td style="padding:6px 8px 6px 0;white-space:nowrap"><b>' + (b.kind && b.kind !== 'chat' ? '📷 ' : '') + esc(b.name) + '</b><br><span style="color:var(--muted)">' + esc(b.id) + ' · ' + esc(b.kind || 'chat') + (b.listed ? '' : ' · unlisted') + ' · ' + esc(b.source) + '</span></td><td style="padding:6px 8px;white-space:nowrap"><b>' + esc(b.effective) + '</b></td><td style="padding:6px 0;color:var(--muted)">' + esc(b.reason) + (b.ownKey ? '<br>own key: ' + esc(b.ownKey) : '') + (b.signIn ? '<br>sign-in: ' + esc(b.signIn) : '') + '</td></tr>').join('') + '</table></div>';
+      + '<h4>The allowlist — access mode "allow": in the list → able to do things</h4><div id="allowbox"><p class="thinking"><span>Reading the list</span></p></div>'
+      + '<h4>Every bot, every kind, and what it actually requires</h4><div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">' + d.bots.map((b) => '<tr style="border-top:1px solid var(--edge);vertical-align:top"><td style="padding:6px 8px 6px 0;white-space:nowrap"><b>' + (b.kind && b.kind !== 'chat' ? '📷 ' : '') + esc(b.name) + '</b><br><span style="color:var(--muted)">' + esc(b.id) + ' · ' + esc(b.kind || 'chat') + (b.listed ? '' : ' · unlisted') + ' · ' + esc(b.source) + '</span></td><td style="padding:6px 8px;white-space:nowrap"><b>' + esc(b.effective) + '</b></td><td style="padding:6px 0;color:var(--muted)">' + esc(b.reason) + (b.ownKey ? '<br>own key: ' + esc(b.ownKey) : '') + (b.signIn ? '<br>sign-in: ' + esc(b.signIn) : '') + (b.graceMinutes !== undefined && b.graceMinutes !== null ? '<br>return window: ' + esc(String(b.graceMinutes)) + ' min (its own)' : '') + (b.effective === 'allow' ? '<br>allowlist: ' + (b.allowlisted || 0) + ' on its own list' + (d.allowlist?.global ? ', ' + d.allowlist.global + ' on the list for every bot' : '') : '') + '</td></tr>').join('') + '</table></div>';
+    renderAllowlist(d);
+    if ($('s_bgok')) $('s_bgok').onclick = () => { try { localStorage.removeItem('byo:breakglass'); } catch {} renderSettings(); };
     $('s_default').onchange = () => { $('s_default_line').textContent = line($('s_default').value); };
     $('s_floor').onchange = () => { $('s_floor_line').textContent = $('s_floor').value === 'open' ? 'No floor: each bot decides for itself.' : line($('s_floor').value); };
     $('s_save').onclick = async () => {
       $('s_save').disabled = true; $('s_msg').textContent = 'Saving…';
       try {
-        const r2 = await fetch('/api/admin/settings', { method: 'PUT', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ access: { default: $('s_default').value, floor: $('s_floor').value }, createYourOwn: { show: $('s_badge_show').checked, text: $('s_badge_text').value, url: $('s_badge_url').value } }) });
+        const r2 = await fetch('/api/admin/settings', { method: 'PUT', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ access: { default: $('s_default').value, floor: $('s_floor').value }, createYourOwn: { show: $('s_badge_show').checked, text: $('s_badge_text').value, url: $('s_badge_url').value }, identity: { graceMinutes: Number($('s_grace').value) } }) });
         const d2 = await r2.json(); if (!r2.ok) throw new Error(d2.error || r2.status);
         renderSettings();
       } catch (err) { $('s_msg').textContent = 'Not saved: ' + err.message; $('s_save').disabled = false; }
@@ -1367,6 +1500,36 @@ async function renderSettings() {
       } catch (err) { $('s_msg').textContent = 'Not committed: ' + err.message; } finally { $('s_git').disabled = false; }
     };
   } catch (err) { $('setbody').innerHTML = '<p style="color:var(--danger)">Could not read the settings (' + esc(err.message) + ').</p>'; }
+}
+// The allowlist, decrypted, for one scope at a time: this bot, or every bot ("*"). Add / remove.
+let allowScope = 'this';
+async function renderAllowlist(d) {
+  const box = $('allowbox'); if (!box) return;
+  const scope = allowScope === 'all' ? '*' : state.project.id;
+  try {
+    const r = await fetch('/api/admin/allowlist?scope=' + encodeURIComponent(scope), { headers: adminHeaders() });
+    const a = await r.json(); if (!r.ok) throw new Error(a.error || r.status);
+    const tab = (id, label) => '<button class="iconbtn" data-scope="' + id + '"' + (allowScope === id ? ' style="background:var(--panel)"' : '') + '>' + label + '</button>';
+    box.innerHTML = '<p style="color:var(--muted);font-size:12.5px;margin:0 0 8px">A bot in <b>allow</b> mode lets a visitor in only if the email they joined with is on its own list <i>or</i> on the list for every bot. Stored encrypted: a keyed hash to check one address without decrypting the list, and the address itself under AES so you can read it here. ' + (a.keySet ? 'ALLOWLIST_KEY is set.' : '<b style="color:var(--danger)">ALLOWLIST_KEY is NOT set</b> — allow mode refuses everyone until it is (docs/DEPLOY.md → B2c).') + ' Nothing is emailed.</p>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px" id="allowtabs">' + tab('this', 'this bot (' + esc(state.project.name) + ')') + tab('all', 'every bot') + '<span class="spacer"></span><input type="email" id="al_email" placeholder="email to add" style="flex:1;min-width:180px;padding:6px 8px;border:1px solid var(--edge);border-radius:8px;background:var(--bg);color:var(--text);font:inherit" /><button class="iconbtn" id="al_add"' + (a.keySet ? '' : ' disabled') + '>Add</button><span id="al_msg" style="color:var(--muted);font-size:12.5px"></span></div>'
+      + (!a.rows.length ? '<p style="color:var(--muted)">Nobody on ' + (scope === '*' ? 'the list for every bot' : 'this bot\'s list') + ' yet.</p>'
+        : '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">' + a.rows.map((row) => '<tr style="border-top:1px solid var(--edge)"><td style="padding:6px 8px 6px 0;word-break:break-all"><b>' + esc(row.email) + '</b></td><td style="padding:6px 8px;white-space:nowrap;color:var(--muted)">added ' + esc(whenAt(row.added_at)) + '</td><td style="padding:6px 0;text-align:right"><button class="iconbtn" data-remove="' + esc(row.email) + '">Remove</button></td></tr>').join('') + '</table></div>');
+    $('allowtabs').onclick = async (e) => {
+      const b = e.target.closest('button'); if (!b) return;
+      if (b.dataset.scope) { allowScope = b.dataset.scope; renderAllowlist(d); return; }
+      if (b.id === 'al_add') {
+        const email = $('al_email').value.trim(); if (!email) return; $('al_msg').textContent = 'Adding…';
+        const r2 = await fetch('/api/admin/allowlist', { method: 'POST', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ scope, email }) });
+        const j = await r2.json(); if (!r2.ok) { $('al_msg').textContent = j.reason || j.error || 'Not added.'; return; }
+        renderAllowlist(d); renderAdminEvents();
+      }
+    };
+    box.querySelectorAll('button[data-remove]').forEach((b) => { b.onclick = async () => {
+      b.disabled = true;
+      await fetch('/api/admin/allowlist', { method: 'DELETE', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ scope, email: b.dataset.remove }) }).catch(() => {});
+      renderAllowlist(d); renderAdminEvents();
+    }; });
+  } catch (err) { box.innerHTML = '<p style="color:var(--danger)">Could not read the allowlist (' + esc(err.message) + ').</p>'; }
 }
 async function renderAdminEvents() {
   const box = $('evbody'); if (!box) return;
@@ -1399,14 +1562,16 @@ async function renderLeads() {
         const j = await r.json(); msg.textContent = j.ok ? 'Linked. Their page opens within ten seconds.' : (j.reason || j.error || 'Not linked.');
       } catch { msg.textContent = 'Could not reach the server.'; }
     };
-    let html = (d.emailMode ? '<div style="border:1px solid var(--edge);border-radius:10px;padding:10px 12px;margin:0 0 12px"><b>Link a visitor\'s second device</b><p style="color:var(--muted);margin:4px 0 8px;font-size:12.5px">A visitor who types a known email on a new browser sees a 6-character code instead of the chat. Type it here with their email and that browser is in. Codes last 7 days. Nothing is emailed.</p><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><input type="email" id="lk_email" placeholder="visitor email" style="flex:2;min-width:160px;padding:6px 8px;border:1px solid var(--edge);border-radius:8px;background:var(--bg);color:var(--text);font:inherit"><input type="text" id="lk_code" placeholder="6-char code" maxlength="6" style="flex:1;min-width:100px;padding:6px 8px;border:1px solid var(--edge);border-radius:8px;background:var(--bg);color:var(--text);font:inherit;text-transform:uppercase"><button class="iconbtn" id="lk_go">Link</button><span id="lk_msg" style="color:var(--muted);font-size:12.5px"></span></div></div>' : '')
-      + '<p style="color:var(--muted);margin:0 0 10px">' + (d.emailMode ? 'Email mode is on: visitors give an email once and this browser of theirs is remembered (Engine/identity, like Plate).' : 'Email mode is <b>off</b> (YourBots/config.js → access.mode "email" or "key+email"), so only visitors who happened to send an address appear here.') + ' Automatic brief at turn ' + (d.settings.autoAfterTurns || '— (off)') + ', pushed to the webhook at score ≥ ' + d.settings.notifyScore + (d.settings.webhook ? ' (fallback webhook set)' : '') + '.</p>';
+    let html = (d.emailMode ? '<div style="border:1px solid var(--edge);border-radius:10px;padding:10px 12px;margin:0 0 12px"><b>See what a visitor sees</b> <span class="pill">read only</span><p style="color:var(--muted);margin:4px 0 8px;font-size:12.5px">Pick someone who has joined ' + esc(state.project.name) + ' and this page shows their chats exactly as their own screen has them — for "it looks wrong on my end" — with the composer off. Nothing can be sent as them. Every look is in the admin record.</p><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><select id="va_who" style="flex:2;min-width:200px;margin:0"><option value="">Loading…</option></select><button class="iconbtn" id="va_go">View as</button></div></div>' : '')
+      + (d.emailMode ? '<div style="border:1px solid var(--edge);border-radius:10px;padding:10px 12px;margin:0 0 12px"><b>Link a visitor\'s second device</b><p style="color:var(--muted);margin:4px 0 8px;font-size:12.5px">A visitor who types a known email on a new browser sees a 6-character code instead of the chat. Type it here with their email and that browser is in. Codes last 7 days. Nothing is emailed.</p><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><input type="email" id="lk_email" placeholder="visitor email" style="flex:2;min-width:160px;padding:6px 8px;border:1px solid var(--edge);border-radius:8px;background:var(--bg);color:var(--text);font:inherit"><input type="text" id="lk_code" placeholder="6-char code" maxlength="6" style="flex:1;min-width:100px;padding:6px 8px;border:1px solid var(--edge);border-radius:8px;background:var(--bg);color:var(--text);font:inherit;text-transform:uppercase"><button class="iconbtn" id="lk_go">Link</button><span id="lk_msg" style="color:var(--muted);font-size:12.5px"></span></div></div>' : '')
+      + '<p style="color:var(--muted);margin:0 0 10px">' + (d.emailMode ? 'Email mode is on: visitors give an email once and this browser of theirs is remembered (Engine/identity, like Plate); a new browser within the return window is trusted at once, otherwise it waits for the link below.' : 'Email mode is <b>off</b> (access "email", "allow" or "key+email"), so only visitors who happened to send an address appear here.') + ' Automatic brief at turn ' + (d.settings.autoAfterTurns || '— (off)') + ', pushed to the webhook at score ≥ ' + d.settings.notifyScore + (d.settings.webhook ? ' (fallback webhook set)' : '') + '.</p>';
     if (!d.rows.length) { body.innerHTML = html + '<p style="color:var(--muted)">No leads yet.</p>'; return; }
     html += '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px"><tr style="color:var(--muted)"><th style="text-align:left;padding:4px 8px 4px 0">visitor</th><th style="text-align:left;padding:4px 8px">last seen</th><th style="text-align:right;padding:4px 8px">turns</th><th style="text-align:right;padding:4px 8px">refused</th><th style="text-align:left;padding:4px 8px">score</th><th></th></tr>'
       + d.rows.map((row) => '<tr style="border-top:1px solid var(--edge)"><td style="padding:6px 8px 6px 0;word-break:break-all"><b>' + esc(row.visitor) + '</b><br><span style="color:var(--muted)">' + esc((row.bots || []).join(', ')) + '</span></td><td style="padding:6px 8px;white-space:nowrap;color:var(--muted)">' + esc(whenAt(row.last_seen)) + '</td><td style="padding:6px 8px;text-align:right">' + row.turns + '</td><td style="padding:6px 8px;text-align:right">' + (row.refused || 0) + '</td><td style="padding:6px 8px">' + scoreChip(row.score) + (row.stale ? ' <span style="color:var(--muted)">(older than their last turns)</span>' : '') + (row.sent_at ? ' <span style="color:var(--muted)">· sent</span>' : '') + '</td><td style="padding:6px 0;text-align:right"><button class="iconbtn" data-open="' + esc(row.visitor) + '">Open</button></td></tr>').join('') + '</table></div><div id="leaddetail"></div>';
     html += '<p style="color:var(--muted);margin-top:12px">' + esc(d.note) + '</p>';
     body.innerHTML = html;
-    body.onclick = (e) => { const b = e.target.closest('button[data-open]'); if (b) openLead(b.dataset.open); };
+    body.onclick = (e) => { const b = e.target.closest('button[data-open]'); if (b) openLead(b.dataset.open); if (e.target.id === 'va_go' && $('va_who').value) enterViewAs($('va_who').value); };
+    if (d.emailMode) fetch('/api/admin/chats/users?bot=' + encodeURIComponent(state.project.id), { headers: adminHeaders() }).then((r) => r.json()).then((u) => { const sel = $('va_who'); if (!sel) return; sel.innerHTML = (u.users || []).length ? '<option value="">Choose a visitor…</option>' + u.users.map((x) => '<option value="' + esc(x.email) + '">' + esc(x.email) + ' · ' + x.threads + ' chat' + (x.threads === 1 ? '' : 's') + (x.last_seen ? ' · seen ' + esc(whenAt(x.last_seen)) : '') + '</option>').join('') : '<option value="">Nobody has joined this bot yet.</option>'; }).catch(() => {});
     if (leadOpen && d.rows.some((x) => x.visitor === leadOpen)) openLead(leadOpen);
   } catch (err) { $('leadsbody').innerHTML = '<p style="color:var(--danger)">Could not read the leads (' + esc(err.message) + ').</p>'; }
 }
@@ -1421,7 +1586,7 @@ async function openLead(visitor, opts) {
     const s = d.summary;
     const li = (a) => (a || []).length ? '<ul style="margin:4px 0 8px;padding-left:18px">' + a.map((x) => '<li>' + esc(x) + '</li>').join('') + '</ul>' : '<p style="color:var(--muted);margin:2px 0 8px">—</p>';
     let html = '<h4>' + esc(visitor) + ' <span style="font-weight:normal;color:var(--muted)">· ' + d.total + ' turn' + (d.total === 1 ? '' : 's') + ' · ' + esc(d.bot) + '</span></h4>';
-    html += '<div class="btnrow" style="margin-bottom:10px"><button class="btn" id="leadsum">' + (s ? 'Refresh the brief' : 'Write the brief') + '</button>' + (s ? '<button class="btn" id="leadsend">Send to webhook</button>' : '') + '<span id="leadmsg" style="color:var(--muted);font-size:12.5px">' + (s ? 'Written ' + esc(whenAt(d.summarisedAt)) + (d.stale ? ' — they have talked since' : '') + (d.sentAt ? ' · sent ' + esc(whenAt(d.sentAt)) : '') : 'One model call, a few seconds.') + '</span></div>';
+    html += '<div class="btnrow" style="margin-bottom:10px"><button class="btn" id="leadsum">' + (s ? 'Refresh the brief' : 'Write the brief') + '</button>' + (s ? '<button class="btn" id="leadsend">Send to webhook</button>' : '') + '<button class="btn" id="leadview" title="Their chats, exactly as their screen has them. Read only.">👁 See what they see</button>' + '<span id="leadmsg" style="color:var(--muted);font-size:12.5px">' + (s ? 'Written ' + esc(whenAt(d.summarisedAt)) + (d.stale ? ' — they have talked since' : '') + (d.sentAt ? ' · sent ' + esc(whenAt(d.sentAt)) : '') : 'One model call, a few seconds.') + '</span></div>';
     if (s) {
       html += '<div class="kv" style="margin-bottom:10px"><b>Score</b><span>' + scoreChip(s.score) + ' ' + esc(s.reason) + '</span><b>Situation</b><span>' + esc(s.situation) + '</span><b>Next step</b><span>' + esc(s.next_step) + '</span></div>';
       html += '<h4>What they asked about</h4>' + li(s.asked) + '<h4>What they care about</h4>' + li(s.cares_about) + '<h4>Objections and gaps</h4>' + li(s.objections);
@@ -1429,6 +1594,7 @@ async function openLead(visitor, opts) {
     html += '<h4>The turns (redacted, most recent last)</h4><div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">' + d.turns.map((t) => '<tr style="border-top:1px solid var(--edge);vertical-align:top"><td style="padding:6px 8px 6px 0;white-space:nowrap;color:var(--muted)">' + esc(whenAt(t.created_at)) + '<br>' + esc(t.project) + '</td><td style="padding:6px 0"><b>' + esc(t.asked) + '</b><br><span style="color:var(--muted)">' + esc(t.answered) + '</span>' + (t.refused ? ' <span class="flag">refused / handed off</span>' : '') + '</td></tr>').join('') + '</table></div>';
     box.innerHTML = html;
     $('leadsum').onclick = () => openLead(visitor, { summarise: true, refresh: Boolean(s), busy: 'Reading ' + d.total + ' turns and writing the brief' });
+    $('leadview').onclick = () => enterViewAs(visitor);
     const send = $('leadsend'); if (send) send.onclick = async () => { send.disabled = true; $('leadmsg').textContent = 'Sending…'; const r = await fetch('/api/admin/leads/' + encodeURIComponent(visitor) + '/send?project=' + encodeURIComponent(leadsScope === 'all' ? '*' : state.project.id), { method: 'POST', headers: { 'x-admin-token': ADMIN } }); const j = await r.json(); $('leadmsg').textContent = j.result === 'lead-webhook-sent' ? 'Sent to the ' + j.webhook + ' webhook.' : j.result === 'lead-webhook-skipped' ? 'No webhook configured (project.json → handoffActions.webhook, or config.leads.webhook).' : (j.error || 'The webhook did not accept it.'); send.disabled = false; };
     if (opts?.summarise) renderLeads();
   } catch (err) { box.innerHTML = '<p style="color:var(--danger)">Could not open ' + esc(visitor) + ' (' + esc(err.message) + ').</p>'; }

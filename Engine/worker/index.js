@@ -1,7 +1,10 @@
 import { CONFIG } from "../../YourBots/config.js";
 import { normaliseProject, normaliseWebsite, savedProjects, saveProject, deleteSavedProject, inFolder, resolveProject, resolveList, pickPublic, hrefFor, exportFiles, KINDS, KIND_LABELS, cleanKind } from "./projects.js";
 import { getSettings, saveSettings, settingsFileContent, cleanBadge, SETTINGS_FILE_VIEW as SETTINGS_FILE } from "./settings.js";
-import { handleIdentity, identify, linkByCode, signInMethods, adminNeedsCode, adminCodeOk } from "../identity/index.js";
+import { handleIdentity, identify, linkByCode, signInMethods, adminNeedsCode, adminCodeOk, graceMinutesFor } from "../identity/index.js";
+import { ensureIdentitySchema, userByEmail as idUserByEmail } from "../identity/devices.js";
+import { listThreads, putThread, renameThread, deleteThread, usersWithHistory, ensureChatSchema } from "./chats.js";
+import { addToList, removeFromList, listFor as allowlistFor, listCounts as allowlistCounts, hasKey as allowlistKeySet, isAllowed, GLOBAL_SCOPE } from "./allowlist.js";
 import { buildSystemPrompt, PROMPT_FILES, ROOT_PROMPT_FILES } from "./prompt.js";
 import { complete, gatewayStatus } from "./gateway.js";
 import { classifyTurn, recordRoute, routingStats } from "./router.js";
@@ -29,6 +32,11 @@ import { gate as accessGate, effectiveAccess, accessSettings, accessToken, safeE
 //    *                  → public/ (the chat page, the widget)
 //  Who can use each of those: Engine/worker/access.js (per-bot access, default + floor).
 //    POST /api/unlock { passphrase, project } → { token } for that bot's key
+//  History on any computer (identified visitors only — Engine/worker/chats.js):
+//    GET /api/chats?bot= · PUT /api/chats/<id> · PATCH /api/chats/<id> · DELETE /api/chats/<id>?bot=
+//    Admin, read-only ("see what they see"): GET /api/admin/chats/users?bot= · GET /api/admin/chats?bot=&email=
+//  The allowlist (access mode "allow" — Engine/worker/allowlist.js), admin:
+//    GET /api/admin/allowlist?scope=<bot|*> · POST {scope,email} · DELETE {scope,email}
 //  Apps (bots of kind "food" — Engine/worker/projects.js): /apps/<id> · /api/apps/<id>/… ·
 //    /api/admin/apps/<id>/… (Engine/worker/track.js). /food and /api/food/… still reach
 //    the bot "plate" for one release. Identity for every kind: /api/id/* (Engine/identity/).
@@ -95,6 +103,18 @@ export default {
       if (!adminEnabled) return json({ error: "no admin code is set" }, 404);
       if (!(await allowed(env, request)) || !(await unlockAllowed(env, request))) return json({ error: "too many attempts" }, 429);
       const { body: b, error } = await readJson(request, { max: 8 * 1024, strict: false }); if (error) return error;
+      // THE BREAK-GLASS KEY. ADMIN_UNLOCK_KEY typed where the admin code goes opens the door
+      // on its own: no passphrase check, no authenticator code — even when ADMIN_TOTP_SECRET
+      // is set, lost or wrong. It exists so the owner can always get back to Settings and
+      // re-set the second factor. Every use is written to admin_events. docs/DEPLOY.md → B3d.
+      if (breakGlassKey(env)) {
+        const want = await accessToken(breakGlassKey(env), "bot-you-own/admin/break-glass");
+        const got = await accessToken(String(b.passphrase || ""), "bot-you-own/admin/break-glass");
+        if (safeEqual(got, want)) {
+          await logAdminEvent(env, request, "admin-break-glass", "ADMIN_UNLOCK_KEY", `the break-glass key opened the admin door${adminNeedsCode(env) ? " (the authenticator step was skipped)" : ""} — re-set ADMIN_TOTP_SECRET / bump ADMIN_TOKEN_VERSION if this wasn't you`);
+          return json({ token: adminToken, breakGlass: true, note: "You are in with the break-glass key. Go to Under the hood → Settings and re-set the admin second factor (docs/DEPLOY.md → B3d)." });
+        }
+      }
       const given = await accessToken(String(b.passphrase || ""), adminLabel(env));
       if (!safeEqual(given, adminToken)) return json({ error: "wrong admin code", needsCode: adminNeedsCode(env) }, 401);
       // The optional second factor: ADMIN_TOTP_SECRET set → the six digits from the owner's authenticator app, too.
@@ -112,7 +132,7 @@ export default {
       const bot = await resolveProject(env, id);
       if (bot.id !== id || bot.kind === "chat") return url.pathname.startsWith("/api/") ? json({ error: "not found" }, 404) : new Response("Not found", { status: 404 });
       const paths = app.alias ? { page: "/food", api: "/api/food/", admin: "/api/admin/food/" } : { page: `/apps/${id}`, api: `/api/apps/${id}/`, admin: `/api/admin/apps/${id}/` };
-      if (bot.kind === "food") return handleTrack(request, env, url, { bot, ...paths, isAdmin, adminEnabled, allowed });
+      if (bot.kind === "food") return handleTrack(request, env, url, { bot, ...paths, isAdmin, adminEnabled, allowed, graceMinutes: graceMinutesFor(bot, settings.identity?.graceMinutes) });
       return json({ error: "not found" }, 404);
     }
     // --- IDENTITY, shared by every kind: passkeys and authenticator codes (Engine/identity/index.js).
@@ -120,7 +140,7 @@ export default {
       const bid = String(url.searchParams.get("bot") || (request.method === "POST" ? (await request.clone().json().catch(() => ({})))?.bot : "") || "").toLowerCase();
       const bot = await resolveProject(env, bid);
       if (!bid || bot.id !== bid) return json({ error: "which bot? send { bot }" }, 400);
-      return handleIdentity(request, env, url, { bot, allowed, unlockAllowed });
+      return handleIdentity(request, env, url, { bot, allowed, unlockAllowed, graceMinutes: graceMinutesFor(bot, settings.identity?.graceMinutes) });
     }
 
     if (url.pathname.startsWith("/api/admin/") || url.pathname.startsWith("/engine/")) {
@@ -141,6 +161,34 @@ export default {
         const r = await linkByCode(env, target.id, { email, code: b.code });
         if (r.ok) await logAdminEvent(env, request, "device-link", target.id, `linked a second device for ${email}`);
         return json(r, r.ok ? 200 : r.status || 400);
+      }
+      // The allowlist (access mode "allow"): per bot (scope = its id) or every bot (scope = "*").
+      // GET lists it DECRYPTED — the owner can see who is on it. POST adds, DELETE removes. Engine/worker/allowlist.js.
+      if (url.pathname === "/api/admin/allowlist") {
+        if (!env.DB) return json({ error: "The allowlist needs the D1 database (wrangler.jsonc → d1_databases)." }, 503);
+        if (request.method === "GET") { const r = await allowlistFor(env, url.searchParams.get("scope") || GLOBAL_SCOPE); return json({ ...r, counts: await allowlistCounts(env), keySet: allowlistKeySet(env) }, r.ok ? 200 : r.status || 400); }
+        if (request.method !== "POST" && request.method !== "DELETE") return json({ error: "method" }, 405);
+        const { body: b, error } = await readJson(request, { max: 8 * 1024 }); if (error) return error;
+        const r = request.method === "POST" ? await addToList(env, b.scope, b.email) : await removeFromList(env, b.scope, b.email);
+        if (r.ok) await logAdminEvent(env, request, request.method === "POST" ? "allowlist-add" : "allowlist-remove", r.scope === GLOBAL_SCOPE ? "every bot" : r.scope, `${r.email}${request.method === "DELETE" && !r.removed ? " (wasn't on it)" : ""}`);
+        return json(r, r.ok ? 200 : r.status || 400);
+      }
+      // See what a visitor sees — READ ONLY. Their threads and turns, exactly as their page has them
+      // (Engine/worker/chats.js). No writes here: the admin can look, never send as them.
+      if (url.pathname === "/api/admin/chats" || url.pathname === "/api/admin/chats/users") {
+        if (request.method !== "GET") return json({ error: "read only" }, 405);
+        if (!env.DB) return json({ error: "History needs the D1 database (wrangler.jsonc → d1_databases)." }, 503);
+        const target = await resolveProject(env, String(url.searchParams.get("bot") || "").toLowerCase());
+        if (!target.id) return json({ error: "which bot? ?bot=<id>" }, 400);
+        await ensureIdentitySchema(env);
+        if (url.pathname === "/api/admin/chats/users") return json({ bot: target.id, users: await usersWithHistory(env, target.id) });
+        const email = cleanEmail(url.searchParams.get("email"));
+        if (!email) return json({ error: "which visitor? &email=" }, 400);
+        const user = await idUserByEmail(env, target.id, email);
+        if (!user) return json({ error: "no such visitor on this bot", bot: target.id, email }, 404);
+        const threads = await listThreads(env, target.id, user.id);
+        await logAdminEvent(env, request, "view-as", target.id, `viewed ${email}'s history (read only) · ${threads.length} thread${threads.length === 1 ? "" : "s"}`);
+        return json({ bot: target.id, email, readOnly: true, threads, last_seen: user.last_seen });
       }
       if (url.pathname === "/api/admin/gaps" || url.pathname.startsWith("/api/admin/gaps/")) return handleGaps(request, env, url);
       if (url.pathname === "/api/admin/handoffs" || url.pathname.startsWith("/api/admin/handoff/")) return handlePersonAdmin(request, env, url);
@@ -179,8 +227,10 @@ export default {
         const next = { default: cleanMode(a.default), floor: cleanMode(a.floor) };
         if (!next.default || !next.floor) return json({ error: `default and floor must each be one of: ${ACCESS_MODES.join(", ")}` }, 400);
         const badge = cleanBadge(b?.createYourOwn);
-        await saveSettings(env, { access: next, createYourOwn: badge });
-        await logAdminEvent(env, request, "settings-save", "access", `default ${settings.default} → ${next.default} · floor ${settings.floor} → ${next.floor}${badge ? ` · badge ${badge.show ? `"${badge.text}"` : "hidden"}` : ""}`);
+        const ident = b?.identity && typeof b.identity === "object" && b.identity.graceMinutes !== undefined ? { graceMinutes: b.identity.graceMinutes } : null;
+        if (ident && !(Number.isFinite(Number(ident.graceMinutes)) && Number(ident.graceMinutes) >= 0)) return json({ error: "identity.graceMinutes must be a number of minutes, 0 or more" }, 400);
+        await saveSettings(env, { access: next, createYourOwn: badge, identity: ident });
+        await logAdminEvent(env, request, "settings-save", "access", `default ${settings.default} → ${next.default} · floor ${settings.floor} → ${next.floor}${badge ? ` · badge ${badge.show ? `"${badge.text}"` : "hidden"}` : ""}${ident ? ` · return window ${settings.identity?.graceMinutes} → ${Math.round(Number(ident.graceMinutes))} min` : ""}`);
         return json(await settingsView(env, await getSettings(env)));
       }
       if (url.pathname === "/api/admin/settings/sync") {
@@ -240,7 +290,12 @@ export default {
       let identity = null;
       if (view.email && !isAdmin && cleanKind(current.kind) === "chat") {
         if (!env.DB) identity = { linked: false, pending: null, reason: "Email mode needs the D1 database (wrangler.jsonc → d1_databases)." };
-        else try { const who = await identify(request, env, { ...current, id: curId }); identity = who.user ? { linked: true, email: who.user.email } : { linked: false, pending: who.pending ? { code: who.pending.code, email: who.pending.email } : null }; }
+        else try {
+          const who = await identify(request, env, { ...current, id: curId });
+          identity = who.user ? { linked: true, email: who.user.email } : { linked: false, pending: who.pending ? { code: who.pending.code, email: who.pending.email } : null };
+          // allow mode: say now whether they're on the list, so the page shows the right screen before the first message.
+          if (who.user && view.list) { const r = await isAllowed(env, curId, who.user.email); identity.allowed = r.ok; if (!r.ok) identity.reason = r.reason; }
+        }
         catch (err) { console.error("identity lookup failed on /api/config", err?.message || err); identity = { linked: false, pending: null }; }
       }
       return json({
@@ -265,6 +320,12 @@ export default {
         // the mic and the speaker: which halves are on (YourBots/config.js → voice)
         voice: { enabled: voiceRules().enabled, in: voiceRules().in, out: voiceRules().out, maxSeconds: voiceRules().maxSeconds },
       });
+    }
+
+    // History on any computer: an identified visitor's own threads (Engine/worker/chats.js).
+    // The bot's door is asked first (key, list…), then WHO from the device key. No identity → 401.
+    if (url.pathname === "/api/chats" || url.pathname.startsWith("/api/chats/")) {
+      return handleChats(request, env, url, { isAdmin, guard, settings });
     }
 
     // Every visitor route below finds its bot, then asks the gate. The handlers do
@@ -331,6 +392,15 @@ async function unlockAllowed(env, request) {
 // stored admin token stops working; the code doesn't change. docs/DEPLOY.md §B3.
 function adminLabel(env) {
   return "bot-you-own/admin/v" + String(env.ADMIN_TOKEN_VERSION || "1").replace(/[^\w.-]/g, "").slice(0, 20);
+}
+// The break-glass key, if one is set and long enough to be one. Under 16 characters
+// it is ignored (with a warning): a recovery credential that is short is a back door.
+let BG_WARNED = false;
+function breakGlassKey(env) {
+  const k = String(env.ADMIN_UNLOCK_KEY || "");
+  if (!k) return "";
+  if (k.length < 16) { if (!BG_WARNED) { BG_WARNED = true; console.warn("ADMIN_UNLOCK_KEY is shorter than 16 characters — ignored. Set a long random one (docs/DEPLOY.md → B3d)."); } return ""; }
+  return k;
 }
 
 // A JSON body, with a size cap (256 KB unless told otherwise) and — for the
@@ -770,6 +840,45 @@ async function afterReply(env, { project, question, reply, flags, who, history, 
   if (leadFlags.length) console.log(JSON.stringify({ event: "lead-auto", visitor: who, flags: leadFlags }));
 }
 
+// --- History on any computer (Engine/worker/chats.js). ------------------------------
+//   GET    /api/chats?bot=<id>                        → { threads: [...] }
+//   PUT    /api/chats/<id>   { bot, title, messages, meta }
+//   PATCH  /api/chats/<id>   { bot, title }
+//   DELETE /api/chats/<id>?bot=<id>
+//   Only for a visitor the server knows (device key → email) on a bot that identifies
+//   people (email / allow / key+email). The admin has no identity here: their chats stay
+//   in their browser, and they read a visitor's through /api/admin/chats instead.
+async function handleChats(request, env, url, { isAdmin, guard, settings }) {
+  if (!env.DB) return json({ error: "History needs the D1 database (wrangler.jsonc → d1_databases).", enabled: false }, 503);
+  if (!(await allowed(env, request))) return json({ error: "rate-limited" }, 429);
+  const id = url.pathname.slice("/api/chats".length).replace(/^\//, "");
+  let body = {};
+  if (request.method === "PUT" || request.method === "PATCH") { const { body: b, error } = await readJson(request); if (error) return error; body = b; }
+  const pid = String(url.searchParams.get("bot") || body.bot || "").toLowerCase();
+  const project = await resolveProject(env, pid);
+  if (!pid || project.id !== pid) return json({ error: "which bot? send { bot } or ?bot=" }, 400);
+  if (cleanKind(project.kind) !== "chat") return json({ error: "not a chat bot" }, 404);
+  const a = effectiveAccess(project, settings);
+  if (!a.wantEmail) return json({ error: "no identity", enabled: false, reason: "This bot doesn't identify visitors (its access mode has no email), so history stays in the browser." }, 404);
+  if (isAdmin) return json({ error: "no identity", enabled: false, reason: "The admin has no visitor identity; admin chats stay in the browser. Use /api/admin/chats to read a visitor's." }, 404);
+  let who;
+  try { who = await identify(request, env, project); } catch (err) { console.error("identity lookup failed on /api/chats — refusing", err?.message || err); return json({ error: "email", reply: "Please enter your email address to start." }, 401); }
+  if (!who.user) return json({ error: "email", reply: "Please enter your email address to start." }, 401);
+  const g = await guard(project, { email: who.user.email });
+  if (!g.ok) return json({ error: g.error, reply: g.reply, access: g.mode }, g.status);
+  try {
+    if (request.method === "GET" && !id) return json({ bot: pid, email: who.user.email, threads: await listThreads(env, pid, who.user.id) });
+    if (!id) return json({ error: "which thread? /api/chats/<id>" }, 400);
+    if (request.method === "PUT") { const r = await putThread(env, pid, who.user.id, id, body); return json(r, r.ok ? 200 : r.status || 400); }
+    if (request.method === "PATCH") { const r = await renameThread(env, pid, who.user.id, id, body.title); return json(r, r.ok ? 200 : r.status || 400); }
+    if (request.method === "DELETE") { const r = await deleteThread(env, pid, who.user.id, id); return json(r, r.ok ? 200 : r.status || 400); }
+    return json({ error: "method" }, 405);
+  } catch (err) {
+    console.error("chat history request failed", err?.message || err);
+    return json({ error: "History hit an error: " + String(err?.message || err).slice(0, 200) }, 500);
+  }
+}
+
 // --- Leads (admin): the visitors who gave an email, and what they wanted. -------
 //   GET  /api/admin/leads?project=<id|*>&limit=100     the list
 //   GET  /api/admin/leads/<visitor>                    turns + stored summary
@@ -1144,6 +1253,8 @@ async function ensureSchema(env) {
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS admin_events (id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT NOT NULL, target TEXT, detail TEXT, who TEXT, ip_hash TEXT, created_at TEXT NOT NULL)`),
     env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_adminev_created ON admin_events(id)`),
   ]);
+  // History on any computer (Engine/worker/chats.js) and the allowlist (Engine/worker/allowlist.js) make their own.
+  await ensureChatSchema(env);
   SCHEMA_OK = true;
 }
 
@@ -1151,16 +1262,20 @@ async function ensureSchema(env) {
 // Under the hood → Settings: what applies, where it came from, and every bot's effective mode (and why).
 async function settingsView(env, settings) {
   const bots = [];
+  const counts = await allowlistCounts(env);
   for (const p of await resolveList(env)) {
     const full = await resolveProject(env, p.id);
     const a = effectiveAccess(full, settings);
     const m = signInMethods(full, env);
-    const signIn = full.kind === "chat" ? (a.wantEmail ? "email typed at the door (not verified)" : "") : ["email + device key", m.passkeys ? "passkeys" : "", ...m.providers.map((x) => `sign in with ${x.provider}`), m.totp ? "authenticator code" : "", "owner links a device"].filter(Boolean).join(" · ");
-    bots.push({ id: p.id, kind: cleanKind(full.kind), href: hrefFor(full), name: p.name, access: a.botMode, effective: a.mode, reason: a.reason, listed: a.listed, source: p.source, ownKey: a.keyName ? (env[a.keyName] ? `${a.keyName} (set)` : `${a.keyName} (NOT set — the shared key is used)`) : "", signIn });
+    const signIn = full.kind === "chat" ? (a.wantEmail ? `email + device key${a.wantList ? " · on the allowlist" : ""}` : "") : ["email + device key", m.passkeys ? "passkeys" : "", ...m.providers.map((x) => `sign in with ${x.provider}`), m.totp ? "authenticator code" : "", "owner links a device"].filter(Boolean).join(" · ");
+    bots.push({ id: p.id, kind: cleanKind(full.kind), href: hrefFor(full), name: p.name, access: a.botMode, effective: a.mode, reason: a.reason, listed: a.listed, source: p.source, ownKey: a.keyName ? (env[a.keyName] ? `${a.keyName} (set)` : `${a.keyName} (NOT set — the shared key is used)`) : "", signIn, graceMinutes: full.identity?.graceMinutes, allowlisted: counts[p.id] || 0 });
   }
   return {
     access: { default: settings.default, floor: settings.floor },
     createYourOwn: settings.createYourOwn,
+    identity: { graceMinutes: settings.identity?.graceMinutes, source: settings.identity?.source },
+    allowlist: { keySet: allowlistKeySet(env), counts, global: counts[GLOBAL_SCOPE] || 0 },
+    breakGlass: Boolean(breakGlassKey(env)),
     source: settings.source,
     file: SETTINGS_FILE?.access || {},
     adminTotp: adminNeedsCode(env),

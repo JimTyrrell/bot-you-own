@@ -611,6 +611,7 @@ bot can say, most open first:
 |---|---|---|
 | `open` | nothing, just the chat | a public website bot (rely on the rate limit and a spend cap) |
 | `email` | "enter your email to start" | a members' or clients' bot where you want to know who asked (feeds Leads) |
+| `allow` | the email screen, then "invited people only" unless the address is on the list | a bot for a named group: clients, members, a cohort. In the list → able to do things. |
 | `key` ⭐ | a passphrase screen | demos, internal bots, anything without a spend cap yet |
 | `key+email` | both | a private bot with a record of who used it |
 | `admin` | "owner only" — the admin code | a bot only you should talk to (a drafting assistant, an internal tool) |
@@ -645,12 +646,37 @@ their passphrase, nobody else's opens their bot, and their token doesn't open yo
 Only names of the shape `ACCESS_PASSPHRASE_…` are honoured — a bot can never point at
 another secret. If the named secret isn't set, the shared one applies (and the logs say so).
 
+**The allowlist (`allow`).** The visitor joins with an email exactly as in `email`
+mode; then the address has to be on a list. Two lists: **this bot's** and **every
+bot's** — either is enough. Under the hood → Settings → **The allowlist** adds an
+address, shows who is on it (decrypted, for you), and removes one; the change is
+live at once. It needs one secret, `ALLOWLIST_KEY` (`docs/DEPLOY.md → B2c`); without
+it the mode fails closed and refuses everyone, and the log says why. Stored
+encrypted: a keyed hash to check one address without decrypting the list, and the
+address itself under AES so you can read it. Nothing is emailed: you add someone,
+they type that email, they're in.
+
+**History on any computer.** In `email`, `allow` and `key+email` modes the visitor's
+chats are mirrored to the server as they happen and pulled back on their next
+machine, and a new computer typing their email within the **return window** is
+trusted at once (Settings → The return window; `docs/IDENTITY.md` says what that
+costs). Chats are **renamable** (✎ next to a chat) and **searchable** (the box
+above the list looks at titles and every turn). Open bots and the admin's own
+chats stay in the browser only.
+
+**See what they see.** Under the hood → Leads → *See what a visitor sees* (or the
+👁 button on a lead) shows that person's chats on this page exactly as their own
+screen has them, with a banner saying so and the composer switched off. Nothing
+can be sent as them — the route has no writes. Every look is an admin event.
+For "it looks wrong on my end" without a screenshot.
+
 **What none of this is: authentication.** `email` is a name the visitor typed and
 nobody checked; `key` is one phrase everyone shares; both live in the visitor's
 browser as a token. They tell strangers and scripts no, and tell you who asked.
+`allow` is the first step past that: the owner said who; still no password.
 A bot that needs accounts, sign-in, or per-person permissions is a later mode.
 Say so in your privacy note. A **Sign out** button in the sidebar clears the keys,
-the email, and the admin code.
+the email, and the admin code (and the local copy of chats the server holds).
 
 ## Two things to know about the iframe
 1. Your website analytics won't see chat activity (different origin). Log from the Worker instead — better data anyway.

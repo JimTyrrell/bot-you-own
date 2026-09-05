@@ -43,8 +43,20 @@ export function normaliseProject(p, id) {
     // who can use THIS bot (Engine/worker/access.js): "" = the deployment default; listed = in the sidebar;
     // accessKey = the NAME of a per-bot secret (ACCESS_PASSPHRASE_…), never a passphrase itself
     access: cleanMode(p.access), listed: p.listed !== false, accessKey: cleanKeyName(p.accessKey),
+    // this bot's own identity knobs (Engine/identity/): graceMinutes = the return window; "" = the deployment's
+    identity: normaliseIdentity(p.identity),
   };
   return { ...common, ...KINDS[kind](p, id) };
+}
+
+// project.json → identity: { graceMinutes }. Only what's set is kept, so the deployment's number still applies otherwise.
+function normaliseIdentity(i) {
+  const out = {};
+  if (i && typeof i === "object" && i.graceMinutes !== undefined && i.graceMinutes !== null && i.graceMinutes !== "") {
+    const n = Number(i.graceMinutes);
+    if (Number.isFinite(n) && n >= 0) out.graceMinutes = Math.min(Math.round(n), 7 * 24 * 60);
+  }
+  return out;
 }
 
 // --- kind: chat. Exactly the shape it always had (backward compatible). ---------------
@@ -169,6 +181,7 @@ export function hrefFor(p) { return cleanKind(p.kind) === "chat" ? `/?project=${
 export function exportFiles(p, id) {
   const { instructions, files, prompt, id: _i, ...meta } = p;
   if (meta.kind === "chat") delete meta.kind;                       // chat bots stay exactly as before
+  if (meta.identity && !Object.keys(meta.identity).length) delete meta.identity;
   const out = { [`YourBots/${id}/project.json`]: JSON.stringify(meta, null, 2) + "\n" };
   if (p.kind === "chat") {
     out[`YourBots/${id}/instructions.md`] = (instructions || "") + "\n";

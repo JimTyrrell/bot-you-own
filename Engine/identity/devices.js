@@ -12,6 +12,14 @@
 //     6-character code and waits. It gets linked by: a passkey, a Google/
 //     Microsoft/Apple sign-in, the six digits from an authenticator app, or the
 //     owner (coach) typing the code in. Each of those is its own file here.
+//   · THE RETURN WINDOW (v3.9): the one exception. If the same email was active
+//     within the last N minutes (YourBots/config.js → identity.graceMinutes,
+//     default 60; a bot can set its own in project.json → identity), a new
+//     browser typing it is trusted at once — no code — and its history follows.
+//     So "I closed my laptop and opened my phone" just works. The trade-off, in
+//     one line: inside that window anyone who knows your email can pick up your
+//     recent conversation from their own computer. 0 turns it off; passkeys and
+//     provider sign-in are trusted on any device with or without it.
 //   · Every table carries a `bot` column, so two apps on one deployment keep
 //     their people apart: joining "plate" says nothing about "plate-two".
 //   · Identity fails CLOSED: a bad or missing device key is a 401, always.
@@ -81,9 +89,13 @@ export async function bindDevice(env, bot, { userId, email, keyHash, label }) {
   return userById(env, bot, userId);
 }
 
-// --- JOIN: the first device creates the person; a second device gets a code instead. ---
-//   → { linked: true, user, fresh }  or  { linked: false, code, email }
-export async function join(env, bot, { email, keyHash }) {
+// --- JOIN: the first device creates the person; a second device gets a code instead —
+//     unless the person was active within the return window (graceMinutes), in which
+//     case the new device is bound at once. ---
+//   → { linked: true, user, fresh }  ·  { linked: true, user, grace: true }  ·  { linked: false, code, email }
+export const DEFAULT_GRACE_MINUTES = 60;
+export function cleanGrace(v, fallback = DEFAULT_GRACE_MINUTES) { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.min(Math.round(n), 7 * 24 * 60) : fallback; }
+export async function join(env, bot, { email, keyHash, graceMinutes = DEFAULT_GRACE_MINUTES }) {
   const known = await userForDevice(env, bot, keyHash);
   if (known) return { linked: true, user: known };                          // reload of a known browser
   const userId = await userIdFor(email, env, bot);
@@ -92,6 +104,14 @@ export async function join(env, bot, { email, keyHash }) {
     const user = await bindDevice(env, bot, { userId, email, keyHash, label: "first device" });
     console.log(JSON.stringify({ event: "identity-join", bot, userId: userId.slice(0, 8) }));
     return { linked: true, user, fresh: true };
+  }
+  // The return window: last seen within N minutes → this is them, on another machine.
+  const grace = cleanGrace(graceMinutes);
+  const seen = Date.parse(exists.last_seen || exists.created_at || "") || 0;
+  if (grace > 0 && seen && Date.now() - seen < grace * 60 * 1000) {
+    const user = await bindDevice(env, bot, { userId, email, keyHash, label: "return window" });
+    console.log(JSON.stringify({ event: "identity-join-grace", bot, userId: userId.slice(0, 8), minutesSinceSeen: Math.round((Date.now() - seen) / 60000) }));
+    return { linked: true, user, grace: true };
   }
   return { linked: false, ...(await pendingCode(env, bot, { email, keyHash })) };
 }

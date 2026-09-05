@@ -9,16 +9,19 @@
 //  be read, the last rows seen are kept — stale beats open — and failing that,
 //  the files.
 //
-//  Two keys today, and the Settings screen edits exactly these:
+//  Three keys today, and the Settings screen edits exactly these:
 //    access        { default, floor }        who can use a bot when it doesn't say
 //    createYourOwn { show, text, url }       the badge under the chat
+//    identity      { graceMinutes }          the return window (Engine/identity/devices.js);
+//                                            a bot's own project.json → identity wins over this
 // ============================================================================
 
 import { CONFIG } from "../../YourBots/config.js";
 import SETTINGS_FILE from "../../YourBots/settings.json";
 import { accessSettings } from "./access.js";
+import { cleanGrace, DEFAULT_GRACE_MINUTES } from "../identity/devices.js";
 
-const KEYS = ["access", "createYourOwn"];
+const KEYS = ["access", "createYourOwn", "identity"];
 let CACHE = { at: 0, rows: null };
 
 async function readRows(env) {
@@ -40,7 +43,15 @@ export async function getSettings(env) {
   const rows = (await readRows(env)) || {};
   const access = accessSettings(CONFIG, SETTINGS_FILE, rows.access ? { access: rows.access } : null);
   const badge = mergeBadge(CONFIG.createYourOwn, SETTINGS_FILE?.createYourOwn, rows.createYourOwn);
-  return { ...access, createYourOwn: badge };
+  const identity = mergeIdentity(CONFIG.identity, SETTINGS_FILE?.identity, rows.identity);
+  return { ...access, createYourOwn: badge, identity };
+}
+// identity.graceMinutes: the return window, in minutes. 0 = off. Same three places, later wins.
+const graceOf = (i) => (i && typeof i === "object" && i.graceMinutes !== undefined && i.graceMinutes !== null && i.graceMinutes !== "" && Number.isFinite(Number(i.graceMinutes)) && Number(i.graceMinutes) >= 0 ? cleanGrace(i.graceMinutes) : null);
+function mergeIdentity(c, f, s) {
+  const pick = [graceOf(s), graceOf(f), graceOf(c)].find((v) => v !== null);
+  const source = graceOf(s) !== null ? "saved (Settings screen)" : graceOf(f) !== null ? "YourBots/settings.json" : graceOf(c) !== null ? "YourBots/config.js" : "built-in";
+  return { graceMinutes: pick === undefined ? DEFAULT_GRACE_MINUTES : pick, source };
 }
 export function cleanBadge(b) {
   if (!b || typeof b !== "object") return null;
@@ -54,18 +65,19 @@ function mergeBadge(c, f, s) {
 }
 
 // The Settings screen's Save: one row per key, live within 10 s everywhere.
-export async function saveSettings(env, { access, createYourOwn } = {}) {
+export async function saveSettings(env, { access, createYourOwn, identity } = {}) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT)`).run();
   const put = (key, obj) => env.DB.prepare(`INSERT INTO settings (key, json, updated_at, updated_by) VALUES (?, ?, ?, 'admin') ON CONFLICT(key) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at, updated_by = excluded.updated_by`).bind(key, JSON.stringify(obj), new Date().toISOString());
   const ops = [];
   if (access) ops.push(put("access", { default: access.default, floor: access.floor }));
   if (createYourOwn) ops.push(put("createYourOwn", cleanBadge(createYourOwn)));
+  if (identity && graceOf(identity) !== null) ops.push(put("identity", { graceMinutes: graceOf(identity) }));
   if (ops.length) await env.DB.batch(ops);
   CACHE = { at: 0, rows: null };
 }
 
 // What Settings → Commit to GitHub writes: the file half of the merge, as JSON.
 export function settingsFileContent(s) {
-  return JSON.stringify({ access: { default: s.default, floor: s.floor }, createYourOwn: { show: s.createYourOwn.show, text: s.createYourOwn.text, url: s.createYourOwn.url } }, null, 2) + "\n";
+  return JSON.stringify({ access: { default: s.default, floor: s.floor }, createYourOwn: { show: s.createYourOwn.show, text: s.createYourOwn.text, url: s.createYourOwn.url }, identity: { graceMinutes: s.identity?.graceMinutes ?? DEFAULT_GRACE_MINUTES } }, null, 2) + "\n";
 }
 export const SETTINGS_FILE_VIEW = SETTINGS_FILE;

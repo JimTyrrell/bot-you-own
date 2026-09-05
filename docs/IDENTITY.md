@@ -34,6 +34,21 @@ always. A broken check refuses; it never opens. Features fail open, identity doe
 - A **second browser** typing a known email gets a 6-character code (letters and
   digits that survive being read aloud; expires in 7 days) and a screen with the
   other ways in. The page polls; the moment it's linked, it opens.
+- **The return window** is the one exception (v3.9). If that email was active
+  within the last *N* minutes (`YourBots/config.js → identity.graceMinutes`, default
+  60; Settings edits it live; a bot can set its own in `project.json → identity:
+  { graceMinutes }`), the new browser is bound at once — no code — and, for a chat
+  bot, the person's history is pulled down to it. "I shut the laptop and opened the
+  phone" just works. `last_seen` on `id_users` is what it measures; every
+  identified request bumps it.
+
+  **The trade-off, plainly:** inside the window, anyone who knows your email can
+  type it on their own computer and pick up your recent conversation. That is the
+  price of "no code, no link, no password"; Jim accepted it for the default. Set
+  the window to `0` for a bot where that matters, and every new browser waits for
+  the owner's link as before. Passkeys and Google/Microsoft/Apple sign-in are
+  trusted on any device with or without a window — they prove the person, the
+  window only guesses.
 
 ## Passkeys (WebAuthn)
 
@@ -114,10 +129,51 @@ A chat bot whose door is `email` or `key+email` uses the same front door as Plat
 - Identity is per bot (the `bot` column): the same person joins each email-mode
   bot once. Two chat bots on one deployment are two joins.
 
+## History on any computer (v3.9)
+
+A chat bot that identifies its visitors (`email`, `allow`, `key+email`) mirrors
+each person's chats to the server — `Engine/worker/chats.js`, tables
+`chat_threads` + `chat_messages`, keyed on (bot, user id). The page pushes a
+thread on every turn, rename and delete, and pulls the person's threads on
+arrival (the server wins for ids it knows; local-only threads go up). Routes:
+`GET /api/chats?bot=` · `PUT /api/chats/<id>` · `PATCH` (rename) · `DELETE`, all
+behind the device key and the bot's own door. Anonymous visitors, open bots and
+the admin's own chats stay in `localStorage`.
+
+**Two tables, on purpose.** `conversations` (the audit) keeps every turn
+*redacted* — emails, phones, card-like numbers replaced — for the owner's
+Audit/Leads/Gaps views. `chat_threads` keeps the visitor's own history *raw*,
+because a redacted transcript is useless to resume. This is a change of posture:
+raw conversation text now lives on the server, which the redaction default was
+there to avoid. "History anywhere" needs it. A visitor's DELETE removes the
+thread and its messages; the audit row stays, redacted, as before.
+
+**See what they see.** The admin can read any visitor's threads — read only —
+from Under the hood → Leads (`GET /api/admin/chats?bot=&email=`; there is no write
+route). The page shows them under a banner, composer off, and logs `view-as`.
+
+## The allowlist — access mode `allow` (v3.9)
+
+Email + device key, then the address must be on the bot's list or the list for
+every bot (`Engine/worker/allowlist.js`; Settings → The allowlist). Encrypted at
+rest: HMAC-SHA256 of the address as a blind index (one indexed lookup answers
+"is x on it?" without decrypting anything) and AES-256-GCM of the address for the
+owner to read. Both keys derive from `ALLOWLIST_KEY` (`docs/DEPLOY.md → B2c`). No
+key → fails closed. Not sign-in either: the owner said who; nobody typed a password.
+
+## The admin's break-glass key (v3.9)
+
+`ADMIN_UNLOCK_KEY`, typed where the admin code goes, opens Under the hood with no
+passphrase check and no authenticator step — the way back in when
+`ADMIN_TOTP_SECRET` is lost or wrong. Logged as `admin-break-glass`; the page lands
+on Settings with the re-set commands. `docs/DEPLOY.md → B3` and the owner checklist.
+
 ## Under the hood
 
 Tables (`Engine/schema.sql`, created on first use): `id_users`, `id_devices`,
-`id_pending`, `id_passkeys`, `id_challenges`, `id_totp`. Every one has a `bot`
-column. Under the hood → Settings lists, per bot, which methods are on.
+`id_pending`, `id_passkeys`, `id_challenges`, `id_totp`, and for v3.9 `chat_threads`,
+`chat_messages`, `allowlist`. Every identity table has a `bot` column. Under the
+hood → Settings lists, per bot, which methods are on, its return window if it set
+one, and how many are on its allowlist.
 Tests: `node Engine/tests/identity.mjs` (ID tokens, TOTP vectors from RFC 6238
 Appendix B, the CBOR decoder, passkey verification and its refusals, the QR encoder).

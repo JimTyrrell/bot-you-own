@@ -147,6 +147,44 @@ Check: `https://chat.yourdomain.com/health` returns `ok <version> …`.
 
 ---
 
+## 7. The break-glass key (recommended before you set item 5)
+
+Why: if the authenticator is lost, wiped or set up wrong, `ADMIN_TOTP_SECRET`
+locks *you* out too. `ADMIN_UNLOCK_KEY` is the way back in: typed where the admin
+code goes, it opens "Under the hood" with no code and no six digits, and takes you
+straight to Settings to re-set the second factor.
+
+1. Make a long random one and set it:
+   ```bash
+   printf "$(openssl rand -base64 24)" | CLOUDFLARE_ACCOUNT_ID=<your-account-id> npx wrangler secret put ADMIN_UNLOCK_KEY
+   ```
+   (Under 16 characters it is ignored.) Keep the value somewhere the authenticator
+   isn't — a password manager entry, a printed card.
+2. After you ever use it: re-set `ADMIN_TOTP_SECRET` (item 5), bump
+   `ADMIN_TOKEN_VERSION`, and set a **new** `ADMIN_UNLOCK_KEY`.
+
+Check: **Under the hood → Settings** shows "Break-glass key: SET". Every use lands
+in the admin record there as `admin-break-glass`.
+
+---
+
+## 8. The allowlist key (only if a bot uses access mode `allow`)
+
+Why: `allow` mode lets in the emails you list (Settings → The allowlist), per bot
+or for every bot. The list is encrypted; this is its key. Without it the mode
+refuses everyone.
+
+1. ```bash
+   printf "$(openssl rand -base64 32)" | CLOUDFLARE_ACCOUNT_ID=<your-account-id> npx wrangler secret put ALLOWLIST_KEY
+   ```
+2. Under the hood → Settings → The allowlist → add the first email.
+
+Check: the Settings allowlist section says "ALLOWLIST_KEY is set", and the address
+you added is listed back to you. Rotating the key empties the list (old hashes
+stop matching) — add people again.
+
+---
+
 ## Where each secret lives
 
 | Secret | Set by | Switches on |
@@ -158,6 +196,8 @@ Check: `https://chat.yourdomain.com/health` returns `ok <version> …`.
 | `GOOGLE_CLIENT_ID` (and MICROSOFT_/APPLE_) | item 4 | a sign-in button |
 | `ADMIN_TOTP_SECRET` | item 5 | the admin's six-digit second factor |
 | `FOODLOG_PEPPER` | already set | hashing food-log user ids (set before real use) |
+| `ADMIN_UNLOCK_KEY` | item 7 | the break-glass way into Under the hood |
+| `ALLOWLIST_KEY` | item 8 | the allowlist (access mode `allow`) |
 
 `ACCESS_PASSPHRASE_<NAME>` (per-bot keys) are optional and only needed when a bot
 names its own secret in `project.json → accessKey`.

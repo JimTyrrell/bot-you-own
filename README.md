@@ -152,7 +152,8 @@ set we run, in plain rules you can read.
 | Mode | What a visitor sees | Use it for |
 |---|---|---|
 | `open` | nothing, just the chat | a public website bot (rely on the rate limit and a spend cap) |
-| `email` | "enter your email to start" | a members' or clients' bot where you want to know who asked |
+| `email` | "enter your email to start" | a members' or clients' bot where you want to know who asked; their chats follow them to any computer |
+| `allow` | the email screen, then "invited people only" unless the address is on the list | a named group — clients, members, a cohort (Settings → The allowlist, encrypted at rest) |
 | `key` ⭐ default | a passphrase screen | demos, internal bots, anything without a spend cap yet |
 | `key+email` | both | a private bot with a record of who used it |
 | `admin` | "owner only" | a bot only you should talk to |
