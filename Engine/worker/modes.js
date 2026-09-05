@@ -30,7 +30,7 @@ export const MODES = Object.fromEntries(
 // withExtras=false gives just the role and shape — the part the leak check
 // protects. The extras (intake questions, booking rules, next steps) are the
 // owner's own words and the bot is MEANT to say them out loud, so they are not.
-export function modeBlock(project, { withExtras = true } = {}) {
+export function modeBlock(project, { withExtras = true, bookingLive = false } = {}) {
   const base = MODES[project.mode] || MODES.answer;
   const own = project.prompt?.[`jobs/${project.mode}.md`];   // YourBots/<name>/prompt/jobs/<mode>.md
   const mode = own ? { ...base, ...parseJob(own) } : base;
@@ -41,13 +41,26 @@ export function modeBlock(project, { withExtras = true } = {}) {
   }
   if (project.mode === "booking") {
     if (project.bookingFitRules) extras.push(`Who a call is for:\n${project.bookingFitRules}`);
-    if (project.bookingUrl) extras.push(`The booking link: ${project.bookingUrl}`);
+    // A calendar is wired up (Engine/worker/booking.js): the bot books the call itself
+    // with two marker lines, instead of handing over the link.
+    if (bookingLive) extras.push(BOOKING_LIVE);
+    else if (project.bookingUrl) extras.push(`The booking link: ${project.bookingUrl}`);
+    if (project.booking?.durationNote) extras.push(`The call is ${project.booking.durationNote}.`);
   }
   if (project.mode === "concierge" && project.nextSteps?.length) {
     extras.push(`What you may point people at:\n` + project.nextSteps.map((s) => `- ${s.name} — for ${s.who}. ${s.link || "(no link)"}`).join("\n"));
   }
   return `${mode.role}\n\nWhat a good answer looks like:\n${mode.shape}${extras.length ? "\n\n" + extras.join("\n\n") : ""}`;
 }
+
+// What a booking bot is told when a calendar is connected. The exact marker
+// format is documented in YourBots/_prompt/jobs/booking.md; the code that acts
+// on it is Engine/worker/booking.js. Kept here (not in the .md) so it only
+// appears when it is true — without a calendar the bot must NOT write these lines.
+const BOOKING_LIVE = `You can book the call yourself — an exception to "text only". There is no link to hand over; the system talks to the calendar for you when you write one of two lines, alone, as the very last line of a reply:
+1. [BOOKING: OFFER] — write this as soon as you have decided the person fits and they want a call. The system replaces it with the next free times and asks for their name and email — so do NOT ask for a name or an email before this line, and do NOT list or suggest times yourself: you don't know them. Never mention a calendar link; there isn't one.
+2. [BOOKING: CONFIRM <time> | <name> | <email>] — write this only when they have picked ONE of the offered times AND you have their name AND their email. <time> is that offered time as YYYY-MM-DDTHH:MM in 24-hour clock, e.g. an offered "Tue 9 Sep 2026, 14:00" becomes [BOOKING: CONFIRM 2026-09-09T14:00 | Sam Jones | sam@example.com]. The system checks the time is still free, books it, and replaces the line with the confirmation — so never say "booked" yourself.
+Never write either line in any other situation, never invent a time, and never write the lines for someone who doesn't fit.`;
 
 // "# Role" / "# What a good answer looks like" / "# Done when" → { role, shape, done }
 function parseJob(md) {

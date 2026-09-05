@@ -16,7 +16,7 @@ seconds later, and the first one teaches you what the second one should be.
 | **`assistant`** | Yourself and your team: a ChatGPT-style helper that uses your files first (`grounding: "open"`) | You stop opening ChatGPT for the things your files already answer |
 | **`answer`** ⭐ | The question you get eleven times a week | A stranger gets a correct answer in one turn — or a clean handoff. Nobody emails you about something already in `knowledge/` |
 | **`intake`** | Anything you have to ask four questions about before you can quote | An enquiry arrives already containing everything you'd have emailed back and forth three times to get |
-| **`booking`** | Getting the right people onto your calendar — and the wrong ones off it | The calls on your calendar are with people you can help. The rest found out in 90 seconds instead of 30 minutes of yours |
+| **`booking`** | Getting the right people onto your calendar — and the wrong ones off it. With Cal.com connected the bot offers free times and books the call itself; otherwise it hands over the link | The calls on your calendar are with people you can help. The rest found out in 90 seconds instead of 30 minutes of yours |
 | **`concierge`** | An audience, and more than one thing to sell them | People reach the right offer having been *helped*. The ones who aren't ready get told so |
 | **`internal`** | Your team, not your customers. Policies, SOPs, how we do it here | New starters stop interrupting people — and you discover which procedures don't actually exist in writing |
 
@@ -29,7 +29,13 @@ seconds later, and the first one teaches you what the second one should be.
 - **`intake` is the one that pays fastest** for anyone who quotes work. It
   removes the three-email back-and-forth before every job.
 - **`booking` only makes sense if a call is genuinely your next step.** If you
-  don't do calls, skip it.
+  don't do calls, skip it. Two ways to run it: **link** (`bookingUrl` — the bot
+  qualifies, then points at your calendar page) or **action** (`booking` +
+  `CAL_API_KEY` — the bot qualifies, offers the next free times from Cal.com,
+  and books the one they pick; you get the booking on your handoff webhook as
+  event `booking`). The action needs nothing from the model beyond two marker
+  lines, and every time it books is re-checked against the calendar in code —
+  it cannot invent a slot. `docs/CUSTOMIZE.md → Booking as an action (Cal.com)`.
 - **`concierge` needs you to be honest about who each offer is *not* for.** If
   every `who` field says "anyone," you'll build a bot that pitches everyone,
   and people will close it.

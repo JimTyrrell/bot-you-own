@@ -38,7 +38,7 @@ export const ROOT_PROMPT_FILES = {
   "7-answering-strict.md": answeringStrictMd, "7-answering-open.md": answeringOpenMd, "8-links.md": linksMd, "9-boundaries.md": boundariesMd,
 };
 
-export function buildSystemPrompt({ config, project, passages = "", attachments = [], now = new Date() }) {
+export function buildSystemPrompt({ config, project, passages = "", attachments = [], now = new Date(), bookingLive = false }) {
   const strict = project.grounding !== "open";
   const owner = config.owner || "";
   const handoff = [project.handoffText, project.handoffContact].filter(Boolean).join(" ");
@@ -82,7 +82,7 @@ export function buildSystemPrompt({ config, project, passages = "", attachments 
   const personality = t("3-personality.md", personalityMd);
   const formatting = t("4-formatting.md", formattingMd);
   const boundaries = t("9-boundaries.md", boundariesMd);
-  const job = modeBlock(project);
+  const job = modeBlock(project, { bookingLive });   // bookingLive: a booking bot with a calendar wired up (Engine/worker/booking.js)
 
   // --- public sections: the bot is meant to repeat these ---------------------
   const capabilities = t("2-capabilities.md", capabilitiesMd);
