@@ -57,6 +57,20 @@ SELECT flags, COUNT(*) n FROM conversations WHERE flags != '' GROUP BY flags ORD
 ```
 Tell people conversations are recorded if it matters — a line in your privacy policy.
 
+### Turn refusals into pages
+The second query above is a to-do list, and under the hood → Audit turns it into one. **Gaps** shows every question the bot refused in the last 30 days, grouped (same question, any punctuation, counts once), with how often it was asked and when. The firewall's catches are left out — no page fixes "ignore your instructions". Each row has a state — open, drafted, accepted, dismissed — that survives every refresh. The loop:
+
+1. **Refused.** A visitor asks something the files don't cover. The bot hands off; the row appears here.
+2. **Draft an answer.** One Workers AI call writes a FAQ entry in your voice, **from your files and instructions only**. If the answer is in there, the draft is marked *grounded*. If it isn't, you get a template with blanks — `[fill in: your turnaround time]` — and a list of what the files don't say. It never guesses a price, a time or a policy.
+3. **Edit.** Fill the blanks, fix the wording. It's a textarea.
+4. **Add to faq.md** (or any of the bot's files). The entry is appended to that file on the bot's **saved copy** — the same copy Configure → Save produces — so it's live on the very next turn. Ask the bot the question again; it answers.
+5. **Commit to GitHub** (Configure) when you're happy. That writes the folder, so the repo is the source again, and the deploy that follows makes it permanent. *Dismiss* is for questions that don't deserve a page; *Reopen* undoes it.
+
+Raw SQL, if you'd rather:
+```sql
+SELECT question, count_seen n, state, file FROM gaps WHERE bot = 'example-co' ORDER BY n DESC;
+```
+
 ## When it hands off, tell someone
 A handoff that only prints your phone number is a handoff you never hear about.
 Each bot can call a webhook and/or send an email **after** the reply has gone out

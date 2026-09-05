@@ -40,3 +40,22 @@ CREATE TABLE IF NOT EXISTS leads (
   sent_at          TEXT                -- last time it was pushed to the webhook
 );
 CREATE INDEX IF NOT EXISTS idx_conv_visitor ON conversations(visitor, id);
+
+-- Gaps: what the bot couldn't answer, as a to-do list (Engine/worker/gaps.js; under the hood → Audit).
+-- One row per bot per normalised question. Counts are refreshed from conversations on
+-- every read; state and draft are yours and are never overwritten by the refresh.
+CREATE TABLE IF NOT EXISTS gaps (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  bot          TEXT NOT NULL,      -- the bot's id (YourBots/<id>)
+  question_key TEXT NOT NULL,      -- the question, lowercased, punctuation stripped
+  question     TEXT,               -- the newest wording a visitor used
+  count_seen   INTEGER DEFAULT 0,  -- how many times it was refused in the window
+  last_seen    TEXT,
+  state        TEXT NOT NULL DEFAULT 'open',   -- open | drafted | accepted | dismissed
+  draft        TEXT,               -- the FAQ entry (model draft, then whatever you accepted)
+  grounded     INTEGER,            -- 1 = the files held the answer; 0 = template with blanks
+  missing      TEXT,               -- JSON list of what the files didn't say
+  file         TEXT,               -- the knowledge file it was added to
+  updated_at   TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_gaps_bot_key ON gaps(bot, question_key);

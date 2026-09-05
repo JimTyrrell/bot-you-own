@@ -7,6 +7,7 @@ import { MODES } from "./modes.js";
 import { retrieve, uploadFile, listFiles, deleteFile, downloadFile, rescanLibrary, extractText, libraryMeta, allExtensions, gate, safeName, scanText, websiteOf, crawlWebsite, websiteStatus, deleteWebsite } from "./library.js";
 import { normaliseHandoffActions, stripIntakeMarker, handoffEvent, runHandoffActions, handoffActionsView } from "./handoff.js";
 import { listLeads, getLead, summariseLead, sendLead, maybeAutoLead, leadsConfig, cleanVisitor } from "./leads.js";
+import { listGaps, getGap, setGapState, draftGap } from "./gaps.js";
 
 // ============================================================================
 //  THE WORKER. Four routes and a static folder.
@@ -26,6 +27,8 @@ import { listLeads, getLead, summariseLead, sendLead, maybeAutoLead, leadsConfig
 //    /api/admin/library/crawl?project=<id>  GET status of the bot's website
 //    crawl · POST crawl it now (creates the crawler instance the first time) ·
 //    DELETE remove the crawler instance and its pages
+//    GET  /api/admin/gaps?project=<id>&days=30&limit=20   what the bot couldn't answer, as a to-do list
+//    POST /api/admin/gaps/<id>/draft · /accept · /dismiss · /reopen   (Engine/worker/gaps.js)
 // ============================================================================
 
 export default {
@@ -67,6 +70,7 @@ export default {
       if (url.pathname === "/api/admin/audit") return json(await auditView(env, url.searchParams));
       if (url.pathname === "/api/admin/library" || url.pathname.startsWith("/api/admin/library/")) return handleLibrary(request, env, url);
       if (url.pathname === "/api/admin/leads" || url.pathname.startsWith("/api/admin/leads/")) return handleLeads(request, env, url);
+      if (url.pathname === "/api/admin/gaps" || url.pathname.startsWith("/api/admin/gaps/")) return handleGaps(request, env, url);
       if (url.pathname === "/api/admin/projects") return json({ projects: await resolveList(env), jobs: Object.values(MODES).map((m) => ({ id: m.id, blurb: m.blurb, role: m.role, shape: m.shape, done: m.done })), model: CONFIG.model, canSave: Boolean(env.DB), rootPrompt: ROOT_PROMPT_FILES, github: { repo: CONFIG.github?.repo || "", branch: CONFIG.github?.branch || "main", ready: Boolean(CONFIG.github?.repo && env.GITHUB_TOKEN) }, library: libraryMeta(env, CONFIG) });
       if (url.pathname === "/api/admin/project") {
         const id = String(url.searchParams.get("id") || "").toLowerCase();
@@ -76,10 +80,7 @@ export default {
           let b; try { b = await request.json(); } catch { return json({ error: "bad request" }, 400); }
           const pid = String(b.id || id || "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
           if (!pid) return json({ error: "give the bot a name" }, 400);
-          const p = normaliseProject(b, pid);
-          await ensureSchema(env);
-          await env.DB.prepare(`INSERT INTO projects (id, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at`).bind(pid, JSON.stringify(p), new Date().toISOString()).run();
-          SAVED_CACHE.at = 0;
+          const p = await saveProject(env, pid, b);
           return json({ ok: true, id: pid, project: p });
         }
         if (request.method === "DELETE") { await ensureSchema(env); await env.DB.prepare(`DELETE FROM projects WHERE id = ?`).bind(id).run(); SAVED_CACHE.at = 0; return json({ ok: true, fallsBackToFolder: Boolean(PROJECTS[id]) }); }
@@ -600,6 +601,61 @@ async function handleLeads(request, env, url) {
   return json({ error: "method" }, 405);
 }
 
+// --- Gaps (admin): what the bot couldn't answer, as a to-do list. ---------------
+//   GET  /api/admin/gaps?project=<id>&days=30&limit=20   the list (counts refreshed on every read)
+//   POST /api/admin/gaps/<id>/draft?project=<id>         one model call → a FAQ entry, grounded in the files
+//   POST /api/admin/gaps/<id>/accept?project=<id>        body { draft, file } → appended to that file on the SAVED copy
+//   POST /api/admin/gaps/<id>/dismiss · /reopen
+//   The reading and the model call are in Engine/worker/gaps.js.
+async function handleGaps(request, env, url) {
+  if (!env.DB) return json({ enabled: false, reason: "No D1 database is bound (wrangler.jsonc → d1_databases), so there is nothing to list. Turns still go to Workers Logs.", rows: [] });
+  await ensureSchema(env);
+  const parts = url.pathname.split("/").filter(Boolean);        // api, admin, gaps, <id>, <action>
+  const bot = String(url.searchParams.get("project") || "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").slice(0, 40);
+  try {
+    if (parts.length === 3) {
+      if (request.method !== "GET") return json({ error: "method" }, 405);
+      if (!bot) return json({ error: "which bot? add ?project=<id>" }, 400);
+      if (!PROJECTS[bot] && !(await savedProjects(env))[bot]) return json({ error: "unknown bot" }, 404);
+      const project = await resolveProject(env, bot);
+      return json({ ...(await listGaps(env, { bot, projectName: project.name, days: url.searchParams.get("days"), limit: url.searchParams.get("limit") })), bot, files: Object.keys(project.files || {}), source: (await savedProjects(env))[bot] ? "saved" : (PROJECTS[bot] ? "folder" : "new"), note: "Questions the bot refused (the firewall's catches are left out). Draft writes from the bot's own files only; blanks mean the files don't say. Add puts the entry on the saved copy — live at once. Commit to GitHub to make the folder the source." });
+    }
+    if (request.method !== "POST") return json({ error: "POST only" }, 405);
+    const gap = await getGap(env, parts[3]);
+    if (!gap) return json({ error: "no such gap" }, 404);
+    const action = parts[4] || "";
+    const project = await resolveProject(env, gap.bot);
+    if (action === "draft") {
+      const d = await draftGap(env, CONFIG, project, gap);
+      if (d.error) return json(d, 422);
+      const saved = await setGapState(env, gap.id, "drafted", { draft: d.draft, grounded: d.grounded, missing: d.missing });
+      console.log(JSON.stringify({ event: "gap-draft", bot: gap.bot, id: gap.id, grounded: d.grounded, missing: d.missing.length }));
+      return json({ ...saved, question: gap.question, draft: d.draft, grounded: d.grounded, missing: d.missing });
+    }
+    if (action === "accept") {
+      let b = {}; try { b = await request.json(); } catch { return json({ error: "bad request" }, 400); }
+      const draft = String(b.draft ?? gap.draft ?? "").replace(/<!--[\s\S]*?-->/g, "").trim().slice(0, 4000);
+      if (!draft) return json({ error: "nothing to add — draft it first, or send { draft }" }, 400);
+      const file = String(b.file || "faq.md").trim();
+      if (!/^[\w. -]{1,80}\.(md|txt|csv)$/i.test(file)) return json({ error: "file must be a .md, .txt or .csv name" }, 400);
+      // The saved copy: the folder version if there isn't one yet (what Configure → Save
+      // starts from), with the entry appended to the chosen file. Live on the next turn.
+      const files = { ...(project.files || {}) };
+      files[file] = ((files[file] || "").replace(/\s*$/, "") + "\n\n" + draft + "\n").replace(/^\n+/, "");
+      const p = await saveProject(env, gap.bot, { ...project, files });
+      const saved = await setGapState(env, gap.id, "accepted", { draft, file });
+      console.log(JSON.stringify({ event: "gap-accept", bot: gap.bot, id: gap.id, file, chars: draft.length }));
+      return json({ ...saved, ok: true, file, source: "saved", chars: p.files[file]?.length || 0, note: "Live now in the saved copy. Commit to GitHub to make it permanent." });
+    }
+    if (action === "dismiss") return json(await setGapState(env, gap.id, "dismissed"));
+    if (action === "reopen") return json(await setGapState(env, gap.id, "open"));
+  } catch (err) {
+    console.error("gaps request failed", err);
+    return json({ error: "Gaps hit an error: " + String(err?.message || err).slice(0, 200) }, 500);
+  }
+  return json({ error: "method" }, 405);
+}
+
 // One character over and over, or one word over and over, is not an answer.
 function isDegenerate(text) {
   const t = String(text).trim();
@@ -647,6 +703,15 @@ async function savedProjects(env) {
     SAVED_CACHE = { at: Date.now(), map };
   } catch (err) { console.error("saved projects read failed", err); }
   return SAVED_CACHE.map;
+}
+// Write a bot to D1 (Configure → Save, and Gaps → Add). From now on this copy
+// overrides the folder version until it is deleted or committed to GitHub.
+async function saveProject(env, pid, raw) {
+  const p = normaliseProject(raw, pid);
+  await ensureSchema(env);
+  await env.DB.prepare(`INSERT INTO projects (id, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at`).bind(pid, JSON.stringify(p), new Date().toISOString()).run();
+  SAVED_CACHE.at = 0;
+  return p;
 }
 function normaliseProject(p, id) {
   const clean = (t) => String(t || "").replace(/<!--[\s\S]*?-->/g, "").trim();
@@ -811,6 +876,9 @@ async function ensureSchema(env) {
     // Leads: one row per visitor email, with the stored AI summary. See Engine/worker/leads.js.
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS leads (visitor TEXT PRIMARY KEY, bot TEXT, summary TEXT, score INTEGER, updated_at TEXT NOT NULL, turns_at_summary INTEGER DEFAULT 0, sent_at TEXT)`),
     env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_conv_visitor ON conversations(visitor, id)`),
+    // Gaps: one row per refused question per bot, with its state (open / drafted / accepted / dismissed). See Engine/worker/gaps.js.
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS gaps (id INTEGER PRIMARY KEY AUTOINCREMENT, bot TEXT NOT NULL, question_key TEXT NOT NULL, question TEXT, count_seen INTEGER DEFAULT 0, last_seen TEXT, state TEXT NOT NULL DEFAULT 'open', draft TEXT, grounded INTEGER, missing TEXT, file TEXT, updated_at TEXT NOT NULL)`),
+    env.DB.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_gaps_bot_key ON gaps(bot, question_key)`),
   ]);
   SCHEMA_OK = true;
 }
