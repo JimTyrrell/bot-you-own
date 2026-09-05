@@ -5,6 +5,11 @@ account, from code you can read** — for a few dollars a month, usually zero.
 
 Not a custom GPT. Not a $99-a-month rental. Yours.
 
+**Free group + the workshop:** https://www.skool.com/sovereign-operator/about — join, then open
+Classroom → **🤖 Build the Chatbot That Answers Your Customers** (third card, upper right).
+**Licence:** PolyForm Shield — deploy it for your own business and clients and earn with it;
+don't set it up for other businesses or resell it. Plain English in `NOTICE.md`.
+
 **You will not open a terminal. You will not install anything.** If you can use
 a browser and edit a document, you can do this.
 
