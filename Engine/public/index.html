@@ -90,6 +90,19 @@
   .flag { font-size:11px; padding:2px 8px; border-radius:999px; background:var(--chip); color:var(--chipText); }
   .flag.hard { background:#fee2e2; color:#991b1b; }
   .flag.source { max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* "Talk to a person": the chip under a refusal, and the bubble a person's reply lands in */
+  .flag.talk { background:var(--text); color:var(--bg); border:0; cursor:pointer; font:inherit; font-size:11px; padding:2px 10px; }
+  .flag.talk:hover { opacity:.85; }
+  .msg.person .avatar { background:var(--panel); color:var(--text); border:1px solid var(--edge); font-size:14px; }
+  .msg.person .body { flex:0 1 auto; max-width:80%; background:var(--chip); border-radius:14px; padding:8px 14px; }
+  .msg.person .who { font-size:11px; color:var(--muted); margin-bottom:2px; }
+  .msg.note .body { color:var(--muted); font-size:13.5px; }
+  .badge { display:inline-block; min-width:18px; padding:0 5px; border-radius:999px; background:var(--danger); color:#fff; font-size:11px; line-height:18px; text-align:center; margin-left:5px; }
+  .thread { display:flex; flex-direction:column; gap:8px; margin:8px 0 12px; }
+  .thread .tm { max-width:85%; padding:8px 12px; border-radius:12px; background:var(--bg); border:1px solid var(--edge); white-space:pre-wrap; word-break:break-word; }
+  .thread .tm.owner { align-self:flex-end; background:var(--chip); }
+  .thread .tm small { display:block; color:var(--muted); font-size:11px; margin-top:2px; }
+  #convreply { width:100%; min-height:70px; padding:10px 12px; border:1px solid var(--edge); border-radius:10px; background:var(--bg); color:var(--text); font:inherit; resize:vertical; }
 
   .composer { padding:10px 16px 8px; }
   .composer form { max-width:760px; margin:0 auto; display:flex; align-items:flex-end; gap:8px; border:1px solid var(--edge); border-radius:22px; padding:8px 8px 8px 16px; background:var(--bg); box-shadow:0 2px 12px rgba(0,0,0,.06); }
@@ -242,6 +255,7 @@
       <h1 id="title">Assistant</h1>
       <span class="pill" id="modepill"></span>
       <span class="spacer"></span>
+      <button class="iconbtn" id="talkbtn" title="Ask for a person to reply here, in this chat" hidden>🙋 Talk to a person</button>
       <span class="pill" id="modelpill"></span>
       <button class="iconbtn" id="autospeak" title="Read every reply aloud" hidden>🔈 Auto</button>
       <button class="iconbtn" id="cfgbtn" title="Configure this bot (admin)" disabled>✎ Configure</button>
@@ -269,7 +283,7 @@
     <aside id="hood">
       <header><h1>Under the hood</h1><span class="pill" id="hoodproj"></span><span class="spacer"></span><button class="iconbtn" id="hoodclose">✕</button></header>
       <div class="tabs" id="hoodtabs">
-        <button data-tab="prompt" class="on">Prompt</button><button data-tab="files">Files</button><button data-tab="firewall">Firewall</button><button data-tab="gateway">Gateway &amp; model</button><button data-tab="audit">Audit</button><button data-tab="leads">Leads</button><button data-tab="source">Source</button>
+        <button data-tab="prompt" class="on">Prompt</button><button data-tab="files">Files</button><button data-tab="firewall">Firewall</button><button data-tab="gateway">Gateway &amp; model</button><button data-tab="audit">Audit</button><button data-tab="leads">Leads</button><button data-tab="conversations">Conversations<span class="badge" id="convbadge" hidden></span></button><button data-tab="source">Source</button>
       </div>
       <div id="hoodbody"></div>
     </aside>
@@ -386,6 +400,11 @@ function boot() { fetch('/api/config', { headers: authHeaders() }).then((r) => r
   const want = qs.get('project') || cfg.defaultProject;
   selectProject(state.projects.find((p) => p.id === want) || state.projects[0]);
   const wantChat = qs.get('chat'); if (wantChat) { const c = store.list(state.project.id).find((x) => x.id === wantChat); if (c) loadChat(c, true); }
+  // "Talk to a person" is always in the header; the chip under a refusal is the other way in.
+  $('talkbtn').hidden = false;
+  // The owner's deep link from the webhook: ?handoff=<id> opens that conversation under the hood (admin code first if needed).
+  const wantHandoff = qs.get('handoff');
+  if (wantHandoff && cfg.adminEnabled && /^[0-9a-f]{48}$/.test(wantHandoff)) { pendingConv = wantHandoff; hoodTab = 'conversations'; $('hoodbtn').click(); }
 }).catch(() => { $('log').innerHTML = '<p style="color:var(--muted)">Could not load /api/config.</p>'; }); }
 boot();
 
@@ -394,6 +413,7 @@ function pushUrl(replace) {
   const u = new URL(location.href);
   u.searchParams.set('project', state.project.id);
   if (state.chat?.messages?.length || state.chat?.attachments?.length) u.searchParams.set('chat', state.chat.id); else u.searchParams.delete('chat');
+  u.searchParams.delete('handoff');                 // the owner's deep link; used once on load
   const st = { project: state.project.id, chat: state.chat?.id || null };
   try { replace ? history.replaceState(st, '', u) : history.pushState(st, '', u); } catch {}
 }
@@ -442,12 +462,14 @@ function renderChats() {
 }
 
 function newChat(silent) {
+  stopPolling();
   state.chat = { id: Date.now().toString(36), project: state.project.id, title: '', messages: [], attachments: [] };
-  renderChats(); renderLog(); renderAttachments(); $('input').focus();
+  renderChats(); renderLog(); renderAttachments(); setComposerMode(); $('input').focus();
   if (!silent) pushUrl(!history.state);           // first load replaces, later switches push
 }
 $('newchat').onclick = () => newChat();
-function loadChat(c, silent) { state.chat = c; renderChats(); renderLog(); renderAttachments(); if (!silent) pushUrl(); }
+// A chat that asked for a person carries the handoff id; opening it again picks the polling back up.
+function loadChat(c, silent) { stopPolling(); state.chat = c; renderChats(); renderLog(); renderAttachments(); setComposerMode(); startPolling(); if (!silent) pushUrl(); }
 
 // ---- the paperclip: one file, read for this conversation only ----
 // The server reads the file and hands the TEXT back; it keeps nothing. The text
@@ -506,17 +528,20 @@ function renderLog() {
     }
     log.appendChild(empty); return;
   }
-  state.chat.messages.forEach((m) => addMessage(m.role, m.content, m.flags, m.sources));
+  state.chat.messages.forEach((m) => addMessage(m.role, m.content, m.flags, m.sources, { note: m.note, talk: m.talk }));
   scrollDown();
 }
 
-function addMessage(role, content, flags, sources) {
-  const el = document.createElement('div'); el.className = 'msg ' + (role === 'user' ? 'user' : 'bot');
+// role: user · assistant (the bot) · person (the owner, answering from under the hood).
+// opts.note = a grey line from the page itself; opts.talk = add the "Talk to a person" chip.
+function addMessage(role, content, flags, sources, opts = {}) {
+  const el = document.createElement('div'); el.className = 'msg ' + (role === 'user' ? 'user' : role === 'person' ? 'bot person' : 'bot') + (opts.note ? ' note' : '');
   const body = document.createElement('div'); body.className = 'body';
   if (role === 'user') body.textContent = content;
+  else if (role === 'person') { el.innerHTML = '<div class="avatar" title="A person, not the bot">👤</div>'; body.innerHTML = '<div class="who">A person from ' + esc(state.project?.name || '') + '</div>' + md(content); }
   else { el.innerHTML = '<div class="avatar">' + esc((state.project?.name || 'A')[0]) + '</div>'; body.innerHTML = md(content); }
   el.appendChild(body);
-  if (flags?.length || sources?.length) el.appendChild(flagRow(flags, sources));
+  if (flags?.length || sources?.length || opts.talk) { const row = flagRow(flags, sources); if (opts.talk) row.appendChild(talkChip()); el.appendChild(row); }
   if (role !== 'user' && content) addSpeaker(el, content);       // a finished reply gets its speaker; the "thinking" placeholder (empty) does not
   $('log').appendChild(el); return body;
 }
@@ -638,6 +663,7 @@ const FLAG_LABELS = {
   'voice-in': '🎤 spoken, not typed',
   'booking-slots-offered': '📅 free times from the calendar', 'booking-created': '📅 booked on the calendar', 'booking-failed': '📅 that time had gone; offered others',
   'booking-provider-failed': '📅 calendar unreachable; sent the link', 'booking-no-slots': '📅 nothing free this week', 'booking-incomplete': '📅 asked for the missing detail',
+  'website-used': '🌐 answered from the website', 'human-requested': '🙋 a person was asked for',
 };
 // The small chips under an answer. Two kinds share the row: firewall flags
 // (what the engine did to this turn) and citations — the documents the answer
@@ -663,6 +689,7 @@ form.addEventListener('submit', (e) => { e.preventDefault(); if (state.busy) { s
 
 async function send(text) {
   if (!text || state.busy) return;
+  if (inHandoff(state.chat)) return sendToPerson(text);      // a person is on the line: the bot stays out of it
   input.value = ''; input.style.height = 'auto';
   const spoken = !!state.voiceIn; state.voiceIn = false;          // the mic put these words here → "voice-in" chip on the turn
   stopSpeaking();
@@ -686,7 +713,7 @@ async function send(text) {
   try {
     const res = await fetch('/api/chat', {
       method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, signal: state.abort.signal,
-      body: JSON.stringify({ project: state.project.id, visitor: VISITOR ? { email: VISITOR } : undefined, messages: chat.messages.map(({ role, content }) => ({ role, content })), attachments: (chat.attachments || []).map(({ name, text }) => ({ name, text })), voice: spoken ? 'in' : undefined, stream: true }),
+      body: JSON.stringify({ project: state.project.id, visitor: VISITOR ? { email: VISITOR } : undefined, messages: botTurns(chat).map(({ role, content }) => ({ role, content })), attachments: (chat.attachments || []).map(({ name, text }) => ({ name, text })), voice: spoken ? 'in' : undefined, stream: true }),
     });
     if (res.status === 401) { const d = await res.clone().json().catch(() => ({})); if (d.error === 'email') { VISITOR = ''; needEmail = true; showLock('Please enter your email address to start.'); } else { TOKEN = ''; try { localStorage.removeItem('byo:token'); } catch {} needKey = true; showLock('Enter the passphrase to continue.'); } }
     if (!(res.headers.get('content-type') || '').includes('event-stream')) {
@@ -712,7 +739,10 @@ async function send(text) {
   stopThinking(); body.classList.remove('cursor');
   const reply = finalText ?? full;
   body.innerHTML = md(reply);
-  if (flags.length || sources.length) body.parentElement.appendChild(flagRow(flags, sources));
+  // A refusal gets the "Talk to a person" chip next to the flags, and remembers it for reloads.
+  const talk = looksLikeHandoff(reply, flags);
+  if (flags.length || sources.length || talk) { const row = flagRow(flags, sources); if (talk) row.appendChild(talkChip()); body.parentElement.appendChild(row); }
+  chat.messages.push({ role: 'assistant', content: reply, flags, sources, ...(talk ? { talk: true } : {}) });
   // The reply is final now, so it gets its speaker — never the "thinking" words, never the chips.
   addSpeaker(body.parentElement, reply);
   if (autoSpeak && state.voice?.out && reply && !(finalText === null && !full)) { const b = body.parentElement.querySelector('.speak'); if (b) speak(reply, b); }
@@ -720,6 +750,95 @@ async function send(text) {
   store.upsert(chat); renderChats();
   state.busy = false; sendBtn.classList.remove('stop'); sendBtn.textContent = '↑'; sendBtn.title = 'Send';
   scrollDown(); input.focus();
+}
+
+// ---- Talk to a person. The visitor asks for a human; the reply lands in this same chat. ----
+// The Worker keeps the request (D1) and pings the bot's webhook; the owner answers from
+// under the hood → Conversations. This page polls every 10 s while the request is open.
+// The handoff id is stored on the chat, so a reload (or coming back tomorrow) resumes it.
+const inHandoff = (c) => !!(c?.handoff && c.handoff.status !== 'closed');
+// What the bot gets as history: never the page's own notes, never the thread with the person.
+const botTurns = (c) => (c?.messages || []).filter((m) => (m.role === 'user' || m.role === 'assistant') && !m.note && !m.toPerson);
+function looksLikeHandoff(reply, flags) { const t = state.project?.handoffText; return (flags || []).includes('handoff-appended') || (!!t && String(reply || '').includes(t)); }
+function talkChip() {
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'flag talk'; b.textContent = '🙋 Talk to a person'; b.title = 'Ask for a person to reply here, in this chat';
+  b.onclick = () => requestPerson(); return b;
+}
+$('talkbtn').onclick = () => requestPerson();
+// The composer knows who is listening: the bot, or a person.
+function setComposerMode() {
+  const on = inHandoff(state.chat); const p = state.project || {};
+  input.placeholder = on ? 'Message the person…' : 'Message…';
+  $('disclaimer').textContent = on ? 'You\'re talking to a person now. Their replies appear here — keep this tab open, or come back later; the conversation is saved.'
+    : p.grounding === 'open' ? 'Can make mistakes. Check important information.' : 'Answers only from what ' + (p.name || 'the owner') + ' has written down. Can still make mistakes.';
+  $('talkbtn').disabled = on; $('talkbtn').title = on ? 'A person is already on the line in this chat' : 'Ask for a person to reply here, in this chat';
+}
+// A grey line from the page itself. Saved with the chat; never sent to the bot.
+function note(text, flags) {
+  const chat = state.chat; if (!chat.messages.length) $('log').innerHTML = '';
+  chat.messages.push({ role: 'assistant', content: text, flags: flags || [], note: true });
+  addMessage('assistant', text, flags, null, { note: true }); store.upsert(chat); renderChats(); scrollDown();
+}
+function lockedOut(d) {
+  if (d.error === 'email') { VISITOR = ''; needEmail = true; showLock('Please enter your email address to start.'); }
+  else { TOKEN = ''; try { localStorage.removeItem('byo:token'); } catch {} needKey = true; showLock('Enter the passphrase to continue.'); }
+}
+async function requestPerson() {
+  const chat = state.chat; if (!chat || !state.project) return;
+  if (inHandoff(chat)) { input.focus(); return; }
+  if (!chat.messages.length) { chat.title = 'Talk to a person'; pushUrl(true); }
+  const transcript = botTurns(chat).slice(-8).map(({ role, content }) => ({ role, content }));
+  $('talkbtn').disabled = true;
+  let r, d = {};
+  try {
+    r = await fetch('/api/handoff', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify({ project: state.project.id, chatId: chat.id, transcript, visitor: VISITOR ? { email: VISITOR } : undefined }) });
+    d = await r.json().catch(() => ({}));
+  } catch { if (state.chat === chat) { note('Could not reach the server. Try again in a moment.'); setComposerMode(); } return; }
+  if (state.chat !== chat) return;
+  if (r.status === 401) { lockedOut(d); setComposerMode(); return; }
+  if (r.status === 201 || (r.status === 409 && d.id)) {
+    chat.handoff = { id: d.id, status: 'open', since: 0 };
+    note(r.status === 201 ? 'Someone will reply here. You can keep this tab open, or come back — the conversation is saved.' : 'You already asked for a person in this chat. They\'ll reply here.', ['human-requested']);
+    setComposerMode(); startPolling(); input.focus(); return;
+  }
+  note(d.reply || d.error || 'Could not ask for a person right now.', r.status === 429 ? ['rate-limited'] : []);
+  setComposerMode();
+}
+async function sendToPerson(text) {
+  const chat = state.chat; input.value = ''; input.style.height = 'auto';
+  chat.messages.push({ role: 'user', content: text, toPerson: true }); addMessage('user', text); store.upsert(chat); renderChats(); scrollDown();
+  let r, d = {};
+  try { r = await fetch('/api/handoff/' + chat.handoff.id + '/message', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify({ text }) }); d = await r.json().catch(() => ({})); }
+  catch { if (state.chat === chat) note('Could not reach the server. That message was not sent — try again.'); return; }
+  if (state.chat !== chat) return;
+  if (r.ok) { pollPerson(); input.focus(); return; }
+  if (r.status === 401) return lockedOut(d);
+  if (r.status === 409 || r.status === 404) return handoffClosed('That message didn\'t reach them: the conversation was closed. I\'m the bot again — ask me anything.');
+  note(d.reply || d.error || 'That message was not sent.', r.status === 429 ? ['rate-limited'] : []);
+}
+let pollTimer = null;
+function stopPolling() { clearInterval(pollTimer); pollTimer = null; }
+function startPolling() { stopPolling(); if (!inHandoff(state.chat)) return; pollTimer = setInterval(pollPerson, 10000); pollPerson(); }
+async function pollPerson() {
+  const chat = state.chat; if (!inHandoff(chat)) return stopPolling();
+  let r, d;
+  try { r = await fetch('/api/handoff/' + chat.handoff.id + '?since=' + (chat.handoff.since || 0), { headers: authHeaders() }); if (!r.ok && r.status !== 404) return; d = await r.json().catch(() => ({})); }
+  catch { return; }                                                  // offline for a moment: try again next tick
+  if (state.chat !== chat) return;
+  if (r.status === 404) return handoffClosed('That conversation is no longer there. I\'m the bot again — ask me anything.');
+  let changed = false;
+  for (const m of d.messages || []) {
+    chat.handoff.since = Math.max(chat.handoff.since || 0, m.id);   // only the poll moves this, so nothing is skipped
+    if (m.from !== 'owner' || chat.messages.some((x) => x.role === 'person' && x.id === m.id)) continue;
+    chat.messages.push({ role: 'person', content: m.text, id: m.id }); addMessage('person', m.text); changed = true;
+  }
+  if (d.status && d.status !== chat.handoff.status && d.status !== 'closed') { chat.handoff.status = d.status; changed = true; }
+  if (changed) { store.upsert(chat); renderChats(); scrollDown(); }
+  if (d.status === 'closed') handoffClosed('The person closed this conversation. I\'m the bot again — ask me anything.');
+}
+function handoffClosed(text) {
+  stopPolling(); const chat = state.chat; if (!chat?.handoff) return;
+  chat.handoff.status = 'closed'; note(text); setComposerMode();
 }
 
 // ---- under the hood (admin) ----
@@ -740,7 +859,7 @@ $('adminform').addEventListener('submit', async (e) => {
   } catch { $('adminmsg').textContent = 'Could not reach the server. Try again.'; }
   finally { btn.disabled = false; btn.textContent = 'Open'; }
 });
-$('hoodclose').onclick = () => $('hood').classList.remove('show');
+$('hoodclose').onclick = () => { $('hood').classList.remove('show'); clearInterval(convTicker); convTicker = null; };
 $('hoodtabs').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; hoodTab = b.dataset.tab; renderHood(); };
 let hoodTicker = null;
 function hoodLoading(what) {
@@ -759,6 +878,8 @@ async function openHood() {
     if (r.status === 401) { ADMIN = ''; try { localStorage.removeItem('byo:admin'); } catch {} clearInterval(hoodTicker); $('hood').classList.remove('show'); return $('hoodbtn').click(); }
     if (!r.ok) throw new Error('HTTP ' + r.status);
     hoodData = await r.json(); clearInterval(hoodTicker); renderHood();
+    // The Conversations badge: how many visitors are waiting on a person, refreshed every 30 s while the panel is open.
+    refreshConvBadge(); clearInterval(convTicker); convTicker = setInterval(() => { refreshConvBadge(); if (hoodTab === 'conversations') refreshConversations(); }, 30000);
   } catch (err) {
     clearInterval(hoodTicker);
     $('hoodbody').innerHTML = '<p style="color:var(--danger)">Could not load the engine view (' + esc(err.message) + '). Close and try again.</p>';
@@ -774,6 +895,7 @@ function renderHood() {
   if (hoodTab === 'gateway') box.innerHTML = '<h4>Version</h4>' + pre(JSON.stringify(d.version, null, 2)) + '<h4>Provider &amp; model</h4>' + pre(JSON.stringify(d.gateway, null, 2)) + '<p style="color:var(--muted)">gateway.id empty = calls go straight to the model. Set it to route through Cloudflare AI Gateway: spend cap, logs, caching, edge Guardrails. See docs/DEPLOY.md.</p>' + (function (h) { h = h || {}; return '<h4>Handoff actions (project.json → handoffActions)</h4><div class="kv"><b>Webhook</b><span>' + esc(h.webhookHost) + '</span><b>Email</b><span>' + esc(h.email) + '</span><b>Fires on</b><span>' + esc((h.on || []).join(', ') || '(nothing — switched off)') + '</span><b>Signing secret</b><span>' + esc(h.secret) + '</span><b>Email binding</b><span>' + esc(h.emailBinding) + '</span><b>Email from</b><span>' + esc(h.emailFrom) + '</span></div><p style="color:var(--muted)">Runs after the reply is sent; the outcome lands in the Audit tab as handoff-webhook-sent / -failed, handoff-email-sent / -failed / -skipped. See docs/CUSTOMIZE.md → "When it hands off, tell someone".</p>'; })(d.handoffActions) + (function (b) { b = b || {}; return '<h4>Booking (project.json → booking)</h4><div class="kv"><b>Status</b><span>' + esc(b.status) + '</span><b>Provider</b><span>' + esc(b.provider) + '</span><b>Event type id</b><span>' + esc(String(b.eventTypeId)) + '</span><b>Timezone</b><span>' + esc(b.timezone) + '</span><b>Duration note</b><span>' + esc(b.durationNote) + '</span><b>API key</b><span>' + esc(b.apiKey) + '</span><b>API base</b><span>' + esc(b.baseUrl) + '</span><b>Fallback link</b><span>' + esc(b.bookingUrl) + '</span></div><p style="color:var(--muted)">A booking bot with a calendar wired up offers real free times and books the one the visitor picks (booking-slots-offered / booking-created in the Audit tab). Without one it hands over the link. See docs/CUSTOMIZE.md → "Booking as an action (Cal.com)".</p>'; })(d.booking);
   if (hoodTab === 'audit') { renderAudit(); return; }
   if (hoodTab === 'leads') { renderLeads(); return; }
+  if (hoodTab === 'conversations') { renderConversations(); return; }
   if (hoodTab === 'source') { box.innerHTML = '<h4>Engine source (snapshot taken at deploy)</h4><select id="srcsel">' + (d.sources || []).map((n) => '<option>' + esc(n) + '</option>').join('') + '</select><div id="srcbox"></div>'; const load = async () => { const n = $('srcsel').value; $('srcbox').innerHTML = '<p class="thinking"><span>Loading ' + esc(n) + '</span></p>'; try { const t = await (await fetch('/api/admin/source?name=' + encodeURIComponent(n), { headers: { 'x-admin-token': ADMIN } })).text(); $('srcbox').innerHTML = pre(t); } catch { $('srcbox').innerHTML = '<p style="color:var(--danger)">Could not load ' + esc(n) + '.</p>'; } }; $('srcsel').onchange = load; load(); }
 }
 
@@ -1142,6 +1264,89 @@ async function renderGaps() {
       renderGaps();
     } catch (err) { b.disabled = false; if (msg) { msg.style.color = 'var(--danger)'; msg.textContent = err.message; } }
   };
+}
+
+// ---- Conversations tab: visitors who pressed "Talk to a person", and the thread with each ----
+// The list refreshes every 30 s while the panel is open (with the badge); the reply box is
+// never re-rendered underneath you — only the list and the thread are.
+let convTicker = null, pendingConv = '', convScope = 'this', convStatus = 'waiting', convOpen = '';
+const adminHeaders = () => ({ 'x-admin-token': ADMIN });
+const convStatusChip = (s) => '<span class="flag' + (s === 'open' ? ' hard' : '') + '">' + ({ open: 'needs a reply', answered: 'you replied — waiting on them', closed: 'closed' }[s] || esc(s)) + '</span>';
+async function refreshConvBadge() {
+  if (!ADMIN) return;
+  try { const r = await fetch('/api/admin/handoffs?project=*&status=open&limit=1', { headers: adminHeaders() }); const d = await r.json(); const b = $('convbadge'); b.textContent = d.openCount || 0; b.hidden = !d.openCount; } catch {}
+}
+async function renderConversations() {
+  const box = $('hoodbody');
+  box.innerHTML = '<h4>Conversations — visitors who asked for a person</h4><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="convbar">'
+    + [['waiting', 'waiting'], ['open', 'need a reply'], ['closed', 'closed'], ['all', 'all']].map(([k, l]) => '<button class="iconbtn" data-st="' + k + '"' + (convStatus === k ? ' style="background:var(--panel)"' : '') + '>' + l + '</button>').join('')
+    + '<span class="spacer"></span><button class="iconbtn" data-s="this"' + (convScope === 'this' ? ' style="background:var(--panel)"' : '') + '>this project</button><button class="iconbtn" data-s="all"' + (convScope === 'all' ? ' style="background:var(--panel)"' : '') + '>all projects</button><button class="iconbtn" data-r="1">Refresh</button></div>'
+    + '<div id="convlist"><p class="thinking"><span>Reading the requests</span></p></div><div id="convdetail"></div>';
+  $('convbar').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.st) convStatus = b.dataset.st; if (b.dataset.s) convScope = b.dataset.s; renderConversations(); };
+  await refreshConversations();
+  if (pendingConv) { const id = pendingConv; pendingConv = ''; openConversation(id); }
+  else if (convOpen) openConversation(convOpen);
+}
+async function refreshConversations() {
+  const list = $('convlist'); if (!list) return;
+  try {
+    const r = await fetch('/api/admin/handoffs?project=' + encodeURIComponent(convScope === 'all' ? '*' : state.project.id) + '&status=' + convStatus + '&limit=200', { headers: adminHeaders() });
+    const d = await r.json();
+    if (!d.enabled) { list.innerHTML = '<p style="color:var(--muted)">' + esc(d.reason) + '</p>'; return; }
+    const b = $('convbadge'); b.textContent = d.openCount || 0; b.hidden = !d.openCount;
+    if (!d.rows.length) list.innerHTML = '<p style="color:var(--muted)">Nothing ' + (convStatus === 'all' ? 'yet' : convStatus === 'open' ? 'needs a reply' : convStatus) + '. A visitor presses <b>Talk to a person</b> (under a refusal, or in the header) and their request appears here; the bot\'s webhook gets a link to it too.</p>';
+    else list.innerHTML = '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px"><tr style="color:var(--muted)"><th style="text-align:left;padding:4px 8px 4px 0">when</th><th style="text-align:left;padding:4px 8px">who</th><th style="text-align:left;padding:4px 8px">their last line</th><th style="text-align:left;padding:4px 8px">status</th><th></th></tr>'
+      + d.rows.map((row) => '<tr style="border-top:1px solid var(--edge);vertical-align:top"><td style="padding:6px 8px 6px 0;white-space:nowrap;color:var(--muted)">' + esc(whenAt(row.updated_at)) + '<br>' + esc(row.botName || row.bot) + '</td><td style="padding:6px 8px;word-break:break-all">' + (row.visitor ? '<b>' + esc(row.visitor) + '</b>' : '<span style="color:var(--muted)">no email given</span>') + '</td><td style="padding:6px 8px">' + esc(row.lastVisitor || '—') + (row.messages ? '<br><span style="color:var(--muted)">' + row.messages + ' message' + (row.messages === 1 ? '' : 's') + ' in the thread</span>' : '') + '</td><td style="padding:6px 8px;white-space:nowrap">' + convStatusChip(row.status) + '</td><td style="padding:6px 0;text-align:right"><button class="iconbtn" data-open="' + esc(row.id) + '">Open</button></td></tr>').join('')
+      + '</table></div><p style="color:var(--muted);margin-top:10px">' + esc(d.note) + '</p>';
+    list.onclick = (e) => { const b = e.target.closest('button[data-open]'); if (b) openConversation(b.dataset.open); };
+  } catch (err) { list.innerHTML = '<p style="color:var(--danger)">Could not read the requests (' + esc(err.message) + ').</p>'; }
+  if (convOpen && $('convthread')) refreshThread(convOpen);
+}
+function renderThread(d) {
+  const t = $('convthread'); if (!t) return;
+  t.innerHTML = d.messages.length
+    ? '<div class="thread">' + d.messages.map((m) => '<div class="tm' + (m.from === 'owner' ? ' owner' : '') + '">' + esc(m.text) + '<small>' + (m.from === 'owner' ? 'you' : 'the visitor') + ' · ' + esc(whenAt(m.created_at)) + '</small></div>').join('') + '</div>'
+    : '<p style="color:var(--muted)">They haven\'t written anything beyond the chat above. Say hello — it lands in their chat within about ten seconds.</p>';
+  const st = $('convstatus'); if (st) st.innerHTML = convStatusChip(d.status);
+  if (d.status === 'closed' && $('convreply')) $('convreplybox').innerHTML = '<p style="color:var(--muted)">Closed. The visitor\'s page has gone back to the bot.</p>';
+}
+async function refreshThread(id) {
+  try { const r = await fetch('/api/admin/handoff/' + encodeURIComponent(id), { headers: adminHeaders() }); if (r.ok) renderThread(await r.json()); } catch {}
+}
+async function openConversation(id) {
+  convOpen = id; const box = $('convdetail'); if (!box) return;
+  box.innerHTML = '<h4>Conversation</h4><p class="thinking"><span>Loading</span></p>';
+  try {
+    const r = await fetch('/api/admin/handoff/' + encodeURIComponent(id), { headers: adminHeaders() });
+    const d = await r.json(); if (!r.ok) throw new Error(d.error || r.status);
+    box.innerHTML = '<h4>' + esc(d.botName || d.bot) + ' · ' + (d.visitor ? esc(d.visitor) : 'no email given') + ' · ' + esc(whenAt(d.created_at)) + ' <span id="convstatus">' + convStatusChip(d.status) + '</span></h4>'
+      + '<details style="margin-bottom:10px"><summary style="cursor:pointer;color:var(--muted)">The chat before they pressed the button — ' + d.transcript.length + ' turn' + (d.transcript.length === 1 ? '' : 's') + ', redacted</summary><div class="thread">' + (d.transcript.length ? d.transcript.map((m) => '<div class="tm">' + esc(m.content) + '<small>' + (m.role === 'user' ? 'the visitor' : 'the bot') + '</small></div>').join('') : '<p style="color:var(--muted)">They pressed the button before asking the bot anything.</p>') + '</div></details>'
+      + '<div id="convthread"></div>'
+      + '<div id="convreplybox">' + (d.status === 'closed' ? '<p style="color:var(--muted)">Closed. The visitor\'s page has gone back to the bot.</p>'
+        : '<textarea id="convreply" placeholder="Write to the visitor. It appears in their chat within about ten seconds." maxlength="' + (d.limits?.textChars || 2000) + '"></textarea><div class="btnrow" style="margin-top:6px"><button class="btn primary" id="convsend">Reply</button><button class="btn" id="convclose" title="The bot takes over again on their page">Close the conversation</button><span id="convmsg" style="color:var(--muted);font-size:12.5px"></span></div>') + '</div>';
+    renderThread(d);
+    const send = $('convsend'); if (send) send.onclick = async () => {
+      const text = $('convreply').value.trim(); if (!text) return;
+      send.disabled = true; $('convmsg').textContent = 'Sending…';
+      try {
+        const r2 = await fetch('/api/admin/handoff/' + encodeURIComponent(id) + '/reply', { method: 'POST', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ text }) });
+        const j = await r2.json();
+        if (!r2.ok) throw new Error(j.error || r2.status);
+        $('convreply').value = ''; $('convmsg').textContent = 'Sent. They see it on their next poll (up to 10 s).';
+        await refreshThread(id); refreshConversations();
+      } catch (err) { $('convmsg').textContent = 'Not sent: ' + err.message; }
+      finally { send.disabled = false; }
+    };
+    const close = $('convclose'); if (close) close.onclick = async () => {
+      if (!confirm('Close this conversation? The visitor sees it closed and the bot takes over again.')) return;
+      close.disabled = true;
+      try {
+        const r2 = await fetch('/api/admin/handoff/' + encodeURIComponent(id) + '/close', { method: 'POST', headers: adminHeaders() });
+        const j = await r2.json(); if (!r2.ok) throw new Error(j.error || r2.status);
+        await refreshThread(id); refreshConversations(); refreshConvBadge();
+      } catch (err) { $('convmsg').textContent = 'Not closed: ' + err.message; close.disabled = false; }
+    };
+  } catch (err) { box.innerHTML = '<p style="color:var(--danger)">Could not open that conversation (' + esc(err.message) + ').</p>'; }
 }
 
 // Under the hood → Files: the scan's record from D1 (library_events). Newest first.

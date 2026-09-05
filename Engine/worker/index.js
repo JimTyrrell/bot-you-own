@@ -9,6 +9,7 @@ import { normaliseHandoffActions, stripIntakeMarker, handoffEvent, runHandoffAct
 import { listLeads, getLead, summariseLead, sendLead, maybeAutoLead, leadsConfig, cleanVisitor } from "./leads.js";
 import { listGaps, getGap, setGapState, draftGap } from "./gaps.js";
 import { normaliseBooking, bookingLive, bookingStep, bookingView } from "./booking.js";
+import { isHandoffId, createHandoff, readHandoff, addHandoffMessage, closeHandoff, listHandoffs, getHandoff, notifyHumanRequested, PERSON_LIMITS } from "./person.js";
 
 // ============================================================================
 //  THE WORKER. Four routes and a static folder.
@@ -30,6 +31,12 @@ import { normaliseBooking, bookingLive, bookingStep, bookingView } from "./booki
 //    DELETE remove the crawler instance and its pages
 //    GET  /api/admin/gaps?project=<id>&days=30&limit=20   what the bot couldn't answer, as a to-do list
 //    POST /api/admin/gaps/<id>/draft · /accept · /dismiss · /reopen   (Engine/worker/gaps.js)
+//  Talk to a person (same door as /api/chat; Engine/worker/person.js):
+//    POST /api/handoff                    → { id }   the visitor asks for a human
+//    GET  /api/handoff/<id>?since=<msgId> → status + the owner's new messages (the page polls)
+//    POST /api/handoff/<id>/message       → the visitor's reply into the thread
+//  Admin: GET /api/admin/handoffs?project=<id|*>&status=open|waiting|closed|all
+//    GET /api/admin/handoff/<id> · POST /api/admin/handoff/<id>/reply · POST …/close
 // ============================================================================
 
 export default {
@@ -72,6 +79,7 @@ export default {
       if (url.pathname === "/api/admin/library" || url.pathname.startsWith("/api/admin/library/")) return handleLibrary(request, env, url);
       if (url.pathname === "/api/admin/leads" || url.pathname.startsWith("/api/admin/leads/")) return handleLeads(request, env, url);
       if (url.pathname === "/api/admin/gaps" || url.pathname.startsWith("/api/admin/gaps/")) return handleGaps(request, env, url);
+      if (url.pathname === "/api/admin/handoffs" || url.pathname.startsWith("/api/admin/handoff/")) return handlePersonAdmin(request, env, url);
       if (url.pathname === "/api/admin/projects") return json({ projects: await resolveList(env), jobs: Object.values(MODES).map((m) => ({ id: m.id, blurb: m.blurb, role: m.role, shape: m.shape, done: m.done })), model: CONFIG.model, canSave: Boolean(env.DB), rootPrompt: ROOT_PROMPT_FILES, github: { repo: CONFIG.github?.repo || "", branch: CONFIG.github?.branch || "main", ready: Boolean(CONFIG.github?.repo && env.GITHUB_TOKEN) }, library: libraryMeta(env, CONFIG) });
       if (url.pathname === "/api/admin/project") {
         const id = String(url.searchParams.get("id") || "").toLowerCase();
@@ -116,6 +124,9 @@ export default {
       if (locked && !authed) return json({ locked: true, accessMode: accessMode(locked, wantEmail), siteName: CONFIG.siteName, accent: CONFIG.accent });
       const all = await resolveList(env);
       const projects = CONFIG.singleProject ? all.filter((p) => p.id === CONFIG.defaultProject) : all;
+      // handoffText rides along so the page can offer "Talk to a person" under a
+      // reply that contains it. It is said to visitors word for word anyway.
+      for (const p of projects) p.handoffText = (await resolveProject(env, p.id)).handoffText || "";
       return json({
         version: await versionStamp(env),
         locked,
@@ -158,6 +169,12 @@ export default {
       if (request.method !== "POST") return json({ error: "POST only" }, 405);
       if (!authed) return json({ error: "locked", reply: "This bot is locked. Enter the passphrase to continue." }, 401);
       return url.pathname === "/api/transcribe" ? handleTranscribe(request, env) : handleSpeak(request, env);
+    }
+
+    // Talk to a person. Same door as /api/chat: the visitor token (or admin) opens it.
+    if (url.pathname === "/api/handoff" || url.pathname.startsWith("/api/handoff/")) {
+      if (!authed) return json({ error: "locked", reply: "This bot is locked. Enter the passphrase to continue." }, 401);
+      return handlePerson(request, env, ctx, url, { wantEmail, isAdmin });
     }
 
     return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Not found", { status: 404 });
@@ -667,6 +684,103 @@ async function handleGaps(request, env, url) {
   return json({ error: "method" }, 405);
 }
 
+// --- Talk to a person (visitor side). Engine/worker/person.js has the tables. ---
+//   POST /api/handoff                     { project, chatId, transcript, visitor: { email }, note } → { id }
+//   GET  /api/handoff/<id>?since=<msgId>  { status, messages } — the page polls this every 10 s
+//   POST /api/handoff/<id>/message        { text } → the visitor's reply into the thread
+// The id is the visitor's secret: 48 random hex characters, stored with their chat.
+async function handlePerson(request, env, ctx, url, { wantEmail = false, isAdmin = false } = {}) {
+  if (!env.DB) return json({ error: "no-database", reply: "Talking to a person isn't switched on here: no database is bound (wrangler.jsonc → d1_databases)." }, 503);
+  await ensureSchema(env);
+  const parts = url.pathname.split("/").filter(Boolean);        // api, handoff, <id>, <action>
+  try {
+    if (parts.length === 2) {
+      if (request.method !== "POST") return json({ error: "POST only" }, 405);
+      if (!(await allowed(env, request))) return json({ error: "rate-limited", reply: "Give me a moment and try again." }, 429);
+      let b; try { b = await request.json(); } catch { return json({ error: "bad request" }, 400); }
+      const visitor = String(b.visitor?.email || "").trim().toLowerCase().slice(0, 254);
+      if (wantEmail && !isAdmin && !EMAIL_SHAPE.test(visitor)) return json({ error: "email", reply: "Please enter your email address to start." }, 401);
+      const who = visitor || (isAdmin ? "admin" : "");
+      const project = await resolveProject(env, String(b.project || ""));
+      const chatId = String(b.chatId || "").replace(/[^\w-]/g, "").slice(0, 40);
+      if (!chatId) return json({ error: "chatId is required" }, 400);
+      const r = await createHandoff(env, { bot: project.id || CONFIG.defaultProject, chatId, visitor: who, transcript: b.transcript, note: b.note });
+      if (r.exists) return json({ error: "already-open", id: r.exists, reply: "You already asked for a person in this chat. They'll reply here." }, 409);
+      // The deep link opens under the hood → Conversations on that request (admin code asked for if needed).
+      let page = ""; try { const u = new URL(request.url); page = `${u.origin}/?project=${encodeURIComponent(project.id || "")}&handoff=${r.id}`; } catch {}
+      console.log(JSON.stringify({ event: "human-requested", project: project.name, who, handoff: r.id }));
+      ctx.waitUntil(notifyHumanRequested(env, project, { id: r.id, visitor: who, transcript: r.transcript, note: r.note, url: page }));
+      return json({ id: r.id, status: "open", flags: ["human-requested"] }, 201);
+    }
+    const id = String(parts[2] || "");
+    if (!isHandoffId(id)) return json({ error: "no such conversation" }, 404);
+    const action = parts[3] || "";
+    if (!action && request.method === "GET") {
+      const h = await readHandoff(env, id, url.searchParams.get("since"));
+      return h ? json(h) : json({ error: "no such conversation" }, 404);
+    }
+    if (action === "message" && request.method === "POST") {
+      if (!(await allowed(env, request))) return json({ error: "rate-limited", reply: "Give me a moment and try again." }, 429);
+      let b; try { b = await request.json(); } catch { return json({ error: "bad request" }, 400); }
+      const r = await addHandoffMessage(env, id, "visitor", b.text);
+      if (r.missing) return json({ error: "no such conversation" }, 404);
+      if (r.closed) return json({ error: "closed", status: "closed", reply: "That conversation was closed. I'm the bot again — ask me anything." }, 409);
+      if (r.empty) return json({ error: "say something first" }, 400);
+      if (r.full) return json({ error: "full", reply: `That's ${PERSON_LIMITS.visitorMessages} messages in this conversation — the most it holds. Start a new chat if you need more.` }, 429);
+      return json({ ok: true, message: { id: r.id, from: r.from, text: r.text, created_at: r.created_at }, status: r.status });
+    }
+  } catch (err) {
+    console.error("talk-to-a-person request failed", err);
+    return json({ error: "Talk to a person hit an error: " + String(err?.message || err).slice(0, 200) }, 500);
+  }
+  return json({ error: "method" }, 405);
+}
+
+// --- Talk to a person (owner side, admin token). Under the hood → Conversations. ---
+//   GET  /api/admin/handoffs?project=<id|*>&status=open|waiting|closed|all&limit=100
+//   GET  /api/admin/handoff/<id>              transcript + the whole thread
+//   POST /api/admin/handoff/<id>/reply        { text } → into the thread; status → answered
+//   POST /api/admin/handoff/<id>/close        the bot takes over again on the visitor's page
+async function handlePersonAdmin(request, env, url) {
+  if (!env.DB) return json({ enabled: false, reason: "No D1 database is bound (wrangler.jsonc → d1_databases), so there is nowhere to keep a conversation. The button on the chat page says so too.", rows: [], openCount: 0 });
+  await ensureSchema(env);
+  const parts = url.pathname.split("/").filter(Boolean);        // api, admin, handoffs | api, admin, handoff, <id>, <action>
+  try {
+    if (parts[2] === "handoffs") {
+      if (request.method !== "GET") return json({ error: "method" }, 405);
+      const bot = String(url.searchParams.get("project") || "*").toLowerCase().replace(/[^a-z0-9*-]+/g, "-").slice(0, 40) || "*";
+      const status = String(url.searchParams.get("status") || "waiting");
+      const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "100", 10) || 100, 1), 500);
+      const list = await listHandoffs(env, { bot, status, limit });
+      const names = {}; for (const r of list.rows) if (!(r.bot in names)) names[r.bot] = (await resolveProject(env, r.bot)).name || r.bot;
+      return json({ enabled: true, ...list, rows: list.rows.map((r) => ({ ...r, botName: names[r.bot] })), limits: PERSON_LIMITS, note: "The transcript (the chat before they pressed the button) is redacted like the audit log. The thread itself is not: a phone number the visitor gives you here is the point. The visitor column is what they typed at the door; nobody verified it." });
+    }
+    const id = String(parts[3] || "");
+    if (!isHandoffId(id)) return json({ error: "no such conversation" }, 404);
+    const action = parts[4] || "";
+    if (!action && request.method === "GET") {
+      const h = await getHandoff(env, id);
+      return h ? json({ ...h, botName: (await resolveProject(env, h.bot)).name || h.bot, limits: PERSON_LIMITS }) : json({ error: "no such conversation" }, 404);
+    }
+    if (action === "reply" && request.method === "POST") {
+      let b; try { b = await request.json(); } catch { return json({ error: "bad request" }, 400); }
+      const r = await addHandoffMessage(env, id, "owner", b.text);
+      if (r.missing) return json({ error: "no such conversation" }, 404);
+      if (r.closed) return json({ error: "That conversation is closed. The visitor's page has gone back to the bot." }, 409);
+      if (r.empty) return json({ error: "write something first" }, 400);
+      return json({ ok: true, message: { id: r.id, from: r.from, text: r.text, created_at: r.created_at }, status: r.status });
+    }
+    if (action === "close" && request.method === "POST") {
+      const done = await closeHandoff(env, id);
+      return done ? json({ ok: true, status: "closed" }) : json({ ok: false, error: "already closed, or no such conversation" }, 409);
+    }
+  } catch (err) {
+    console.error("conversations request failed", err);
+    return json({ error: "Conversations hit an error: " + String(err?.message || err).slice(0, 200) }, 500);
+  }
+  return json({ error: "method" }, 405);
+}
+
 // One character over and over, or one word over and over, is not an answer.
 function isDegenerate(text) {
   const t = String(text).trim();
@@ -891,6 +1005,12 @@ async function ensureSchema(env) {
     // Gaps: one row per refused question per bot, with its state (open / drafted / accepted / dismissed). See Engine/worker/gaps.js.
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS gaps (id INTEGER PRIMARY KEY AUTOINCREMENT, bot TEXT NOT NULL, question_key TEXT NOT NULL, question TEXT, count_seen INTEGER DEFAULT 0, last_seen TEXT, state TEXT NOT NULL DEFAULT 'open', draft TEXT, grounded INTEGER, missing TEXT, file TEXT, updated_at TEXT NOT NULL)`),
     env.DB.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_gaps_bot_key ON gaps(bot, question_key)`),
+    // Talk to a person: one row per request, and the thread. See Engine/worker/person.js.
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS handoffs (id TEXT PRIMARY KEY, bot TEXT, chat_id TEXT, visitor TEXT, transcript TEXT, status TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`),
+    env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_handoffs_status ON handoffs(status, updated_at)`),
+    env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_handoffs_chat ON handoffs(bot, chat_id, status)`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS handoff_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, handoff_id TEXT NOT NULL, from_role TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL)`),
+    env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_hmsg_handoff ON handoff_messages(handoff_id, id)`),
   ]);
   SCHEMA_OK = true;
 }
@@ -1065,6 +1185,7 @@ async function engineView(env, projectId) {
         "booking-incomplete": "the model tried to confirm without a time, a name or an email; asked for the missing bit",
         "handoff-webhook-sent / handoff-webhook-failed": "the bot's handoff webhook was called after the reply; Audit tab only",
         "handoff-email-sent / -failed / -skipped": "the handoff email; skipped = no send_email binding or no handoffEmailFrom",
+        "human-requested": "the visitor pressed Talk to a person; the request is under the hood → Conversations (and on the webhook, with a link)",
         "library-used": "excerpts from this bot's documents (AI Search) were put in the prompt for this question",
         "degenerate-reply": "the model emitted one character or one word over and over, twice; replaced with the handoff",
         "degenerate-retried": "the first reply was garbage; a second call gave a proper answer",
