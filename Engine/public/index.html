@@ -934,12 +934,63 @@ async function renderAudit() {
     const st = d.stats || {};
     const when = (t) => { try { return new Date(t).toISOString().slice(0, 16).replace('T', ' '); } catch { return t; } };
     let html = '<div class="kv" style="margin-bottom:12px"><b>Last 7 days</b><span>' + (st.turns || 0) + ' turns · ' + (st.refused || 0) + ' refused · ' + (st.flagged || 0) + ' flagged by the firewall · ' + (st.visitors || 0) + ' distinct visitors</span></div>';
-    if (d.topRefused?.length) html += '<h4>Most-refused questions (7 days) — each one is a page to write</h4><ol style="margin:0 0 12px;padding-left:20px">' + d.topRefused.map((t) => '<li>' + esc(t.asked) + ' <span style="color:var(--muted)">×' + t.n + '</span></li>').join('') + '</ol>';
+    // This project: the gaps list (refused → draft → edit → add). All projects: the plain top-10.
+    if (auditScope === 'this') html += '<h4>Gaps — what ' + esc(state.project.name) + ' couldn\'t answer (30 days). Each one is a page to write; draft it here.</h4><div id="gaps"><p class="thinking"><span>Grouping the refusals</span></p></div>';
+    else if (d.topRefused?.length) html += '<h4>Most-refused questions (7 days) — each one is a page to write. Pick a project to draft the answers.</h4><ol style="margin:0 0 12px;padding-left:20px">' + d.topRefused.map((t) => '<li>' + esc(t.asked) + ' <span style="color:var(--muted)">×' + t.n + '</span></li>').join('') + '</ol>';
     html += '<h4>' + (d.rows.length ? d.rows.length + ' most recent' : 'No turns yet') + '</h4>';
     html += '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">' + d.rows.map((row) => '<tr style="border-top:1px solid var(--edge);vertical-align:top"><td style="padding:6px 8px 6px 0;white-space:nowrap;color:var(--muted)">' + esc(when(row.created_at)) + '<br>' + esc(row.project) + (row.visitor ? '<br>' + esc(row.visitor) : '') + '</td><td style="padding:6px 0"><b>' + esc(row.asked) + '</b><br><span style="color:var(--muted)">' + esc(row.answered) + '</span>' + (row.flags ? '<br>' + row.flags.split(',').map((f) => '<span class="flag' + (/blocked|error/.test(f) ? ' hard' : '') + '">' + esc(FLAG_LABELS[f] || f) + '</span>').join(' ') : '') + (row.refused ? ' <span class="flag">refused / handed off</span>' : '') + '</td></tr>').join('') + '</table></div>';
     html += '<p style="color:var(--muted);margin-top:12px">' + esc(d.note) + '</p>';
     body.outerHTML = html;
+    if (auditScope === 'this') renderGaps();
   } catch (err) { box.querySelector('.thinking').outerHTML = '<p style="color:var(--danger)">Could not read the log (' + esc(err.message) + ').</p>'; }
+}
+
+// Under the hood → Audit → Gaps: the refused questions as a to-do list.
+// Draft an answer → edit it → Add to faq.md (live on the saved copy) → Commit to GitHub when you're happy.
+let gapsOpen = {};   // gap id → true when its editor is open
+async function renderGaps() {
+  const box = $('gaps'); if (!box) return;
+  const when = (t) => { try { return new Date(t).toISOString().slice(0, 10); } catch { return t; } };
+  const post = (path, body) => fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-token': ADMIN }, body: body ? JSON.stringify(body) : undefined }).then((r) => r.json());
+  let d;
+  try { d = await (await fetch('/api/admin/gaps?project=' + encodeURIComponent(state.project.id) + '&days=30&limit=20', { headers: { 'x-admin-token': ADMIN } })).json(); }
+  catch (err) { box.innerHTML = '<p style="color:var(--danger)">Could not read the gaps (' + esc(err.message) + ').</p>'; return; }
+  if (!d.enabled) { box.innerHTML = '<p style="color:var(--muted)">' + esc(d.reason || d.error || 'Not available.') + '</p>'; return; }
+  if (!d.rows.length) { box.innerHTML = '<p style="color:var(--muted)">Nothing refused in the last ' + d.days + ' days. When the bot can\'t answer something, it shows up here.</p>'; return; }
+  const files = (d.files || []).slice(); if (!files.includes('faq.md')) files.unshift('faq.md');
+  const badge = (g) => g.state === 'accepted' ? '<span class="flag">added to ' + esc(g.file || 'faq.md') + '</span>' : g.state === 'dismissed' ? '<span class="flag" style="opacity:.6">dismissed</span>' : g.state === 'drafted' ? (g.grounded ? '<span class="flag">drafted · grounded in your files</span>' : '<span class="flag hard">drafted · needs your input</span>') : '';
+  const editor = (g) => !gapsOpen[g.id] ? '' : '<div style="margin:8px 0 4px">'
+    + (g.grounded ? '<span class="flag">grounded — every fact below is in your files</span>' : '<span class="flag hard">needs your input — fill the blanks before adding</span>')
+    + (g.missing?.length ? '<div style="color:var(--muted);margin:6px 0">The files don\'t say: ' + g.missing.map(esc).join(' · ') + '</div>' : '')
+    + '<textarea data-gdraft="' + g.id + '" style="width:100%;min-height:140px;margin:6px 0;padding:10px 12px;border:1px solid var(--edge);border-radius:10px;background:var(--bg);color:var(--text);font:inherit;font-size:12.5px;resize:vertical">' + esc(g.draft) + '</textarea>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><span style="color:var(--muted)">Add to</span><select data-gfile="' + g.id + '" style="margin:0">' + files.map((f) => '<option' + (f === (g.file || 'faq.md') ? ' selected' : '') + '>' + esc(f) + '</option>').join('') + '</select>'
+    + '<button class="iconbtn" data-gact="accept" data-gid="' + g.id + '">Add to file</button><button class="iconbtn" data-gact="draft" data-gid="' + g.id + '">Redraft</button><button class="iconbtn" data-gact="close" data-gid="' + g.id + '">Close</button><span data-gmsg="' + g.id + '" style="color:var(--muted)"></span></div></div>';
+  const row = (g) => '<div style="border-top:1px solid var(--edge);padding:8px 0' + (g.state === 'dismissed' ? ';opacity:.7' : '') + '"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><b style="flex:1;min-width:200px">' + esc(g.question) + '</b><span style="color:var(--muted);white-space:nowrap">×' + g.count + ' · last ' + esc(when(g.lastSeen)) + '</span>' + badge(g)
+    + (g.state === 'open' ? '<button class="iconbtn" data-gact="draft" data-gid="' + g.id + '">Draft an answer</button><button class="iconbtn" data-gact="dismiss" data-gid="' + g.id + '">Dismiss</button>' : '')
+    + (g.state === 'drafted' ? '<button class="iconbtn" data-gact="open" data-gid="' + g.id + '">' + (gapsOpen[g.id] ? 'Hide' : 'Edit &amp; add') + '</button><button class="iconbtn" data-gact="dismiss" data-gid="' + g.id + '">Dismiss</button>' : '')
+    + (g.state === 'accepted' ? '<button class="iconbtn" data-gact="open" data-gid="' + g.id + '">' + (gapsOpen[g.id] ? 'Hide' : 'View') + '</button>' : '')
+    + (g.state === 'dismissed' ? '<button class="iconbtn" data-gact="reopen" data-gid="' + g.id + '">Reopen</button>' : '')
+    + '<span data-gmsg="' + g.id + '" style="color:var(--muted)"></span></div>' + (g.state !== 'open' ? editor(g) : '') + '</div>';
+  box.innerHTML = d.rows.map(row).join('') + (d.source === 'saved' ? '<p style="color:var(--muted);margin-top:8px">This bot runs from its saved copy. Configure → Commit to GitHub writes the folder.</p>' : '');
+  box.onclick = async (e) => {
+    const b = e.target.closest('button[data-gact]'); if (!b) return;
+    const id = b.dataset.gid, act = b.dataset.gact, base = '/api/admin/gaps/' + id + '/', pid = '?project=' + encodeURIComponent(state.project.id);
+    const msg = box.querySelector('[data-gmsg="' + id + '"]');
+    if (act === 'open') { gapsOpen[id] = !gapsOpen[id]; renderGaps(); return; }
+    if (act === 'close') { gapsOpen[id] = false; renderGaps(); return; }
+    b.disabled = true;
+    try {
+      if (act === 'draft') { if (msg) msg.textContent = 'Reading the files and writing a draft…'; const j = await post(base + 'draft' + pid); if (j.error) throw new Error(j.error); gapsOpen[id] = true; }
+      if (act === 'accept') {
+        const draft = box.querySelector('textarea[data-gdraft="' + id + '"]')?.value || '', file = box.querySelector('select[data-gfile="' + id + '"]')?.value || 'faq.md';
+        if (/\[fill in:/i.test(draft) && !confirm('The draft still has blanks ("[fill in: …]"). Add it anyway? The bot will read the blanks as text.')) { b.disabled = false; return; }
+        if (msg) msg.textContent = 'Adding…'; const j = await post(base + 'accept' + pid, { draft, file }); if (j.error) throw new Error(j.error); gapsOpen[id] = false;
+        await renderGaps(); const m2 = box.querySelector('[data-gmsg="' + id + '"]'); if (m2) m2.textContent = 'Live now in the saved copy. Commit to GitHub to make it permanent.'; return;
+      }
+      if (act === 'dismiss' || act === 'reopen') { const j = await post(base + act); if (j.error) throw new Error(j.error); gapsOpen[id] = false; }
+      renderGaps();
+    } catch (err) { b.disabled = false; if (msg) { msg.style.color = 'var(--danger)'; msg.textContent = err.message; } }
+  };
 }
 
 // Under the hood → Files: the scan's record from D1 (library_events). Newest first.
