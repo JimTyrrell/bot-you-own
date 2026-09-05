@@ -63,6 +63,7 @@ bot's folder wins. Jobs cascade the same way: `YourBots/my-shop/prompt/jobs/answ
 | `example-co` | answer bot for a machine-servicing firm | `strict` | the workshop's Hire #1. Handoff instead of guessing |
 | `brightside-dental` | intake bot for a dental practice | `strict` | one question at a time, emergency routing, no invented prices |
 | `ledgerly-support` | concierge for a bookkeeping SaaS | `strict` | refund/discount traps, answer-before-pitch, link allowlist |
+| `magic-model` | diagnostic concierge for a creator-brand coaching offer ("one destination, three problems, nine paths") | `strict` | diagnose-then-route: name the person's problem back to them, show ONE column of the map, one next step; refuses prices and guarantees |
 
 Delete the sample folders you don't need before you go live (or leave them and
 set `singleProject: true` in `YourBots/config.js` so customers see only yours).
