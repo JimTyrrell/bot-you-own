@@ -93,7 +93,7 @@ export async function handleTrack(request, env, url, { isAdmin = false, adminEna
     return handleCoach(request, env, url, cfg);
   }
 
-  if (p === "/api/food/config") return json({ enabled: true, coachName: cfg.coachName, honesty: HONESTY, signIn: cfg.signIn.filter((s) => s.clientId), dailyPhotoLimit: cfg.dailyPhotoLimit, maxPhotoBytes: cfg.maxPhotoBytes });
+  if (p === "/api/food/config") return json({ enabled: true, name: String(cfg.name || "Plate"), coachName: cfg.coachName, honesty: HONESTY, signIn: cfg.signIn.filter((s) => s.clientId), dailyPhotoLimit: cfg.dailyPhotoLimit, maxPhotoBytes: cfg.maxPhotoBytes });
   if (!env.DB) return json({ error: "The food log needs the D1 database (wrangler.jsonc → d1_databases)." }, 503);
   await ensureTrackSchema(env);
   if (cfg.pepper === DEV_PEPPER) console.warn("FOODLOG_PEPPER is not set — user ids use the dev pepper. Set it before real people use this: npx wrangler secret put FOODLOG_PEPPER");

@@ -228,6 +228,7 @@ export const CONFIG = {
   //   — a hundredth of a cent. The free 10,000 neurons a day cover ~1,000 photos.
   foodLog: {
     enabled: true,                              // false = /food and /api/food/* don't exist
+    name: "Plate",                              // what the app calls itself (header, tab title). The address stays /food
     model: "@cf/google/gemma-4-26b-a4b-it",     // the vision model. Chosen by testing 5 plates — see docs/FOOD-LOG.md
     maxPhotoBytes: 2 * 1024 * 1024,             // the page shrinks photos to ≤1024 px first; this is the hard cap
     dailyPhotoLimit: 60,                        // vision calls per person per day (plates, labels, receipts, barcodes)

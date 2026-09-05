@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0d0d0d">
-<title>Food log</title>
+<title>Plate</title>
 <!-- ======================================================================
   THE FOOD LOG PAGE. Camera first, one tap, a ring and three bars.
   Everything it needs is in Engine/worker/food.js. No framework, no build.
@@ -115,7 +115,7 @@
 
   <!-- JOIN: the only form in the whole thing. Once. -->
   <section class="screen" id="s-join" hidden>
-    <div class="top"><h1>Food log</h1></div>
+    <div class="top"><h1>Plate</h1></div>
     <p class="muted" id="coachline"></p>
     <div class="card">
       <p style="font-size:20px;font-weight:700;margin:0 0 4px">Snap your plate.<br>Get the numbers.</p>
@@ -262,6 +262,7 @@ async function api(path, opts = {}) {
 // ---------- boot ----------
 (async function boot() {
   try { const c = await fetch('/api/food/config'); if (c.ok) CFG = await c.json(); } catch {}
+  if (CFG.name) { document.title = CFG.name; const h = document.querySelector('.top h1'); if (h) h.textContent = CFG.name; }
   if (CFG.coachName) $('coachline').textContent = 'Your coach: ' + CFG.coachName;
   $('honesty').textContent = CFG.honesty || '';
   renderSignIn();
