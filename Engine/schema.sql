@@ -40,3 +40,27 @@ CREATE TABLE IF NOT EXISTS leads (
   sent_at          TEXT                -- last time it was pushed to the webhook
 );
 CREATE INDEX IF NOT EXISTS idx_conv_visitor ON conversations(visitor, id);
+
+-- Talk to a person (Engine/worker/person.js). One row per request; the thread lives
+-- in handoff_messages. The id is 48 random hex characters and is the visitor's key.
+-- The Worker creates these itself on first use; kept here for reading.
+CREATE TABLE IF NOT EXISTS handoffs (
+  id         TEXT PRIMARY KEY,   -- 48 hex chars; stored with the visitor's chat, sent in the webhook link
+  bot        TEXT,               -- the bot's id (folder name)
+  chat_id    TEXT,               -- the page's chat id; one open request per chat
+  visitor    TEXT,               -- the email they gave at the door (email mode), 'admin', or empty
+  transcript TEXT,               -- JSON: the last 8 turns before the button, redacted like conversations
+  status     TEXT NOT NULL DEFAULT 'open',   -- open (waiting on you) | answered (waiting on them) | closed
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_handoffs_status ON handoffs(status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_handoffs_chat ON handoffs(bot, chat_id, status);
+CREATE TABLE IF NOT EXISTS handoff_messages (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,   -- the page polls with ?since=<id>
+  handoff_id TEXT NOT NULL,
+  from_role  TEXT NOT NULL,      -- visitor | owner
+  text       TEXT NOT NULL,      -- NOT redacted: "call me on …" is the point of the thread
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_hmsg_handoff ON handoff_messages(handoff_id, id);

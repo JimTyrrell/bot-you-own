@@ -113,6 +113,48 @@ in `YourBots/config.js`, uncomment the `send_email` block in `wrangler.jsonc`, d
 Under the hood → Gateway & model shows the webhook host, the email, `on`, and whether the
 secret and the email binding exist.
 
+## Talk to a person
+A handoff line sends the visitor away to a phone number. This keeps them in the chat.
+Under any reply where the bot declined (its handoff line, or the firewall had to add the
+contact) a **Talk to a person** chip appears; the same button is always in the header.
+Pressing it stores a request — which bot, the visitor's email if they gave one at the
+door, the last 8 turns — and the page says *"Someone will reply here. You can keep this
+tab open, or come back — the conversation is saved."* From then on whatever the visitor
+types goes to you, not the bot; your words show up in their chat as a **person** bubble
+(a different avatar, labelled "A person from <bot>"). The page checks for replies every
+10 seconds, and the request id is kept with the chat in their browser, so closing the
+tab and coming back tomorrow picks the same conversation up.
+
+**Where you answer.** Under the hood → **Conversations**: the requests newest first, with
+a red count on the tab while any are waiting. Open one to see the chat that led there,
+the thread so far, a reply box, and **Close the conversation** — when you close it, the
+visitor sees that, and the bot takes over again in the same chat. The tab refreshes
+itself every 30 seconds while the panel is open.
+
+**Hearing about it.** If the bot has a webhook (`project.json` → `handoffActions.webhook`,
+or Configure → "When it hands off, tell someone"), each request fires it with event
+`human-requested`, the transcript, the visitor email, and a `text` line that ends with a
+link straight to that conversation under the hood:
+```json
+{ "event": "human-requested", "bot": { "id": "brightside-dental", "name": "Brightside Dental" }, "visitor": "sam@example.com",
+  "handoffId": "8c22c258…", "transcript": [ … ], "url": "https://your-bot.workers.dev/?project=brightside-dental&handoff=8c22c258…",
+  "text": "[Brightside Dental] a visitor wants to talk to a person · sam@example.com\nLast asked: …\nReply here: https://…" }
+```
+Slack shows `text` as the message; click the link, enter the admin code if asked, and
+you are in the thread. Same signature header as the other handoff events. **Nothing here
+sends email** — the webhook and the Conversations tab are the two ways in.
+
+**What is stored, and the limits.** Two tables in the same D1 database (`Engine/schema.sql`
+→ `handoffs`, `handoff_messages`; created on first use). The transcript is redacted like
+the audit log (emails, phones, dates); the thread itself is **not** — "call me on
+555-0142" is the point of it — and the visitor column is whatever they typed at the door,
+unverified. One open request per chat (a second press resumes the first). A visitor can
+send 50 messages of up to 2,000 characters per request; pressing the button is
+rate-limited like the chat. The request id is 48 random characters and is the visitor's
+key to that one thread: whoever has it, plus the door passphrase, can read and write it.
+No database bound = the button says so, and nothing else changes. Tell people
+conversations are recorded.
+
 ## Leads: who asked, and what they want ⭐
 Turn on email mode (`YourBots/config.js` → `access.mode: "email"` or `"key+email"`)
 and every visitor leaves an address before they chat. From then on the bot is a
