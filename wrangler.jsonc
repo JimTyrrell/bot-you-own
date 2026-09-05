@@ -28,8 +28,11 @@
   // Rate limit per visitor: 30 messages a minute. Generous for a human, useless
   // for a script. ON by default — it's the first line of the firewall (LLM10).
   // period must be 10 or 60.
+  // The second one is for the passphrase screens only: 10 tries a minute per visitor,
+  // so nobody can sit there guessing. Remove it and the 30/min above still applies.
   "ratelimits": [
-    { "name": "RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } }
+    { "name": "RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } },
+    { "name": "UNLOCK_LIMITER", "namespace_id": "1002", "simple": { "limit": 10, "period": 60 } }
   ],
 
   // The audit log (D1). The Worker creates its own table on first use, so there is

@@ -135,13 +135,22 @@ set we run, in plain rules you can read.
 
 ---
 
-## Who can use it · `YourBots/config.js` → `access.mode`
+## Who can use it · `project.json` → `access` (per bot) · `YourBots/config.js` → `access.default` / `floor`
 | Mode | What a visitor sees | Use it for |
 |---|---|---|
 | `open` | nothing, just the chat | a public website bot (rely on the rate limit and a spend cap) |
-| `key` ⭐ default | a passphrase screen | demos, internal bots, anything without a spend cap yet |
 | `email` | "enter your email to start" | a members' or clients' bot where you want to know who asked |
+| `key` ⭐ default | a passphrase screen | demos, internal bots, anything without a spend cap yet |
 | `key+email` | both | a private bot with a record of who used it |
+| `admin` | "owner only" | a bot only you should talk to |
+| `draft` | "this bot is a draft" | a bot you're still building — only the Configure preview answers |
+
+Each bot says its own in `project.json`; leave it out and it gets the deployment
+default. The **floor** (`access.floor`) is the most open any bot may be — set it to
+`key` and every bot locks at once, the panic switch. `"listed": false` hides a bot
+from the sidebar (it still works by link and in the widget). A bot can name its
+own passphrase secret (`accessKey`). Under the hood → **Settings** shows what applies
+to every bot and why. `docs/CUSTOMIZE.md → Who can use it`.
 
 `email` is **identification, not authentication**: nobody verifies the address.
 It is stored in the visitor's browser, sent with every message, and logged with

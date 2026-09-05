@@ -63,14 +63,23 @@ export const CONFIG = {
   },
 
   // ---- 5. WHO CAN USE IT -----------------------------------------------------
+  // Each bot can say for itself in its project.json → "access". This is what a
+  // bot gets when it doesn't say (default), and the most OPEN any bot may be (floor).
+  // The modes, most open first:
   // "open"      — anyone with the link. For a public website bot.
-  // "key"       — a shared passphrase (the ACCESS_PASSPHRASE secret). Demos, internal bots.
   // "email"     — visitors type an email address before chatting; it is logged with
   //               every turn. Identification, not authentication: nobody checks it.
+  // "key"       — a shared passphrase (the ACCESS_PASSPHRASE secret). Demos, internal bots.
   // "key+email" — both: the passphrase to get in, then an email so you know who asked.
-  // If "key" is chosen but no ACCESS_PASSPHRASE secret exists, the bot falls back to
-  // open and says so in the logs. The admin code (ADMIN_PASSPHRASE) is separate.
-  access: { mode: "key" },
+  // "admin"     — only the admin code opens it. Bots only you should talk to.
+  // "draft"     — nobody but the Configure preview. Publish to open it.
+  // floor: a bot is never more open than this. "open" = no floor. Set it to "key"
+  // and EVERY bot needs the passphrase, whatever its file says — the panic switch.
+  // If a bot wants a key but no ACCESS_PASSPHRASE secret exists, it runs open and
+  // says so in the logs. The admin code (ADMIN_PASSPHRASE) is separate.
+  // Under the hood → Settings changes both without a commit (the saved copy wins,
+  // then YourBots/settings.json, then this). docs/CUSTOMIZE.md → "Who can use it".
+  access: { default: "key", floor: "open" },
 
   // ---- 6. THE FIREWALL ---------------------------------------------------------
   // All enforced in code (Engine/worker/firewall.js). Each one fails OPEN: if it can't run,

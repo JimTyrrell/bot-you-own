@@ -82,3 +82,27 @@ CREATE TABLE IF NOT EXISTS handoff_messages (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_hmsg_handoff ON handoff_messages(handoff_id, id);
+
+-- Settings: one row per key. "access" holds { "default": "...", "floor": "..." } from
+-- under the hood → Settings. Overrides YourBots/settings.json and YourBots/config.js → access.
+-- The Worker creates this itself on first use; kept here for reading.
+CREATE TABLE IF NOT EXISTS settings (
+  key        TEXT PRIMARY KEY,   -- 'access'
+  json       TEXT NOT NULL,      -- the JSON for that key
+  updated_at TEXT NOT NULL,
+  updated_by TEXT                -- 'admin'
+);
+
+-- Admin events: what changed, and when. One row per admin write (a bot saved or
+-- removed, settings changed, a commit, a document put in or taken out, a reply to
+-- a visitor, a lead sent). ip_hash is a SHA-256 of the caller's IP — the IP itself is never stored.
+CREATE TABLE IF NOT EXISTS admin_events (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  action     TEXT NOT NULL,      -- project-save | project-delete | project-commit | settings-save | settings-commit | gap-accept | library-upload | library-delete | library-rescan | handoff-reply | handoff-close | lead-send
+  target     TEXT,               -- the bot id, the file, the conversation id…
+  detail     TEXT,               -- one line of what happened
+  who        TEXT,               -- 'admin'
+  ip_hash    TEXT,               -- SHA-256 hex of the IP address
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_adminev_created ON admin_events(id);

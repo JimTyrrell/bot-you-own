@@ -567,6 +567,55 @@ instance.
 written in the owner's language (`languages.owner`) so the person following up
 can read it.
 
+## Who can use it · `project.json` → `access` · `config.js` → `access.default` / `access.floor`
+Every bot decides for itself; the deployment sets a default and a floor. What a
+bot can say, most open first:
+
+| Mode | What a visitor sees | Use it for |
+|---|---|---|
+| `open` | nothing, just the chat | a public website bot (rely on the rate limit and a spend cap) |
+| `email` | "enter your email to start" | a members' or clients' bot where you want to know who asked (feeds Leads) |
+| `key` ⭐ | a passphrase screen | demos, internal bots, anything without a spend cap yet |
+| `key+email` | both | a private bot with a record of who used it |
+| `admin` | "owner only" — the admin code | a bot only you should talk to (a drafting assistant, an internal tool) |
+| `draft` | "this bot is a draft" | a bot you're still building: only Configure's preview can talk to it |
+
+Leave `access` out (or `""`) and the bot gets the deployment default. The floor is
+the most open any bot may be: effective mode = the stricter of (the bot's mode or
+the default) and the floor. `floor: "open"` is no floor. Under the hood → **Settings**
+shows both, every bot's effective mode and *why* ("bot says open, floor says key →
+key"), saves them live, and **Commit to GitHub** writes `YourBots/settings.json` so
+the repo carries them (config.js < settings.json < the saved row).
+
+**The panic switch.** Something's wrong — a bot is saying too much, a spend alert
+fired, a client's link leaked. Settings → floor → `key` → Save. Every bot now needs
+the passphrase, whatever its file says, within seconds. Set the floor back when
+you're done. No commit, no deploy.
+
+**Listed vs access.** `"listed": false` takes a bot out of the sidebar and the
+`/api/config` list; it still works by link (`?project=<id>`) and in the widget
+(`data-project="<id>"`), under its own access mode. That is *visibility*, not
+security: an unlisted open bot is an open bot. Lock it with `access` if it matters.
+The admin sees unlisted bots (and drafts) in the sidebar with a badge.
+
+**Draft → Publish.** ✎ New bot starts as a draft: the chat page, the widget and the
+API refuse it with a plain message, only the preview on the Configure screen talks
+to it. When it's ready, **Publish** (in Configure → Who can use it) sets it to the
+deployment default and saves. A folder bot can be a draft too: `"access": "draft"`.
+
+**A bot with its own key.** `"accessKey": "ACCESS_PASSPHRASE_CLIENTX"` names a second
+Worker secret (`npx wrangler secret put ACCESS_PASSPHRASE_CLIENTX`). Client X gets
+their passphrase, nobody else's opens their bot, and their token doesn't open yours.
+Only names of the shape `ACCESS_PASSPHRASE_…` are honoured — a bot can never point at
+another secret. If the named secret isn't set, the shared one applies (and the logs say so).
+
+**What none of this is: authentication.** `email` is a name the visitor typed and
+nobody checked; `key` is one phrase everyone shares; both live in the visitor's
+browser as a token. They tell strangers and scripts no, and tell you who asked.
+A bot that needs accounts, sign-in, or per-person permissions is a later mode.
+Say so in your privacy note. A **Sign out** button in the sidebar clears the keys,
+the email, and the admin code.
+
 ## Two things to know about the iframe
 1. Your website analytics won't see chat activity (different origin). Log from the Worker instead — better data anyway.
 2. Don't build cookie sessions into it. Third-party cookies are blocked inside cross-origin iframes. Chats live in the page's localStorage, which works.

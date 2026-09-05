@@ -12,6 +12,8 @@ import { listLeads, getLead, summariseLead, sendLead, maybeAutoLead, leadsConfig
 import { listGaps, getGap, setGapState, draftGap } from "./gaps.js";
 import { normaliseBooking, bookingLive, bookingStep, bookingView } from "./booking.js";
 import { isHandoffId, createHandoff, readHandoff, addHandoffMessage, closeHandoff, listHandoffs, getHandoff, notifyHumanRequested, PERSON_LIMITS } from "./person.js";
+import { gate as accessGate, effectiveAccess, accessSettings, accessToken, safeEqual, tokenFor, accessView, cleanMode, cleanKeyName, cleanEmail, ACCESS_MODES, MODE_LINES } from "./access.js";
+import SETTINGS_FILE from "../../YourBots/settings.json";
 
 // ============================================================================
 //  THE WORKER. Four routes and a static folder.
@@ -23,7 +25,11 @@ import { isHandoffId, createHandoff, readHandoff, addHandoffMessage, closeHandof
 //    POST /api/speak    → { text } → audio bytes (the speaker: a Deepgram Aura voice on Workers AI)
 //    GET  /health       → "ok"
 //    *                  → public/ (the chat page, the widget)
+//  Who can use each of those: Engine/worker/access.js (per-bot access, default + floor).
+//    POST /api/unlock { passphrase, project } → { token } for that bot's key
 //  Admin (x-admin-token): /api/admin/engine, /audit, /projects, /project,
+//    GET/PUT /api/admin/settings (default + floor) · POST /api/admin/settings/sync (→ YourBots/settings.json)
+//    GET /api/admin/events?limit=100   every admin write, newest first (ip hashed, never stored)
 //    /api/admin/library?project=<id>  GET list · POST upload (multipart "file",
 //    optional "override") · DELETE /api/admin/library/<itemId>?project=<id>
 //    POST /api/admin/library/rescan?project=<id>   re-check every document (read-only)
@@ -47,30 +53,30 @@ export default {
 
     if (url.pathname === "/health") { const v = await versionStamp(env); return new Response(`ok ${v.version} ${v.commit} ${v.builtAt}`.trim()); }
 
-    // --- THE DOOR. If the ACCESS_PASSPHRASE secret is set, the bot is locked:
-    //     /api/config hides the projects and /api/chat refuses without a token.
-    //     Unset = a public bot. See docs/DEPLOY.md → "Lock it".
-    // --- WHO CAN USE IT (config.access.mode): open | key | email | key+email ---
-    const wantKey = /key/.test(CONFIG.access?.mode || "key");
-    const wantEmail = /email/.test(CONFIG.access?.mode || "");
-    if (wantKey && !env.ACCESS_PASSPHRASE) console.warn("access.mode wants a key but ACCESS_PASSPHRASE is not set — running open");
-    const locked = wantKey && Boolean(env.ACCESS_PASSPHRASE);
-    const token = locked ? await accessToken(env) : null;
-
     // --- THE ADMIN CODE. A second secret, ADMIN_PASSPHRASE, opens "Under the
     //     hood": the exact prompt, the files, the firewall rules, the source.
     //     Visitors never see it. An admin token also counts as a visitor token.
+    //     The token carries a version (ADMIN_TOKEN_VERSION, default 1): bump the
+    //     secret and every admin is logged out, no code change. docs/DEPLOY.md §B3.
     const adminEnabled = Boolean(env.ADMIN_PASSPHRASE);
-    const adminToken = adminEnabled ? await accessToken({ ACCESS_PASSPHRASE: env.ADMIN_PASSPHRASE }, "bot-you-own/admin/v1") : null;
+    const adminToken = adminEnabled ? await accessToken(env.ADMIN_PASSPHRASE, adminLabel(env)) : null;
     const isAdmin = adminEnabled && safeEqual(request.headers.get("x-admin-token") || "", adminToken);
-    const authed = !locked || isAdmin || safeEqual(request.headers.get("x-access-token") || "", token);
+
+    // --- WHO CAN USE IT. Per bot, not per deployment: each bot's project.json
+    //     says open | email | key | key+email | admin | draft (or nothing = the
+    //     default), and the deployment's floor can only make it stricter.
+    //     Engine/worker/access.js is the one gate every visitor route goes through.
+    //     `settings` = the default and the floor (config.js < settings.json < the
+    //     Settings screen). `guard(project)` = is THIS request allowed in?
+    const settings = await loadSettings(env);
+    const guard = (project, opts = {}) => accessGate(request, env, project, settings, { isAdmin, ...opts });
 
     if (url.pathname === "/api/admin/unlock") {
       if (request.method !== "POST") return json({ error: "POST only" }, 405);
       if (!adminEnabled) return json({ error: "no admin code is set" }, 404);
-      if (!(await allowed(env, request))) return json({ error: "too many attempts" }, 429);
-      let b; try { b = await request.json(); } catch { return json({ error: "bad request" }, 400); }
-      const given = await accessToken({ ACCESS_PASSPHRASE: String(b.passphrase || "") }, "bot-you-own/admin/v1");
+      if (!(await allowed(env, request)) || !(await unlockAllowed(env, request))) return json({ error: "too many attempts" }, 429);
+      const { body: b, error } = await readJson(request, { max: 8 * 1024, strict: false }); if (error) return error;
+      const given = await accessToken(String(b.passphrase || ""), adminLabel(env));
       return safeEqual(given, adminToken) ? json({ token: adminToken }) : json({ error: "wrong admin code" }, 401);
     }
 
@@ -82,25 +88,52 @@ export default {
       if (url.pathname === "/api/admin/leads" || url.pathname.startsWith("/api/admin/leads/")) return handleLeads(request, env, url);
       if (url.pathname === "/api/admin/gaps" || url.pathname.startsWith("/api/admin/gaps/")) return handleGaps(request, env, url);
       if (url.pathname === "/api/admin/handoffs" || url.pathname.startsWith("/api/admin/handoff/")) return handlePersonAdmin(request, env, url);
-      if (url.pathname === "/api/admin/projects") return json({ projects: await resolveList(env), jobs: Object.values(MODES).map((m) => ({ id: m.id, blurb: m.blurb, role: m.role, shape: m.shape, done: m.done })), model: CONFIG.model, canSave: Boolean(env.DB), rootPrompt: ROOT_PROMPT_FILES, github: { repo: CONFIG.github?.repo || "", branch: CONFIG.github?.branch || "main", ready: Boolean(CONFIG.github?.repo && env.GITHUB_TOKEN) }, library: libraryMeta(env, CONFIG) });
+      if (url.pathname === "/api/admin/projects") return json({ projects: await resolveList(env), jobs: Object.values(MODES).map((m) => ({ id: m.id, blurb: m.blurb, role: m.role, shape: m.shape, done: m.done })), model: CONFIG.model, canSave: Boolean(env.DB), rootPrompt: ROOT_PROMPT_FILES, github: { repo: CONFIG.github?.repo || "", branch: CONFIG.github?.branch || "main", ready: Boolean(CONFIG.github?.repo && env.GITHUB_TOKEN) }, library: libraryMeta(env, CONFIG), access: { default: settings.default, floor: settings.floor, modes: ACCESS_MODES.map((id) => ({ id, line: MODE_LINES[id] })), sharedKey: Boolean(env.ACCESS_PASSPHRASE) } });
       if (url.pathname === "/api/admin/project") {
         const id = String(url.searchParams.get("id") || "").toLowerCase();
-        if (request.method === "GET") { const p = await resolveProject(env, id); return json({ project: { ...p, id: p.id || id }, source: (await savedProjects(env))[id] ? "saved" : (PROJECTS[id] ? "folder" : "new") }); }
+        if (request.method === "GET") { const p = await resolveProject(env, id); return json({ project: { ...p, id: p.id || id }, source: (await savedProjects(env))[id] ? "saved" : (PROJECTS[id] ? "folder" : "new"), access: effectiveAccess(p, settings) }); }
         if (!env.DB) return json({ error: "Saving needs the D1 database (wrangler.jsonc → d1_databases). Export the files instead." }, 400);
         if (request.method === "PUT") {
-          let b; try { b = await request.json(); } catch { return json({ error: "bad request" }, 400); }
+          const { body: b, error } = await readJson(request); if (error) return error;
           const pid = String(b.id || id || "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
           if (!pid) return json({ error: "give the bot a name" }, 400);
+          const before = (await savedProjects(env))[pid];
           const p = await saveProject(env, pid, b);
-          return json({ ok: true, id: pid, project: p });
+          await logAdminEvent(env, request, "project-save", pid, `${before ? "updated" : "created"} the saved copy · access ${p.access || "(default)"} · ${p.listed ? "listed" : "unlisted"} · ${Object.keys(p.files).length} files`);
+          return json({ ok: true, id: pid, project: p, access: effectiveAccess(p, settings) });
         }
-        if (request.method === "DELETE") { await ensureSchema(env); await env.DB.prepare(`DELETE FROM projects WHERE id = ?`).bind(id).run(); SAVED_CACHE.at = 0; return json({ ok: true, fallsBackToFolder: Boolean(PROJECTS[id]) }); }
+        if (request.method === "DELETE") { await ensureSchema(env); await env.DB.prepare(`DELETE FROM projects WHERE id = ?`).bind(id).run(); SAVED_CACHE.at = 0; await logAdminEvent(env, request, "project-delete", id, PROJECTS[id] ? "removed the saved copy; the folder is live again" : "removed the saved copy"); return json({ ok: true, fallsBackToFolder: Boolean(PROJECTS[id]) }); }
         return json({ error: "method" }, 405);
       }
       if (url.pathname === "/api/admin/project/sync") {
         if (request.method !== "POST") return json({ error: "POST only" }, 405);
-        return json(await syncToGitHub(env, String(url.searchParams.get("id") || "")));
+        const sid = String(url.searchParams.get("id") || "");
+        const r = await syncToGitHub(env, sid);
+        await logAdminEvent(env, request, "project-commit", sid, r.error ? `failed: ${r.error}` : `${r.committed.length} committed, ${r.deleted.length} removed, ${r.unchanged.length} unchanged${r.errors.length ? ` · errors: ${r.errors.join("; ")}` : ""}`);
+        return json(r);
       }
+      // --- Settings (default + floor). GET what applies and why; PUT { access: { default, floor } }
+      //     saves it to D1 (live at once); POST /sync writes YourBots/settings.json into the repo.
+      if (url.pathname === "/api/admin/settings") {
+        if (request.method === "GET") return json(await settingsView(env, settings));
+        if (request.method !== "PUT") return json({ error: "method" }, 405);
+        if (!env.DB) return json({ error: "Saving settings needs the D1 database (wrangler.jsonc → d1_databases). Edit YourBots/config.js → access instead." }, 400);
+        const { body: b, error } = await readJson(request); if (error) return error;
+        const a = b?.access || {};
+        const next = { default: cleanMode(a.default), floor: cleanMode(a.floor) };
+        if (!next.default || !next.floor) return json({ error: `default and floor must each be one of: ${ACCESS_MODES.join(", ")}` }, 400);
+        await saveSettings(env, next);
+        await logAdminEvent(env, request, "settings-save", "access", `default ${settings.default} → ${next.default} · floor ${settings.floor} → ${next.floor}`);
+        return json(await settingsView(env, await loadSettings(env)));
+      }
+      if (url.pathname === "/api/admin/settings/sync") {
+        if (request.method !== "POST") return json({ error: "POST only" }, 405);
+        const r = await syncSettingsToGitHub(env, settings);
+        await logAdminEvent(env, request, "settings-commit", "YourBots/settings.json", r.error ? `failed: ${r.error}` : `default ${settings.default} · floor ${settings.floor}${r.unchanged ? " (unchanged)" : ""}`);
+        return json(r);
+      }
+      // --- What changed, and when: every admin write, newest first. Never the IP — a hash of it.
+      if (url.pathname === "/api/admin/events") return json(await adminEvents(env, url.searchParams.get("limit")));
       if (url.pathname === "/api/admin/project/export") {
         const id = String(url.searchParams.get("id") || "");
         return json({ files: exportFiles(await resolveProject(env, id), id) });
@@ -113,26 +146,45 @@ export default {
       return env.ASSETS.fetch(request);
     }
 
+    // --- The door: { passphrase, project } → a token for THAT bot's key (its own
+    //     secret, or the shared one). The page keeps the token, never the passphrase.
     if (url.pathname === "/api/unlock") {
       if (request.method !== "POST") return json({ error: "POST only" }, 405);
-      if (!locked) return json({ token: null, locked: false });
-      if (!(await allowed(env, request))) return json({ error: "too many attempts" }, 429);
-      let b; try { b = await request.json(); } catch { return json({ error: "bad request" }, 400); }
-      const given = await accessToken({ ACCESS_PASSPHRASE: String(b.passphrase || "") });
-      return safeEqual(given, token) ? json({ token, locked: true }) : json({ error: "wrong passphrase" }, 401);
+      if (!(await allowed(env, request)) || !(await unlockAllowed(env, request))) return json({ error: "too many attempts" }, 429);
+      const { body: b, error } = await readJson(request, { max: 8 * 1024, strict: false }); if (error) return error;
+      const project = await resolveProject(env, String(b.project || ""));
+      const a = effectiveAccess(project, settings);
+      if (a.mode === "admin" || a.mode === "draft") return json({ error: a.mode, reply: a.mode === "draft" ? "This bot is a draft." : "This bot opens with the admin code, not a passphrase." }, 401);
+      if (!a.wantKey) return json({ token: null, locked: false });
+      const k = await tokenFor(env, project);
+      if (!k.token) return json({ token: null, locked: false });            // no secret installed: documented open fallback
+      const given = await accessToken(String(b.passphrase || ""), k.name === "ACCESS_PASSPHRASE" ? "bot-you-own/access/v1" : `bot-you-own/access/v1/${k.name}`);
+      return safeEqual(given, k.token) ? json({ token: k.token, locked: true, shared: k.shared }) : json({ error: "wrong passphrase" }, 401);
     }
 
+    // --- What the page needs to draw itself. ?project=<id> says which bot the
+    //     visitor is looking at; the answer says what THAT bot requires, so the
+    //     page knows which lock screen to show even before anyone is unlocked.
     if (url.pathname === "/api/config") {
-      if (locked && !authed) return json({ locked: true, accessMode: accessMode(locked, wantEmail), siteName: CONFIG.siteName, accent: CONFIG.accent });
-      const all = await resolveList(env);
-      const projects = CONFIG.singleProject ? all.filter((p) => p.id === CONFIG.defaultProject) : all;
+      const current = await resolveProject(env, String(url.searchParams.get("project") || "").toLowerCase());
+      const curId = current.id || CONFIG.defaultProject;
+      const view = accessView(current, settings);
+      const g = await guard(current);                                        // key / admin / draft — the email step is the chat's
+      if (!g.ok) return json({ locked: true, project: curId, projectName: current.name, access: view, reason: g.error, reply: g.reply, adminEnabled, siteName: CONFIG.siteName, accent: CONFIG.accent });
+      const all = (await resolveList(env)).map((p) => { const a = effectiveAccess(p, settings); return { ...p, access: a.mode, listed: a.listed }; });
+      // Visitors see listed bots that aren't drafts. The admin sees everything, with a badge.
+      // "listed" is visibility, not security: an unlisted bot still checks its own door.
+      let projects = (CONFIG.singleProject ? all.filter((p) => p.id === CONFIG.defaultProject) : all).filter((p) => isAdmin || (p.listed && p.access !== "draft"));
+      if (!projects.some((p) => p.id === curId)) projects.push({ ...pickPublic({ ...current, thinkingWords: current.thinkingWords || [] }), id: curId, access: view.mode, listed: view.listed, source: "direct link" });
       // handoffText rides along so the page can offer "Talk to a person" under a
       // reply that contains it. It is said to visitors word for word anyway.
       for (const p of projects) p.handoffText = (await resolveProject(env, p.id)).handoffText || "";
       return json({
         version: await versionStamp(env),
-        locked,
-        accessMode: accessMode(locked, wantEmail),
+        locked: view.key,                                                    // this bot needs a key (and the caller has one)
+        accessMode: view.mode,
+        access: view,
+        current: curId,
         adminEnabled,
         owner: CONFIG.owner,
         siteName: CONFIG.siteName,
@@ -141,7 +193,7 @@ export default {
         model: CONFIG.model,
         provider: CONFIG.provider,
         defaultProject: CONFIG.defaultProject,
-        projects: projects.length ? projects : all.slice(0, 1),
+        projects,
         // the paperclip: whether to show it, and what it accepts
         attachments: { enabled: attachmentRules().enabled, max: attachmentRules().max, maxBytes: attachmentRules().maxBytes, extensions: allExtensions() },
         // the mic and the speaker: which halves are on (YourBots/config.js → voice)
@@ -149,18 +201,18 @@ export default {
       });
     }
 
+    // Every visitor route below finds its bot, then asks the gate. The handlers do
+    // that themselves (the bot id is in the body / the form), with `guard`.
     if (url.pathname === "/api/chat") {
       if (request.method !== "POST") return json({ error: "POST only" }, 405);
-      if (!authed) return json({ error: "locked", reply: "This bot is locked. Enter the passphrase to continue." }, 401);
-      return handleChat(request, env, ctx, { wantEmail, isAdmin });
+      return handleChat(request, env, ctx, { isAdmin, guard });
     }
 
     // The paperclip. Same door as /api/chat; switched off = it doesn't exist.
     if (url.pathname === "/api/attach") {
       if (!attachmentRules().enabled) return json({ error: "not found" }, 404);
       if (request.method !== "POST") return json({ error: "POST only" }, 405);
-      if (!authed) return json({ error: "locked", reply: "This bot is locked. Enter the passphrase to continue." }, 401);
-      return handleAttach(request, env, ctx);
+      return handleAttach(request, env, ctx, { guard });
     }
 
     // The mic and the speaker. Same door as /api/chat; switched off = they don't exist.
@@ -169,14 +221,12 @@ export default {
       const half = url.pathname === "/api/transcribe" ? v.in : v.out;
       if (!v.enabled || !half) return json({ error: "not found" }, 404);
       if (request.method !== "POST") return json({ error: "POST only" }, 405);
-      if (!authed) return json({ error: "locked", reply: "This bot is locked. Enter the passphrase to continue." }, 401);
-      return url.pathname === "/api/transcribe" ? handleTranscribe(request, env) : handleSpeak(request, env);
+      return url.pathname === "/api/transcribe" ? handleTranscribe(request, env, { guard }) : handleSpeak(request, env, { guard });
     }
 
-    // Talk to a person. Same door as /api/chat: the visitor token (or admin) opens it.
+    // Talk to a person. Same door as /api/chat: the bot's own gate decides.
     if (url.pathname === "/api/handoff" || url.pathname.startsWith("/api/handoff/")) {
-      if (!authed) return json({ error: "locked", reply: "This bot is locked. Enter the passphrase to continue." }, 401);
-      return handlePerson(request, env, ctx, url, { wantEmail, isAdmin });
+      return handlePerson(request, env, ctx, url, { isAdmin, guard });
     }
 
     return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Not found", { status: 404 });
@@ -196,47 +246,61 @@ async function allowed(env, request) {
   }
 }
 
-// --- The door: a token derived from the passphrase, never the passphrase itself.
-//     The page stores the token in localStorage and sends it as a header, which
-//     also works inside the embed iframe (cookies don't — see docs/CUSTOMIZE.md).
-async function accessToken(env, label = "bot-you-own/access/v1") {
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(String(env.ACCESS_PASSPHRASE || "")), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(label));
-  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+// The passphrase screens get a tighter limit than chat: 10 tries a minute per
+// visitor (wrangler.jsonc → UNLOCK_LIMITER). Wrong guesses and right ones both
+// count. Missing binding = no extra limit (the 30/min above still applies).
+async function unlockAllowed(env, request) {
+  if (!env.UNLOCK_LIMITER) return true;
+  const ip = request.headers.get("cf-connecting-ip") || "anon";
+  try {
+    const { success } = await env.UNLOCK_LIMITER.limit({ key: ip });
+    return success;
+  } catch (err) {
+    console.error("unlock limit check failed, allowing through", err);
+    return true;
+  }
 }
 
-function safeEqual(a, b) {
-  a = String(a || ""); b = String(b || "");
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
+// The admin token's label. Bump the ADMIN_TOKEN_VERSION secret (1 → 2) and every
+// stored admin token stops working; the code doesn't change. docs/DEPLOY.md §B3.
+function adminLabel(env) {
+  return "bot-you-own/admin/v" + String(env.ADMIN_TOKEN_VERSION || "1").replace(/[^\w.-]/g, "").slice(0, 20);
 }
 
-function accessMode(locked, wantEmail) {
-  return (locked ? "key" : "open") + (wantEmail ? "+email" : "");
+// A JSON body, with a size cap (256 KB unless told otherwise) and — for the
+// admin's writes — a check that it was sent as JSON. { body } or { error: Response }.
+const MAX_JSON = 256 * 1024;
+async function readJson(request, { max = MAX_JSON, strict = true } = {}) {
+  const ct = (request.headers.get("content-type") || "").toLowerCase();
+  if (strict && !ct.includes("application/json")) return { error: json({ error: "send JSON (content-type: application/json)" }, 415) };
+  const tooBig = json({ error: `That's too big — the limit is ${Math.round(max / 1024)} KB.` }, 413);
+  if (Number(request.headers.get("content-length") || 0) > max) return { error: tooBig };
+  let text;
+  try { text = await request.text(); } catch { return { error: json({ error: "bad request" }, 400) }; }
+  if (text.length > max) return { error: tooBig };
+  try { const body = JSON.parse(text); return body && typeof body === "object" ? { body } : { error: json({ error: "bad request" }, 400) }; }
+  catch { return { error: json({ error: "bad request" }, 400) }; }
 }
 
-const EMAIL_SHAPE = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
-
-async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = false } = {}) {
+async function handleChat(request, env, ctx, { isAdmin = false, guard } = {}) {
   if (!(await allowed(env, request))) {
     return json({ reply: "You're sending messages faster than I can think. Give me a moment and try again.", flags: ["rate-limited"] }, 429);
   }
 
   let body;
   try { body = await request.json(); } catch { return json({ error: "bad request" }, 400); }
+  if (!body || typeof body !== "object") return json({ error: "bad request" }, 400);
 
-  // --- email mode: who is asking. Logged with every turn; never verified. ------
-  const visitor = String(body.visitor?.email || "").trim().toLowerCase().slice(0, 254);
-  if (wantEmail && !isAdmin && !EMAIL_SHAPE.test(visitor)) {
-    return json({ error: "email", reply: "Please enter your email address to start." }, 401);
-  }
-  const who = visitor || (isAdmin ? "admin" : "");
-
-  const project = (isAdmin && body.draft && typeof body.draft === "object")
-    ? normaliseProject(body.draft, String(body.draft.id || "draft"))            // Configure → Preview: unsaved draft
+  // Configure → Preview talks to an unsaved draft (admin only). Everything else is a bot by id.
+  const draftPreview = Boolean(isAdmin && body.draft && typeof body.draft === "object");
+  const project = draftPreview
+    ? normaliseProject(body.draft, String(body.draft.id || "draft"))
     : await resolveProject(env, String(body.project || ""));
+
+  // --- THE GATE. This bot's door: key, email, admin code, or draft. Engine/worker/access.js.
+  const g = await guard(project, { draftPreview, email: String(body.visitor?.email || "") });
+  if (!g.ok) return json({ error: g.error, reply: g.reply, access: g.mode }, g.status);
+  const who = g.who;                                                          // the email they typed, "admin", or ""
   const stream = body.stream !== false;
   const fw = CONFIG.firewall || {};
 
@@ -475,14 +539,16 @@ function vetAttachment(text, maxChars) {
   if (found.length) return { refused: true, flag: "attachment-secret-blocked", reason: `That file looks like it contains ${found.map((f) => f.label).join(" and ")} — remove it and try again. I don't take card numbers, keys or ID numbers in chat.` };
   return { text: t, notes };
 }
-async function handleAttach(request, env, ctx) {
+async function handleAttach(request, env, ctx, { guard } = {}) {
   if (!(await allowed(env, request))) return json({ ok: false, reason: "You're sending files faster than I can read them. Give me a moment and try again.", flags: ["rate-limited"] }, 429);
   const rules = attachmentRules();
   let form;
   try { form = await request.formData(); } catch { return json({ ok: false, reason: "Send the file as multipart/form-data in a 'file' field." }, 400); }
+  const project = await resolveProject(env, String(form.get("project") || ""));
+  const door = await guard(project);                                         // the bot's door (the email step is the chat's)
+  if (!door.ok) return json({ ok: false, error: door.error, reply: door.reply, reason: door.reply }, door.status);
   const f = form.get("file");
   if (!f || typeof f.arrayBuffer !== "function") return json({ ok: false, reason: "No file in the request." }, 400);
-  const project = await resolveProject(env, String(form.get("project") || ""));
   const log = (chars, flags) => console.log(JSON.stringify({ event: "attach", project: project.name, name: safeName(f.name).slice(0, 120), chars, flags }));
 
   // 1. Type and size — the library's gate, with its plain-English hints (".pptx → export as PDF").
@@ -533,12 +599,14 @@ function toBase64(buf) {
 // The mic. multipart "audio" (webm/opus from the browser, or wav/mp3) → { text, language }.
 // The clip is capped by size rather than by the clock: the page stops recording
 // at maxSeconds, and a minute of browser audio is well under a megabyte.
-async function handleTranscribe(request, env) {
+async function handleTranscribe(request, env, { guard } = {}) {
   if (!(await allowed(env, request))) return json({ error: "rate-limited", reason: "You're sending clips faster than I can listen. Give me a moment and try again.", flags: ["rate-limited"] }, 429);
   const v = voiceRules();
-  if (!env.AI) return json({ error: "no-model", reason: "Voice needs Workers AI (wrangler.jsonc → ai binding)." }, 503);
   let form;
   try { form = await request.formData(); } catch { return json({ error: "bad request", reason: "Send the clip as multipart/form-data in an 'audio' field." }, 400); }
+  const g = await guard(await resolveProject(env, String(form.get("project") || "")));   // the bot's door
+  if (!g.ok) return json({ error: g.error, reply: g.reply, reason: g.reply }, g.status);
+  if (!env.AI) return json({ error: "no-model", reason: "Voice needs Workers AI (wrangler.jsonc → ai binding)." }, 503);
   const clip = form.get("audio");
   if (!clip || typeof clip.arrayBuffer !== "function") return json({ error: "bad request", reason: "No audio in the request." }, 400);
   const maxBytes = 4 * 1024 * 1024;                         // 4 MB: minutes of opus, a minute or two of wav
@@ -574,12 +642,14 @@ function speakable(text, maxChars) {
        .replace(/[ \t]+/g, " ").replace(/\n{2,}/g, "\n").trim();
   return t.length > maxChars ? t.slice(0, maxChars).replace(/\s+\S*$/, "") : t;
 }
-async function handleSpeak(request, env) {
+async function handleSpeak(request, env, { guard } = {}) {
   if (!(await allowed(env, request))) return json({ error: "rate-limited", reason: "Too many read-outs in a row. Give me a moment and try again.", flags: ["rate-limited"] }, 429);
   const v = voiceRules();
-  if (!env.AI) return json({ error: "no-model", reason: "Voice needs Workers AI (wrangler.jsonc → ai binding)." }, 503);
   let body;
   try { body = await request.json(); } catch { return json({ error: "bad request", reason: "Send { text } as JSON." }, 400); }
+  const g = await guard(await resolveProject(env, String(body?.project || "")));       // the bot's door
+  if (!g.ok) return json({ error: g.error, reply: g.reply, reason: g.reply }, g.status);
+  if (!env.AI) return json({ error: "no-model", reason: "Voice needs Workers AI (wrangler.jsonc → ai binding)." }, 503);
   const text = speakable(body?.text, v.maxChars);
   if (!text) return json({ error: "empty", reason: "Nothing to read." }, 400);
   const started = Date.now();
@@ -647,7 +717,8 @@ async function handleLeads(request, env, url) {
   try {
     if (parts.length === 3 && request.method === "GET") {
       const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "100", 10) || 100, 1), 500);
-      return json({ ...(await listLeads(env, { projectName: project ? project.name : "*", limit })), settings: { ...settings, webhook: settings.webhook ? "set" : "" }, emailMode: /email/.test(CONFIG.access?.mode || ""), note: "The summary reads the redacted log (emails, phones and dates inside messages are already replaced). Names are not redacted. The visitor column is the email they typed; nobody verified it." });
+      const access = await loadSettings(env);
+      return json({ ...(await listLeads(env, { projectName: project ? project.name : "*", limit })), settings: { ...settings, webhook: settings.webhook ? "set" : "" }, emailMode: /email/.test(project ? effectiveAccess(project, access).mode : access.default), note: "The summary reads the redacted log (emails, phones and dates inside messages are already replaced). Names are not redacted. The visitor column is the email they typed; nobody verified it." });
     }
     const visitor = cleanVisitor(decodeURIComponent(parts[3] || ""));
     if (!visitor) return json({ error: "which visitor?" }, 400);
@@ -662,6 +733,7 @@ async function handleLeads(request, env, url) {
       if (!lead?.summary) return json({ error: "Summarise first — there is nothing to send yet." }, 400);
       const bot = project || await resolveProject(env, (await resolveList(env)).find((p) => p.name === lead.bot)?.id || "");
       const result = await sendLead(env, CONFIG, lead, { project: bot });
+      await logAdminEvent(env, request, "lead-send", visitor, result);
       return json({ result, webhook: bot?.handoffActions?.webhook ? "bot" : settings.webhook ? "config" : "none" }, result === "lead-webhook-failed" ? 502 : 200);
     }
   } catch (err) {
@@ -703,7 +775,7 @@ async function handleGaps(request, env, url) {
       return json({ ...saved, question: gap.question, draft: d.draft, grounded: d.grounded, missing: d.missing });
     }
     if (action === "accept") {
-      let b = {}; try { b = await request.json(); } catch { return json({ error: "bad request" }, 400); }
+      const { body: b, error } = await readJson(request); if (error) return error;
       const draft = String(b.draft ?? gap.draft ?? "").replace(/<!--[\s\S]*?-->/g, "").trim().slice(0, 4000);
       if (!draft) return json({ error: "nothing to add — draft it first, or send { draft }" }, 400);
       const file = String(b.file || "faq.md").trim();
@@ -715,6 +787,7 @@ async function handleGaps(request, env, url) {
       const p = await saveProject(env, gap.bot, { ...project, files });
       const saved = await setGapState(env, gap.id, "accepted", { draft, file });
       console.log(JSON.stringify({ event: "gap-accept", bot: gap.bot, id: gap.id, file, chars: draft.length }));
+      await logAdminEvent(env, request, "gap-accept", gap.bot, `${draft.length} chars added to ${file} (gap ${gap.id})`);
       return json({ ...saved, ok: true, file, source: "saved", chars: p.files[file]?.length || 0, note: "Live now in the saved copy. Commit to GitHub to make it permanent." });
     }
     if (action === "dismiss") return json(await setGapState(env, gap.id, "dismissed"));
@@ -731,7 +804,7 @@ async function handleGaps(request, env, url) {
 //   GET  /api/handoff/<id>?since=<msgId>  { status, messages } — the page polls this every 10 s
 //   POST /api/handoff/<id>/message        { text } → the visitor's reply into the thread
 // The id is the visitor's secret: 48 random hex characters, stored with their chat.
-async function handlePerson(request, env, ctx, url, { wantEmail = false, isAdmin = false } = {}) {
+async function handlePerson(request, env, ctx, url, { isAdmin = false, guard } = {}) {
   if (!env.DB) return json({ error: "no-database", reply: "Talking to a person isn't switched on here: no database is bound (wrangler.jsonc → d1_databases)." }, 503);
   await ensureSchema(env);
   const parts = url.pathname.split("/").filter(Boolean);        // api, handoff, <id>, <action>
@@ -740,10 +813,10 @@ async function handlePerson(request, env, ctx, url, { wantEmail = false, isAdmin
       if (request.method !== "POST") return json({ error: "POST only" }, 405);
       if (!(await allowed(env, request))) return json({ error: "rate-limited", reply: "Give me a moment and try again." }, 429);
       let b; try { b = await request.json(); } catch { return json({ error: "bad request" }, 400); }
-      const visitor = String(b.visitor?.email || "").trim().toLowerCase().slice(0, 254);
-      if (wantEmail && !isAdmin && !EMAIL_SHAPE.test(visitor)) return json({ error: "email", reply: "Please enter your email address to start." }, 401);
-      const who = visitor || (isAdmin ? "admin" : "");
       const project = await resolveProject(env, String(b.project || ""));
+      const g = await guard(project, { email: String(b.visitor?.email || "") });     // the bot's door, email included
+      if (!g.ok) return json({ error: g.error, reply: g.reply }, g.status);
+      const who = g.who;
       const chatId = String(b.chatId || "").replace(/[^\w-]/g, "").slice(0, 40);
       if (!chatId) return json({ error: "chatId is required" }, 400);
       const r = await createHandoff(env, { bot: project.id || CONFIG.defaultProject, chatId, visitor: who, transcript: b.transcript, note: b.note });
@@ -756,6 +829,11 @@ async function handlePerson(request, env, ctx, url, { wantEmail = false, isAdmin
     }
     const id = String(parts[2] || "");
     if (!isHandoffId(id)) return json({ error: "no such conversation" }, 404);
+    // An existing thread belongs to a bot; that bot's door applies (the email was given when it opened).
+    const owner = await env.DB.prepare(`SELECT bot FROM handoffs WHERE id = ?`).bind(id).first();
+    if (!owner) return json({ error: "no such conversation" }, 404);
+    const g = await guard(await resolveProject(env, String(owner.bot || "")));
+    if (!g.ok) return json({ error: g.error, reply: g.reply }, g.status);
     const action = parts[3] || "";
     if (!action && request.method === "GET") {
       const h = await readHandoff(env, id, url.searchParams.get("since"));
@@ -805,15 +883,17 @@ async function handlePersonAdmin(request, env, url) {
       return h ? json({ ...h, botName: (await resolveProject(env, h.bot)).name || h.bot, limits: PERSON_LIMITS }) : json({ error: "no such conversation" }, 404);
     }
     if (action === "reply" && request.method === "POST") {
-      let b; try { b = await request.json(); } catch { return json({ error: "bad request" }, 400); }
+      const { body: b, error } = await readJson(request); if (error) return error;
       const r = await addHandoffMessage(env, id, "owner", b.text);
       if (r.missing) return json({ error: "no such conversation" }, 404);
       if (r.closed) return json({ error: "That conversation is closed. The visitor's page has gone back to the bot." }, 409);
       if (r.empty) return json({ error: "write something first" }, 400);
+      await logAdminEvent(env, request, "handoff-reply", id, `${String(r.text || "").length} chars`);
       return json({ ok: true, message: { id: r.id, from: r.from, text: r.text, created_at: r.created_at }, status: r.status });
     }
     if (action === "close" && request.method === "POST") {
       const done = await closeHandoff(env, id);
+      if (done) await logAdminEvent(env, request, "handoff-close", id, "");
       return done ? json({ ok: true, status: "closed" }) : json({ ok: false, error: "already closed, or no such conversation" }, 409);
     }
   } catch (err) {
@@ -897,6 +977,9 @@ function normaliseProject(p, id) {
     nextSteps: (Array.isArray(p.nextSteps) ? p.nextSteps : []).slice(0, 10),
     // the bot's website (optional): one URL, and glob patterns for which pages to keep / skip
     website: normaliseWebsite(p.website),
+    // who can use THIS bot (Engine/worker/access.js): "" = the deployment default; listed = in the sidebar;
+    // accessKey = the NAME of a per-bot secret (ACCESS_PASSPHRASE_…), never a passphrase itself
+    access: cleanMode(p.access), listed: p.listed !== false, accessKey: cleanKeyName(p.accessKey),
     instructions: clean(p.instructions).slice(0, 20000),
     files: Object.fromEntries(Object.entries(p.files || {}).filter(([n]) => /^[\w. -]{1,80}\.(md|txt|csv)$/i.test(n)).map(([n, t]) => [n, clean(t).slice(0, 200000)]).slice(0, 40)),
     // this bot's own copies of root prompt/ files (same names) — the folder-wins rule, from the form
@@ -963,12 +1046,14 @@ async function handleLibrary(request, env, url) {
         else if (res.needsOverride) await logLibraryEvent(env, bot, res.name, "held", JSON.stringify(res.flagged), who);
         results.push(res);
       }
+      await logAdminEvent(env, request, "library-upload", bot, results.map((r) => `${r.name || "?"}: ${r.ok ? (override ? "put in (override)" : "put in") : r.needsOverride ? "held" : "refused"}`).join("; "));
       return json({ results });
     }
     // Scan again: every document, same checks as an upload, nothing changed.
     if (request.method === "POST" && url.pathname === "/api/admin/library/rescan") {
       const r = await rescanLibrary(env, CONFIG, bot);
       for (const f of r.results) if (f.flagged.length) await logLibraryEvent(env, bot, f.name, "rescan-held", JSON.stringify(f.flagged), "admin");
+      await logAdminEvent(env, request, "library-rescan", bot, `${r.scanned} scanned, ${r.results.filter((f) => f.flagged.length).length} with findings`);
       return json({ ...r, scanWithModel: meta.scanWithModel });
     }
     if (request.method === "DELETE" && url.pathname.startsWith("/api/admin/library/")) {
@@ -976,6 +1061,7 @@ async function handleLibrary(request, env, url) {
       const gone = await deleteFile(env, CONFIG, bot, id);
       if (!gone) return json({ error: "no such file for this bot" }, 404);
       await logLibraryEvent(env, bot, gone.name, "remove", "", "admin");
+      await logAdminEvent(env, request, "library-delete", bot, gone.name);
       return json({ ok: true });
     }
     // The original file back out (admin only) — what Commit to GitHub writes into the repo.
@@ -1022,11 +1108,13 @@ async function libraryAudit(env, project, limitRaw) {
 async function resolveList(env) {
   const saved = await savedProjects(env);
   const folder = folderList().map((p) => ({ ...p, source: saved[p.id] ? "saved (overrides folder)" : "folder" }));
-  const extra = Object.values(saved).filter((p) => !PROJECTS[p.id]).map((p) => ({ id: p.id, name: p.name, tagline: p.tagline, greeting: p.greeting, starters: p.starters, mode: p.mode, grounding: p.grounding, thinkingWords: p.thinkingWords.length ? p.thinkingWords : undefined, order: p.order, source: "saved" }));
+  const extra = Object.values(saved).filter((p) => !PROJECTS[p.id]).map((p) => ({ id: p.id, ...pickPublic(p), source: "saved" }));
   const merged = [...folder.map((p) => saved[p.id] ? { ...p, ...pickPublic(saved[p.id]), source: p.source } : p), ...extra];
   return merged.sort((a, b) => (a.order ?? 100) - (b.order ?? 100) || String(a.name).localeCompare(String(b.name)));
 }
-function pickPublic(p) { return { name: p.name, tagline: p.tagline, greeting: p.greeting, starters: p.starters, mode: p.mode, grounding: p.grounding, thinkingWords: p.thinkingWords.length ? p.thinkingWords : undefined, order: p.order }; }
+// What a bot shows to the page. `access` here is what the bot SAYS ("" = default); the
+// effective mode is worked out per request. Never the secret's name.
+function pickPublic(p) { return { name: p.name, tagline: p.tagline, greeting: p.greeting, starters: p.starters, mode: p.mode, grounding: p.grounding, thinkingWords: (p.thinkingWords || []).length ? p.thinkingWords : undefined, order: p.order, access: cleanMode(p.access), listed: p.listed !== false }; }
 
 // The audit table creates itself the first time it's needed (no schema step for
 // attendees). Engine/schema.sql is the same DDL, kept for reading; this is the source.
@@ -1053,8 +1141,104 @@ async function ensureSchema(env) {
     env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_handoffs_chat ON handoffs(bot, chat_id, status)`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS handoff_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, handoff_id TEXT NOT NULL, from_role TEXT NOT NULL, text TEXT NOT NULL, created_at TEXT NOT NULL)`),
     env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_hmsg_handoff ON handoff_messages(handoff_id, id)`),
+    // Settings: one row per key. "access" holds { default, floor } from the Settings screen. See loadSettings.
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT)`),
+    // Admin events: every write the admin makes, with a hash of the IP (never the IP). See logAdminEvent.
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS admin_events (id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT NOT NULL, target TEXT, detail TEXT, who TEXT, ip_hash TEXT, created_at TEXT NOT NULL)`),
+    env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_adminev_created ON admin_events(id)`),
   ]);
   SCHEMA_OK = true;
+}
+
+// --- Settings: the deployment's default and floor. -----------------------------
+//     YourBots/config.js → access  <  YourBots/settings.json  <  the D1 row "access"
+//     (the Settings screen's Save). The row is cached for 10 s per isolate, so a
+//     floor change lands within seconds everywhere. If the database can't be read,
+//     the last row seen is kept — stale beats open — and failing that the file.
+let SETTINGS_CACHE = { at: 0, row: null };
+async function loadSettings(env) {
+  let row = SETTINGS_CACHE.row;
+  if (env.DB && Date.now() - SETTINGS_CACHE.at >= 10000) {
+    try {
+      await ensureSchema(env);
+      const r = await env.DB.prepare(`SELECT json FROM settings WHERE key = 'access'`).first();
+      row = r ? { access: JSON.parse(r.json) } : null;
+      SETTINGS_CACHE = { at: Date.now(), row };
+    } catch (err) { console.error("settings read failed (keeping the last known)", err?.message || err); }
+  }
+  return accessSettings(CONFIG, SETTINGS_FILE, row);
+}
+async function saveSettings(env, access) {
+  await ensureSchema(env);
+  await env.DB.prepare(`INSERT INTO settings (key, json, updated_at, updated_by) VALUES ('access', ?, ?, 'admin') ON CONFLICT(key) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at, updated_by = excluded.updated_by`)
+    .bind(JSON.stringify({ default: access.default, floor: access.floor }), new Date().toISOString()).run();
+  SETTINGS_CACHE = { at: 0, row: null };
+}
+// Under the hood → Settings: what applies, where it came from, and every bot's effective mode (and why).
+async function settingsView(env, settings) {
+  const bots = [];
+  for (const p of await resolveList(env)) {
+    const full = await resolveProject(env, p.id);
+    const a = effectiveAccess(full, settings);
+    bots.push({ id: p.id, name: p.name, access: a.botMode, effective: a.mode, reason: a.reason, listed: a.listed, source: p.source, ownKey: a.keyName ? (env[a.keyName] ? `${a.keyName} (set)` : `${a.keyName} (NOT set — the shared key is used)`) : "" });
+  }
+  return {
+    access: { default: settings.default, floor: settings.floor },
+    source: settings.source,
+    file: SETTINGS_FILE?.access || {},
+    modes: ACCESS_MODES.map((id) => ({ id, line: MODE_LINES[id] })),
+    order: ACCESS_MODES.join(" < "),
+    sharedKey: Boolean(env.ACCESS_PASSPHRASE),
+    adminTokenVersion: String(env.ADMIN_TOKEN_VERSION || "1"),
+    canSave: Boolean(env.DB),
+    github: { repo: CONFIG.github?.repo || "", branch: CONFIG.github?.branch || "main", ready: Boolean(CONFIG.github?.repo && env.GITHUB_TOKEN) },
+    bots,
+    note: "A bot's effective mode is the stricter of what it says (or the default) and the floor. The floor is the panic switch: set it to key and every bot needs the passphrase, whatever its file says. Save is live at once; Commit to GitHub writes YourBots/settings.json so the repo carries it.",
+  };
+}
+// Settings → Commit to GitHub: one file, YourBots/settings.json, via the Contents API.
+async function syncSettingsToGitHub(env, settings) {
+  const repo = CONFIG.github?.repo, branch = CONFIG.github?.branch || "main";
+  if (!repo) return { error: "YourBots/config.js → github.repo is empty" };
+  if (!env.GITHUB_TOKEN) return { error: "GITHUB_TOKEN secret is not set (fine-grained token, Contents: read & write, only this repo)" };
+  const path = "YourBots/settings.json";
+  const content = JSON.stringify({ access: { default: settings.default, floor: settings.floor } }, null, 2) + "\n";
+  const gh = async (p, init = {}) => {
+    const r = await fetch(`https://api.github.com/repos/${repo}/${p}`, { ...init, headers: { authorization: `Bearer ${env.GITHUB_TOKEN}`, accept: "application/vnd.github+json", "user-agent": "bot-you-own", "content-type": "application/json", ...(init.headers || {}) } });
+    return { ok: r.ok, status: r.status, body: await r.json().catch(() => ({})) };
+  };
+  const cur = await gh(`contents/${path}?ref=${encodeURIComponent(branch)}`);
+  const sha = cur.ok && cur.body?.sha ? cur.body.sha : "";
+  if (sha && cur.body?.content && atob(String(cur.body.content).replace(/\n/g, "")) === content) return { ok: true, repo, branch, path, unchanged: true, note: "The repo already has these settings." };
+  const r = await gh(`contents/${path}`, { method: "PUT", body: JSON.stringify({ message: `${sha ? "update" : "add"} ${path} (from Settings)`, content: btoa(unescape(encodeURIComponent(content))), branch, ...(sha ? { sha } : {}) }) });
+  if (!r.ok) return { error: `${r.status} ${r.body?.message || "GitHub refused the commit"}`, repo, branch, path };
+  return { ok: true, repo, branch, path, commitUrl: r.body?.commit?.html_url || "", note: "YourBots/settings.json is in the repo. If it is connected to Workers Builds this redeploys in about a minute; the saved row stays live meanwhile and still wins — the file is the fallback when the database has no row." };
+}
+
+// --- Admin events: what changed, and when. Every write the admin makes gets a
+//     row: the action, what it touched, a one-line detail, and a SHA-256 of the
+//     caller's IP — never the IP itself. Fail-open: no DB, no row, no error.
+async function sha256Hex(text) {
+  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(text)));
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+async function logAdminEvent(env, request, action, target = "", detail = "") {
+  console.log(JSON.stringify({ event: "admin", action, target: String(target).slice(0, 200), detail: String(detail).slice(0, 300) }));
+  if (!env.DB) return;
+  try {
+    await ensureSchema(env);
+    const ip = request.headers.get("cf-connecting-ip") || "";
+    await env.DB.prepare(`INSERT INTO admin_events (action, target, detail, who, ip_hash, created_at) VALUES (?, ?, ?, 'admin', ?, ?)`)
+      .bind(String(action).slice(0, 60), String(target).slice(0, 200), String(detail).slice(0, 2000), ip ? await sha256Hex(ip) : "", new Date().toISOString()).run();
+  } catch (err) { console.error("admin event log failed (continuing)", err?.message || err); }
+}
+// GET /api/admin/events?limit=100 — newest first.
+async function adminEvents(env, limitRaw) {
+  if (!env.DB) return { enabled: false, rows: [], reason: "No D1 database is bound (wrangler.jsonc → d1_databases). Admin writes still go to Workers Logs." };
+  await ensureSchema(env);
+  const limit = Math.min(Math.max(parseInt(limitRaw || "100", 10) || 100, 1), 500);
+  const rows = (await env.DB.prepare(`SELECT id, action, target, detail, who, ip_hash, created_at FROM admin_events ORDER BY id DESC LIMIT ?`).bind(limit).all()).results || [];
+  return { enabled: true, rows, note: "ip_hash is a SHA-256 of the caller's IP address; the address itself is never stored." };
 }
 
 // Under the hood → Audit. Who asked what, what the bot said, what the firewall did.
@@ -1205,7 +1389,7 @@ async function engineView(env, projectId) {
     firewall: {
       config: CONFIG.firewall,
       rateLimit: env.RATE_LIMITER ? "on (wrangler.jsonc → ratelimits)" : "off (no binding)",
-      door: env.ACCESS_PASSPHRASE ? "locked (ACCESS_PASSPHRASE set)" : "open",
+      door: (function (a) { return `${a.mode} — ${a.reason}${a.wantKey ? (a.keyName ? ` · own key ${a.keyName}${env[a.keyName] ? "" : " (NOT set; shared key used)"}` : env.ACCESS_PASSPHRASE ? " · shared key set" : " · NO shared key set: runs open") : ""}${a.listed ? "" : " · unlisted"}`; })(effectiveAccess(project, await loadSettings(env))),
       injectionPatterns: INJECTION_PATTERNS.map(String),
       secretPatterns: SECRET_PATTERNS.map(String),
       llamaGuardModel: LLAMA_GUARD_MODEL,

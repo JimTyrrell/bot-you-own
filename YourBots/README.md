@@ -32,7 +32,10 @@ files as its first source.
    on your computer and upload the folder.)
 2. Fill in `project.json`: the name, the greeting, `mode`, `grounding`, the links
    it may share, where to send people when it can't help, and `order` (its place
-   in the sidebar; lowest first).
+   in the sidebar; lowest first). Also who can use it: `access` (`open` · `email` ·
+   `key` · `key+email` · `admin` · `draft`, or leave it out for the deployment
+   default), `listed` (`false` = not in the sidebar, still works by link) and
+   `accessKey` (the name of its own passphrase secret, optional). `docs/CUSTOMIZE.md → Who can use it`.
 3. Paste your instructions into `instructions.md` — raw, don't tidy them.
 4. **Drop your material into `knowledge/`.** Markdown, `.txt` or `.csv`. Any number
    of files. The best material is the emails you've already written answering the

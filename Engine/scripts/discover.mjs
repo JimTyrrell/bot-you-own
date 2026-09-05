@@ -73,9 +73,16 @@ export function listProjects() {
   return Object.entries(PROJECTS).map(([id, p]) => ({
     id, order: Number(p.order ?? 100), name: p.name, tagline: p.tagline || "", greeting: p.greeting || "", starters: p.starters, mode: p.mode, grounding: p.grounding,
     thinkingWords: Array.isArray(p.thinkingWords) && p.thinkingWords.length ? p.thinkingWords : undefined,
+    // who can use it (Engine/worker/access.js): what the bot says, and whether it's in the sidebar. Never accessKey.
+    access: typeof p.access === "string" ? p.access : "", listed: p.listed !== false,
   }));
 }
 `);
+
+// ---- YourBots/settings.json ----
+// The deployment's default and floor, as written by Settings → Commit to GitHub.
+// The engine imports it, so it has to exist: an empty one means "config.js decides".
+if (!existsSync("YourBots/settings.json")) { writeFileSync("YourBots/settings.json", JSON.stringify({ access: {} }, null, 2) + "\n"); console.log("settings: created YourBots/settings.json (empty — YourBots/config.js → access applies)"); }
 
 // ---- prompt/jobs/ → Engine/worker/jobs.generated.js ----
 const jobs = listText("YourBots/_prompt/jobs").filter((f) => f.endsWith(".md"));

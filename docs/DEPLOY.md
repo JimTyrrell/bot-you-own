@@ -23,15 +23,40 @@ printf 'your passphrase here' | npx wrangler secret put ACCESS_PASSPHRASE
 ```
 Local dev reads it from `.dev.vars` (`ACCESS_PASSPHRASE=…`). The test runner takes
 `--passphrase "…"` or the `BYO_PASSPHRASE` env var. Delete the secret to reopen the bot.
-What it is: `/api/unlock` turns the passphrase into an HMAC token; `/api/chat` and
-the full `/api/config` require that token in an `x-access-token` header. It is a
-gate against strangers and scripts, not user accounts — everyone shares one phrase.
+What it is: `POST /api/unlock { passphrase, project }` turns the passphrase into an
+HMAC token for that bot's key; `/api/chat`, the paperclip, the mic, the speaker,
+Talk to a person and `/api/config` all check it (`x-access-token`). It is a gate
+against strangers and scripts, not user accounts — everyone shares one phrase.
+The passphrase screens allow ten tries a minute per visitor (`UNLOCK_LIMITER` in
+`wrangler.jsonc`), on top of the 30-a-minute chat limit.
 
-## B2b. Access modes
-`YourBots/config.js` → `access.mode`: `open` · `key` · `email` · `key+email`. `key` needs the
-secret from B2 (without it the bot runs open and logs a warning). `email` needs
-nothing; the runner takes `--email you@example.com`. If you already created the D1
-table before v2.2, add the column: `ALTER TABLE conversations ADD COLUMN visitor TEXT;`
+## B2b. Who can use it: a default, a floor, and each bot's own say
+Every bot can say in its `project.json → "access"` how it opens; the deployment
+sets what a bot gets when it doesn't say (**default**) and the most open any bot
+may be (**floor**). Most open first: `open < email < key < key+email < admin < draft`.
+A bot's effective mode is the stricter of (its own mode, or the default) and the floor.
+
+Three places set the default and the floor — later wins:
+1. `YourBots/config.js → access: { default: "key", floor: "open" }` (the old `mode` still reads as `default`).
+2. `YourBots/settings.json` — what under the hood → **Settings → Commit to GitHub** writes.
+3. The saved row from **Settings → Save** — live within seconds, no deploy.
+
+`key` needs the secret from B2 (without it the bot runs open and logs a warning).
+`email` needs nothing; the runner takes `--email you@example.com`. A bot can have
+its **own** key: `"accessKey": "ACCESS_PASSPHRASE_CLIENTX"` names a second secret
+(`printf '…' | npx wrangler secret put ACCESS_PASSPHRASE_CLIENTX`); only names of the
+shape `ACCESS_PASSPHRASE_…` are honoured, and a token minted for one key never
+opens another. The floor is the panic switch: `floor: "key"` and every bot needs
+the passphrase whatever its file says. The full story, modes table and what none
+of it is (sign-in): `docs/CUSTOMIZE.md → Who can use it`.
+
+**Prove it:** `node Engine/tests/access-check.mjs --url http://localhost:8797 --passphrase "…" --admin "…"`
+saves six test bots (open, draft, admin-only, own key, unlisted, email), proves each door
+with curl-style calls — no model calls, so no cost — checks the floor, the admin
+events and the body caps, then deletes them. For the own-key check put
+`ACCESS_PASSPHRASE_CLIENTX=clientx-secret` in `.dev.vars` (or pass `--clientx`). It uses
+three of the ten passphrase tries a minute, so wait a minute between runs.
+If you created the D1 tables before v2.2, add the column: `ALTER TABLE conversations ADD COLUMN visitor TEXT;`
 
 ## B3. The admin code (Under the hood)
 ```bash
@@ -39,7 +64,21 @@ printf 'your admin code' | npx wrangler secret put ADMIN_PASSPHRASE
 ```
 Local: add `ADMIN_PASSPHRASE=…` to `.dev.vars`. An admin token also unlocks chat,
 so you don't need both codes. Endpoints: `POST /api/admin/unlock`,
-`GET /api/admin/engine?project=…`, `GET /api/admin/source?name=Engine/worker/prompt.js`.
+`GET /api/admin/engine?project=…`, `GET /api/admin/source?name=Engine/worker/prompt.js`,
+`GET/PUT /api/admin/settings`, `GET /api/admin/events`. Without the secret, every
+`/api/admin/*` and `/engine/*` path answers 404 — there is nothing to find.
+
+**Log every admin out:** the admin token carries a version. Set a second secret
+`ADMIN_TOKEN_VERSION` to any new value (`printf '2' | npx wrangler secret put ADMIN_TOKEN_VERSION`)
+and every stored admin token stops working; people enter the admin code again. No
+code change, no redeploy. Under the hood → Settings shows the current version.
+
+**What changed, and when:** every write the admin makes (a bot saved or removed, a
+commit, settings, a document put in or taken out, a reply to a visitor, a lead
+sent) lands in the D1 table `admin_events` with a SHA-256 of the caller's IP —
+never the IP. Under the hood → Settings lists the last 50; `GET /api/admin/events?limit=100`.
+Admin writes take JSON only (`content-type: application/json`) and at most 256 KB a
+request; uploads keep their own 4 MB cap.
 The source snapshot in `Engine/public/engine/` is produced by `Engine/scripts/snapshot-src.mjs`
 before every dev/deploy (`build.command` in `wrangler.jsonc`) and is git-ignored;
 `run_worker_first` keeps `/engine/*` behind the gate.
