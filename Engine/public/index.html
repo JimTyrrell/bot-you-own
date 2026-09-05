@@ -25,6 +25,7 @@
   .app { display:grid; grid-template-columns:260px 1fr; height:100vh; }
   body.embed .app { grid-template-columns:1fr; }
   body.embed aside { display:none; }
+  body.embed #hoodbtn, body.embed #cfgbtn { display:none; }   /* a visitor's widget on a customer's site is not the place for the owner's buttons; the full page is */
 
   aside { background:var(--side); border-right:1px solid var(--edge); display:flex; flex-direction:column; overflow:hidden; }
   .brand { padding:14px 14px 8px; font-weight:650; font-size:15px; display:flex; align-items:center; justify-content:space-between; }
@@ -168,10 +169,10 @@
   #cfg { position:fixed; inset:0; background:var(--bg); z-index:45; display:none; grid-template-columns:1fr 1fr; grid-template-rows:auto 1fr; }
   #cfg.show { display:grid; }
   #cfg > header { grid-column:1 / -1; }
-  #cfgform { overflow:auto; padding:18px 24px 40px; border-right:1px solid var(--edge); }
+  #cfgform { overflow:auto; padding:18px 24px 40px; border-right:1px solid var(--edge); min-width:0; }   /* min-width:0: a long <select> option must not widen the whole page on a phone */
   #cfgform label { display:block; font-weight:600; font-size:13.5px; margin:16px 0 6px; }
   #cfgform label small { display:block; font-weight:400; color:var(--muted); font-size:12px; margin-top:2px; }
-  #cfgform input[type=text], #cfgform input[type=url], #cfgform textarea, #cfgform select { width:100%; padding:10px 12px; border:1px solid var(--edge); border-radius:10px; background:var(--bg); color:var(--text); font:inherit; }
+  #cfgform input[type=text], #cfgform input[type=url], #cfgform textarea, #cfgform select { width:100%; min-width:0; max-width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid var(--edge); border-radius:10px; background:var(--bg); color:var(--text); font:inherit; }
   #cfgform textarea { min-height:120px; resize:vertical; }
   #cfgform textarea.big { min-height:200px; }
   .starters-edit input { margin-bottom:6px; }
@@ -201,9 +202,16 @@
 
   @media (max-width: 760px) {
     .app { grid-template-columns:1fr; }
-    aside { position:fixed; inset:0 30% 0 0; z-index:20; transform:translateX(-100%); transition:transform .2s; box-shadow:0 0 40px rgba(0,0,0,.3); }
-    aside.open { transform:none; }
+    /* #side, not "aside": "Under the hood" is an aside too, and a bare "aside" rule
+       slid it off the left edge of every phone screen (found in the browser, v3.7.1). */
+    #side { position:fixed; inset:0 30% 0 0; z-index:20; transform:translateX(-100%); transition:transform .2s; box-shadow:0 0 40px rgba(0,0,0,.3); }
+    #side.open { transform:none; }
     #menu { display:inline-block; }
+    /* The header has eight things in it. Under 760px they wrap onto a second line
+       instead of making the whole page scroll sideways. */
+    main > header, #cfg > header { flex-wrap:wrap; }
+    header h1 { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .iconbtn { white-space:nowrap; }
     .starters { grid-template-columns:1fr; }
     .msg.user .body { max-width:92%; }
   }
@@ -235,6 +243,7 @@
   <input id="adminkey" type="password" placeholder="Admin code" autocomplete="off" hidden /><input id="adminkeycode" inputmode="numeric" placeholder="Authenticator code (only if the owner set one up)" autocomplete="one-time-code" hidden />
   <input id="email" type="email" placeholder="Your email address" autocomplete="email" />
   <div style="display:flex;gap:8px"><button type="submit" id="lockgo" style="flex:1">Continue</button><button type="button" id="lockback" style="flex:1;background:var(--panel);color:var(--text)" hidden>Back</button></div>
+  <button type="button" id="lockcfg" hidden>✎ Configure this bot</button>
   <div id="lockmsg"></div>
 </form></div>
 <div class="app">
@@ -345,9 +354,18 @@ const store = {
 // per bot (byo:tokens) for bots with their own secret. The right one goes out
 // as x-access-token with every request for that bot.
 let TOKEN = '', VISITOR = '', TOKENS = {};
-try { TOKEN = localStorage.getItem('byo:token') || ''; VISITOR = localStorage.getItem('byo:visitor') || ''; TOKENS = JSON.parse(localStorage.getItem('byo:tokens') || '{}') || {}; } catch {}
+// The admin token lives here too (not further down with the admin screen) because
+// boot() sends it with the very first /api/config call, before the rest of this file has run.
+let ADMIN = ''; try { ADMIN = localStorage.getItem('byo:admin') || ''; } catch {}
+try { TOKEN = localStorage.getItem('byo:token') || ''; TOKENS = JSON.parse(localStorage.getItem('byo:tokens') || '{}') || {}; } catch {}
+// The device key: 32 random bytes this browser made once, sent as x-device-key with every
+// request. In email mode the server ties the visitor's email to it (Engine/identity/, the
+// same email + device key Plate uses), so WHO is chatting is the server's answer, not a
+// value kept here. It opens nothing by itself: the bot's door (key, admin) is checked first.
+let DEVICE = ''; try { DEVICE = localStorage.getItem('byo:device') || ''; } catch {}
+if (!/^[0-9a-f]{64}$/.test(DEVICE)) { DEVICE = [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, '0')).join(''); try { localStorage.setItem('byo:device', DEVICE); } catch {} }
 const tokenFor = (pid) => (pid && TOKENS[pid]) || TOKEN;
-const authHeaders = (pid) => { const t = tokenFor(pid || state.project?.id); return t ? { 'x-access-token': t } : {}; };
+const authHeaders = (pid) => { const t = tokenFor(pid || state.project?.id); return { 'x-device-key': DEVICE, ...(t ? { 'x-access-token': t } : {}) }; };
 const saveTokens = () => { try { localStorage.setItem('byo:token', TOKEN); localStorage.setItem('byo:tokens', JSON.stringify(TOKENS)); } catch {} };
 function dropToken(pid) { if (pid && TOKENS[pid]) delete TOKENS[pid]; else TOKEN = ''; saveTokens(); }
 // What the lock screen is asking for, and for which bot.
@@ -358,19 +376,38 @@ function showLock(msg, l) {
   if (l) lock = { ...lock, ...l };
   needAdmin = !!lock.admin; needKey = !!lock.key && !needAdmin; needEmail = !!lock.email && !VISITOR && !lock.draft;
   $('pass').hidden = !needKey; $('adminkey').hidden = !needAdmin; $('email').hidden = !needEmail; $('lockgo').hidden = !!lock.draft;
-  $('lockback').hidden = !(state.projects && state.projects.length);
+  // Back: to the bot list when we have one, else (a direct link to a locked bot) home to the default bot.
+  $('lockback').hidden = !((state.projects && state.projects.length) || new URLSearchParams(location.search).get('project'));
   $('locktitle').textContent = lock.draft ? 'This bot is a draft' : lock.admin ? 'Owner only' : 'Before we start';
   $('lockhint').textContent = lock.draft ? 'It only answers in the Configure preview. The owner can publish it from ✎ Configure.'
     : lock.admin ? (lock.name ? lock.name + ' opens' : 'This bot opens') + ' with the admin code only.'
     : needKey && needEmail ? 'Enter the passphrase and your email address.'
     : needEmail ? 'Enter your email address to start. It is kept with your conversation so the owner knows who asked.'
     : (lock.name && lock.project !== state.cfg?.defaultProject ? lock.name + ' needs a passphrase. ' : '') + 'Enter the passphrase to continue.';
+  // The owner, already holding the admin token, can go straight to the form that publishes a draft.
+  $('lockcfg').hidden = !(lock.draft && ADMIN && lock.project);
   $('lock').classList.add('show'); $('lockmsg').textContent = msg || '';
   (needAdmin ? $('adminkey') : needKey ? $('pass') : needEmail ? $('email') : $('lockback')).focus();
 }
-$('lockback').onclick = () => { $('lock').classList.remove('show'); const p = state.projects?.find((x) => x.id === state.cfg?.defaultProject) || state.projects?.[0]; if (p && p.id !== state.project?.id) selectProject(p); };
+$('lockcfg').onclick = () => { $('lock').classList.remove('show'); openConfigure(lock.project); };
+$('lockback').onclick = () => { if (!(state.projects && state.projects.length)) { location.href = location.pathname; return; } $('lock').classList.remove('show'); const p = state.projects?.find((x) => x.id === state.cfg?.defaultProject) || state.projects?.[0]; if (p && p.id !== state.project?.id) selectProject(p); };
+// A second browser typing a known email: the server hands it a 6-character code instead of
+// the chat. The owner types the code (under the hood → Leads) and this page, which asks
+// every ten seconds, opens the moment that happens. Nothing is emailed.
+let pendingPoll = null;
+function showPending(code, email) {
+  $('lockhint').textContent = 'That email is already chatting on another device. Read this code to ' + (state.cfg?.owner || 'the owner') + ' and they can link this browser too. Or use a different email.';
+  $('lockmsg').innerHTML = '<span style="color:var(--text);font-size:22px;letter-spacing:.2em;font-weight:700">' + esc(code) + '</span>';
+  clearInterval(pendingPoll);
+  pendingPoll = setInterval(async () => {
+    try {
+      const r = await fetch('/api/id/me?bot=' + encodeURIComponent(lock.project), { headers: authHeaders(lock.project) }); const d = await r.json();
+      if (d.linked) { clearInterval(pendingPoll); VISITOR = d.email || email; $('lockmsg').textContent = ''; $('lock').classList.remove('show'); boot(lock.project); }
+    } catch {}
+  }, 10000);
+}
 $('lockform').addEventListener('submit', async (e) => {
-  e.preventDefault();
+  e.preventDefault(); clearInterval(pendingPoll);
   const go = $('lockgo'); go.disabled = true; go.textContent = 'Checking…'; $('lockmsg').textContent = '';
   try {
     if (needAdmin) {
@@ -389,7 +426,12 @@ $('lockform').addEventListener('submit', async (e) => {
     if (needEmail) {
       const em = $('email').value.trim();
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(em)) { $('lockmsg').textContent = 'That doesn\'t look like an email address.'; return; }
-      VISITOR = em.toLowerCase(); try { localStorage.setItem('byo:visitor', VISITOR); } catch {}
+      // Join: email + this device (Engine/identity/). The first device is in at once.
+      const res = await fetch('/api/id/join', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(lock.project) }, body: JSON.stringify({ bot: lock.project, email: em }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { $('lockmsg').textContent = res.status === 429 ? 'Too many tries. Wait a minute.' : (data.reason || 'Could not join. Try again.'); return; }
+      if (!data.linked) return showPending(data.code, em.toLowerCase());
+      VISITOR = data.email || em.toLowerCase();
     }
     $('lock').classList.remove('show'); boot(lock.project);
   } catch { $('lockmsg').textContent = 'Could not reach the server. Try again.'; }
@@ -397,7 +439,8 @@ $('lockform').addEventListener('submit', async (e) => {
 });
 function signOut() {
   TOKEN = ''; VISITOR = ''; ADMIN = ''; TOKENS = {};
-  try { localStorage.removeItem('byo:token'); localStorage.removeItem('byo:tokens'); localStorage.removeItem('byo:visitor'); localStorage.removeItem('byo:admin'); } catch {}
+  // byo:device goes too: the next load makes a fresh key, so this browser is nobody again.
+  try { localStorage.removeItem('byo:token'); localStorage.removeItem('byo:tokens'); localStorage.removeItem('byo:visitor'); localStorage.removeItem('byo:admin'); localStorage.removeItem('byo:device'); } catch {}
   $('hood').classList.remove('show'); location.href = location.pathname;
 }
 $('signoutbtn').onclick = signOut;
@@ -405,7 +448,7 @@ $('signoutbtn').onclick = signOut;
 function lockedOut(d, pid) {
   pid = pid || state.project?.id || ''; const name = state.projects?.find((p) => p.id === pid)?.name || '';
   const base = { project: pid, name, key: false, email: false, admin: false, draft: false };
-  if (d.error === 'email') { VISITOR = ''; try { localStorage.removeItem('byo:visitor'); } catch {} showLock('Please enter your email address to start.', { ...base, email: true }); }
+  if (d.error === 'email') { VISITOR = ''; showLock('Please enter your email address to start.', { ...base, email: true }); }
   else if (d.error === 'admin') { ADMIN = ''; try { localStorage.removeItem('byo:admin'); } catch {} showLock('', { ...base, admin: true }); }
   else if (d.error === 'draft') showLock('', { ...base, draft: true });
   else { dropToken(pid); showLock('Enter the passphrase to continue.', { ...base, key: true, email: /email/.test(d.access || '') }); }
@@ -425,7 +468,12 @@ function boot(pid) {
     return showLock(stale ? 'Your key expired. Enter the passphrase again.' : '', l);
   }
   // The key is fine (or not wanted); the bot wants an email address before chatting.
-  if (a.email && !VISITOR && !ADMIN) return showLock('', { ...l, key: false });
+  // cfg.identity is the server's answer for THIS browser: linked (and to whom), or waiting on a code.
+  if (a.email && !ADMIN) {
+    const idn = cfg.identity || null;
+    if (idn && idn.linked) VISITOR = idn.email || '';
+    else { VISITOR = ''; showLock(idn && idn.reason ? idn.reason : '', { ...l, key: false }); if (idn && idn.pending) showPending(idn.pending.code, idn.pending.email); return; }
+  }
   checked[l.project] = true;
   const gated = a.key || a.email || ADMIN || TOKEN || Object.keys(TOKENS).length;
   $('signout').hidden = !gated; $('whoami').textContent = VISITOR ? VISITOR : (ADMIN ? 'admin' : '');
@@ -497,7 +545,11 @@ async function checkDoor(p) {
     const a = cfg.access || {};
     const l = { project: p.id, name: p.name, mode: a.mode, key: !!a.key, email: !!a.email, admin: !!a.admin, draft: !!a.draft };
     if (cfg.locked && !cfg.projects) { if (cfg.reason === 'locked' && tokenFor(p.id)) dropToken(p.id); return showLock('', l); }
-    if (a.email && !VISITOR && !ADMIN) return showLock('', { ...l, key: false });
+    if (a.email && !ADMIN) {
+      const idn = cfg.identity || null;
+      if (idn && idn.linked) VISITOR = idn.email || '';
+      else { VISITOR = ''; showLock(idn && idn.reason ? idn.reason : '', { ...l, key: false }); if (idn && idn.pending) showPending(idn.pending.code, idn.pending.email); return; }
+    }
     checked[p.id] = true;
   } catch {}
 }
@@ -791,7 +843,7 @@ async function send(text) {
   try {
     const res = await fetch('/api/chat', {
       method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, signal: state.abort.signal,
-      body: JSON.stringify({ project: state.project.id, visitor: VISITOR ? { email: VISITOR } : undefined, messages: botTurns(chat).map(({ role, content }) => ({ role, content })), attachments: (chat.attachments || []).map(({ name, text }) => ({ name, text })), voice: spoken ? 'in' : undefined, stream: true }),
+      body: JSON.stringify({ project: state.project.id, messages: botTurns(chat).map(({ role, content }) => ({ role, content })), attachments: (chat.attachments || []).map(({ name, text }) => ({ name, text })), voice: spoken ? 'in' : undefined, stream: true }),
     });
     if (res.status === 401 || res.status === 403) lockedOut(await res.clone().json().catch(() => ({})), chat.project);
     if (!(res.headers.get('content-type') || '').includes('event-stream')) {
@@ -916,7 +968,7 @@ function handoffClosed(text) {
 }
 
 // ---- under the hood (admin) ----
-let ADMIN = ''; try { ADMIN = localStorage.getItem('byo:admin') || ''; } catch {}
+// ADMIN (the admin token) is declared up by TOKEN, next to the other keys the page holds.
 let hoodData = null, hoodTab = 'prompt';
 $('hoodbtn').onclick = () => { if (ADMIN) return openHood(); $('adminlock').classList.add('show'); $('adminmsg').textContent = ''; $('adminpass').value = ''; $('adminpass').focus(); };
 $('admincancel').onclick = () => $('adminlock').classList.remove('show');
@@ -1339,7 +1391,16 @@ async function renderLeads() {
     const d = await r.json();
     const body = $('leadsbody');
     if (!d.enabled) { body.innerHTML = '<p style="color:var(--muted)">' + esc(d.reason) + '</p>'; return; }
-    let html = '<p style="color:var(--muted);margin:0 0 10px">' + (d.emailMode ? 'Email mode is on: visitors leave an address before they chat.' : 'Email mode is <b>off</b> (YourBots/config.js → access.mode "email" or "key+email"), so only visitors who happened to send an address appear here.') + ' Automatic brief at turn ' + (d.settings.autoAfterTurns || '— (off)') + ', pushed to the webhook at score ≥ ' + d.settings.notifyScore + (d.settings.webhook ? ' (fallback webhook set)' : '') + '.</p>';
+    body.onclick = async (e) => {
+      if (e.target.id !== 'lk_go') return;
+      const msg = $('lk_msg'); msg.textContent = 'Linking…';
+      try {
+        const r = await fetch('/api/admin/id/link', { method: 'POST', headers: { 'content-type': 'application/json', 'x-admin-token': ADMIN }, body: JSON.stringify({ bot: state.project.id, email: $('lk_email').value.trim(), code: $('lk_code').value.trim() }) });
+        const j = await r.json(); msg.textContent = j.ok ? 'Linked. Their page opens within ten seconds.' : (j.reason || j.error || 'Not linked.');
+      } catch { msg.textContent = 'Could not reach the server.'; }
+    };
+    let html = (d.emailMode ? '<div style="border:1px solid var(--edge);border-radius:10px;padding:10px 12px;margin:0 0 12px"><b>Link a visitor\'s second device</b><p style="color:var(--muted);margin:4px 0 8px;font-size:12.5px">A visitor who types a known email on a new browser sees a 6-character code instead of the chat. Type it here with their email and that browser is in. Codes last 7 days. Nothing is emailed.</p><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><input type="email" id="lk_email" placeholder="visitor email" style="flex:2;min-width:160px;padding:6px 8px;border:1px solid var(--edge);border-radius:8px;background:var(--bg);color:var(--text);font:inherit"><input type="text" id="lk_code" placeholder="6-char code" maxlength="6" style="flex:1;min-width:100px;padding:6px 8px;border:1px solid var(--edge);border-radius:8px;background:var(--bg);color:var(--text);font:inherit;text-transform:uppercase"><button class="iconbtn" id="lk_go">Link</button><span id="lk_msg" style="color:var(--muted);font-size:12.5px"></span></div></div>' : '')
+      + '<p style="color:var(--muted);margin:0 0 10px">' + (d.emailMode ? 'Email mode is on: visitors give an email once and this browser of theirs is remembered (Engine/identity, like Plate).' : 'Email mode is <b>off</b> (YourBots/config.js → access.mode "email" or "key+email"), so only visitors who happened to send an address appear here.') + ' Automatic brief at turn ' + (d.settings.autoAfterTurns || '— (off)') + ', pushed to the webhook at score ≥ ' + d.settings.notifyScore + (d.settings.webhook ? ' (fallback webhook set)' : '') + '.</p>';
     if (!d.rows.length) { body.innerHTML = html + '<p style="color:var(--muted)">No leads yet.</p>'; return; }
     html += '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px"><tr style="color:var(--muted)"><th style="text-align:left;padding:4px 8px 4px 0">visitor</th><th style="text-align:left;padding:4px 8px">last seen</th><th style="text-align:right;padding:4px 8px">turns</th><th style="text-align:right;padding:4px 8px">refused</th><th style="text-align:left;padding:4px 8px">score</th><th></th></tr>'
       + d.rows.map((row) => '<tr style="border-top:1px solid var(--edge)"><td style="padding:6px 8px 6px 0;word-break:break-all"><b>' + esc(row.visitor) + '</b><br><span style="color:var(--muted)">' + esc((row.bots || []).join(', ')) + '</span></td><td style="padding:6px 8px;white-space:nowrap;color:var(--muted)">' + esc(whenAt(row.last_seen)) + '</td><td style="padding:6px 8px;text-align:right">' + row.turns + '</td><td style="padding:6px 8px;text-align:right">' + (row.refused || 0) + '</td><td style="padding:6px 8px">' + scoreChip(row.score) + (row.stale ? ' <span style="color:var(--muted)">(older than their last turns)</span>' : '') + (row.sent_at ? ' <span style="color:var(--muted)">· sent</span>' : '') + '</td><td style="padding:6px 0;text-align:right"><button class="iconbtn" data-open="' + esc(row.visitor) + '">Open</button></td></tr>').join('') + '</table></div><div id="leaddetail"></div>';

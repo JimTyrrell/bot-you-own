@@ -274,6 +274,17 @@ and every visitor leaves an address before they chat. From then on the bot is a
 lead magnet that qualifies itself: every conversation is a discovery call you
 didn't have to be on, and the refusals are the objections.
 
+Since v3.8 the address is tied to the visitor's browser the same way Plate does it
+(`Engine/identity/`, docs/IDENTITY.md): the page holds a random device key, the
+first browser to type an email is in at once, and a *second* browser typing the
+same email sees a 6-character code instead of the chat. You link it from
+**Under the hood → Leads → Link a visitor's second device** (their email + the
+code). Nobody verifies the address is theirs, but nobody can type someone else's
+address into a new browser and read as them either. Who is chatting is the
+server's answer from the device key — a `visitor.email` field in the request
+body opens nothing. Email mode needs the D1 database bound; without it the door
+stays shut (identity fails closed).
+
 **Under the hood → Leads** lists every visitor: bots they used, last seen, turns,
 how many the bot refused. Open one and **Write the brief**: one model call over
 their turns produces what they asked about, their situation, what they care

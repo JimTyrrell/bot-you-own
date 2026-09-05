@@ -16,8 +16,11 @@
 //  This file FAILS CLOSED. Anything that goes wrong inside the gate is a 401,
 //  never an open door. (Features elsewhere fail open on purpose; access doesn't.)
 //
-//  What none of this is: sign-in. "email" is a name the visitor typed, unverified.
-//  "key" is one shared passphrase. A bot that needs accounts is a later mode.
+//  What none of this is: sign-in. "key" is one shared passphrase. "email" is the visitor's
+//  email tied to THIS browser through Engine/identity/ (email + device key, like Plate):
+//  nobody checks the address is theirs, but a second browser can't just type it — the
+//  owner links it with a code. The chat handler finds the email (visitorOf in index.js)
+//  and passes it here; the gate only asks "is there one?".
 // ============================================================================
 
 export const ACCESS_MODES = ["open", "email", "key", "key+email", "admin", "draft"];
@@ -26,7 +29,7 @@ const RANK = { open: 0, email: 1, key: 2, "key+email": 3, admin: 4, draft: 5 };
 // One line per mode — the Settings screen and the Configure form show these.
 export const MODE_LINES = {
   open: "Anyone with the link. For a public website bot (rely on the rate limit and a spend cap).",
-  email: "Visitors type an email address before chatting. Nobody verifies it; it feeds Leads.",
+  email: "Visitors type an email address once; this browser is then remembered (Engine/identity, the same as Plate). A second browser waits for the owner to link it. Feeds Leads.",
   key: "The shared passphrase (the ACCESS_PASSPHRASE secret). Demos, internal bots.",
   "key+email": "Both: the passphrase to get in, then an email so you know who asked.",
   admin: "Only the admin code opens it. For bots only you should talk to.",

@@ -93,6 +93,27 @@ provider's published keys, issuer, audience, expiry, verified email — and bind
 device to the email it names. Set-up steps are in `docs/FOOD-LOG.md`. Facebook is
 not here: it hands out an access token, not an ID token, which is a different check.
 
+## Chat bots in "email" mode (v3.8)
+
+A chat bot whose door is `email` or `key+email` uses the same front door as Plate:
+
+- The chat page makes a device key once (`localStorage` → `byo:device`) and sends
+  it as `x-device-key` with every request. Sign out throws it away.
+- The email screen calls `POST /api/id/join {bot, email}`. First device: linked,
+  the chat opens. A known email from a new browser: `{ linked: false, code }` —
+  the page shows the code and asks `GET /api/id/me?bot=` every ten seconds.
+- The owner links that browser from **Under the hood → Leads** (email + code →
+  `POST /api/admin/id/link`), exactly like the coach does for Plate. Passkeys and
+  authenticator codes are Plate's second-device routes; a chat visitor has neither
+  set up, so for chat the owner's link is the way.
+- The Worker decides who is chatting from the device key (`visitorOf` in
+  `Engine/worker/index.js`), never from the body. `/api/config` carries
+  `identity: { linked, email }` or `{ linked: false, pending: { code } }` so the
+  page shows the right screen on reload. Leads, the audit log and handoffs all key
+  on that email.
+- Identity is per bot (the `bot` column): the same person joins each email-mode
+  bot once. Two chat bots on one deployment are two joins.
+
 ## Under the hood
 
 Tables (`Engine/schema.sql`, created on first use): `id_users`, `id_devices`,

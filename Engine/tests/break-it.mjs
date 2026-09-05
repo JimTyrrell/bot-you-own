@@ -35,6 +35,21 @@ const GAP_MS = args.gap ? Number(args.gap) : (/localhost|127\.0\.0\.1/.test(URL_
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const PASS = args.passphrase ? String(args.passphrase) : process.env.BYO_PASSPHRASE || "";
 const EMAIL = args.email ? String(args.email) : process.env.BYO_EMAIL || "";   // for access.mode email / key+email
+// Email mode goes through Engine/identity: this run is one "browser" with one device key,
+// and it joins each bot with --email before asking it anything. A fresh key every run, so
+// the join is a first device unless the email already exists on that bot — then the bot
+// answers 401 until the owner links the code, and the cases show that.
+const DEVICE = [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, "0")).join("");
+const joined = new Set();
+async function joinIfNeeded(project) {
+  if (!EMAIL || joined.has(project)) return;
+  joined.add(project);
+  try {
+    const r = await fetch(`${URL_}/api/id/join`, { method: "POST", headers: { "content-type": "application/json", "x-device-key": DEVICE, ...(TOKEN ? { "x-access-token": TOKEN } : {}) }, body: JSON.stringify({ bot: project, email: EMAIL }) });
+    const d = await r.json().catch(() => ({}));
+    if (!d.linked) process.stderr.write(`  (${project}: not linked as ${EMAIL} — ${d.code ? "a second device; code " + d.code + " needs the owner" : d.reason || r.status})\n`);
+  } catch (err) { process.stderr.write(`  (${project}: join failed — ${err.message})\n`); }
+}
 let TOKEN = "";
 if (PASS) {
   const r = await fetch(`${URL_}/api/unlock`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ passphrase: PASS }) });
@@ -81,11 +96,12 @@ process.exit(critFail ? 1 : 0);
 // ---------------------------------------------------------------------------
 async function ask(project, c, attempt = 0) {
   const messages = c.messages || [{ role: "user", content: c.prompt }];
+  await joinIfNeeded(project);
   if (GAP_MS) await sleep(GAP_MS);
   try {
     const res = await fetch(`${URL_}/api/chat`, {
-      method: "POST", headers: { "content-type": "application/json", ...(TOKEN ? { "x-access-token": TOKEN } : {}) },
-      body: JSON.stringify({ project, messages, stream: false, visitor: EMAIL ? { email: EMAIL } : undefined }),
+      method: "POST", headers: { "content-type": "application/json", "x-device-key": DEVICE, ...(TOKEN ? { "x-access-token": TOKEN } : {}) },
+      body: JSON.stringify({ project, messages, stream: false }),
     });
     const data = await res.json();
     if (res.status === 429 && attempt < 2) { process.stderr.write("  (rate limited — waiting 61s)\n"); await sleep(61000); return ask(project, c, attempt + 1); }

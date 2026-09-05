@@ -134,13 +134,37 @@ try {
   const g4 = (await j("/api/config", { headers: A })).body;
   ok("the admin's list shows it with listed:false", (g4.projects || []).some((p) => p.id === "zz-unlisted" && p.listed === false), JSON.stringify((g4.projects || []).map((p) => [p.id, p.listed])));
 
-  // (h) email: an address before chatting
+  // (h) email: an address before chatting — through Engine/identity (email + device key).
+  //     WHO is chatting is the server's answer from the device key, never a field in the body.
   console.log("\n(h) zz-email");
-  const h1 = await chat("zz-email"); const h2 = await chat("zz-email", {}, { visitor: { email: "someone@example.com" } });
-  ok("no visitor.email → 401 with the email prompt", h1.status === 401 && h1.body.error === "email", `got ${h1.status} ${h1.body.error}`);
-  ok("with visitor.email → 200", h2.status === 200, `got ${h2.status}`);
+  const devKey = () => [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const D1 = { "x-device-key": devKey() }, D2 = { "x-device-key": devKey() };
+  const EM = `visitor-${Date.now().toString(36)}@example.com`;                     // a fresh person each run
+  const h1 = await chat("zz-email"); const h1b = await chat("zz-email", D1, { visitor: { email: EM } });
+  ok("no identity → 401 with the email prompt", h1.status === 401 && h1.body.error === "email", `got ${h1.status} ${h1.body.error}`);
+  ok("visitor.email in the body alone opens nothing → 401", h1b.status === 401 && h1b.body.error === "email", `got ${h1b.status} ${h1b.body.error}`);
+  const j1 = await j("/api/id/join", { method: "POST", headers: jsonHeaders(D1), body: JSON.stringify({ bot: "zz-email", email: EM }) });
+  ok("first device: /api/id/join → linked", j1.status === 200 && j1.body.linked === true && j1.body.email === EM, JSON.stringify(j1.body));
+  const h2 = await chat("zz-email", D1);
+  ok("that device chats → 200", h2.status === 200, `got ${h2.status}`);
+  const j2 = await j("/api/id/join", { method: "POST", headers: jsonHeaders(D2), body: JSON.stringify({ bot: "zz-email", email: EM }) });
+  ok("a second device, same email → not linked, a 6-character code", j2.status === 200 && j2.body.linked === false && /^[A-Z0-9]{6}$/.test(j2.body.code || ""), JSON.stringify(j2.body));
+  const h3 = await chat("zz-email", D2);
+  ok("the waiting device still gets 401", h3.status === 401 && h3.body.error === "email", `got ${h3.status}`);
+  const lkBad = await j("/api/admin/id/link", { method: "POST", headers: jsonHeaders(A), body: JSON.stringify({ bot: "zz-email", email: "other@example.com", code: j2.body.code }) });
+  ok("owner links with the WRONG email → refused", lkBad.status === 409 || lkBad.status === 404, `got ${lkBad.status}`);
+  const lk = await j("/api/admin/id/link", { method: "POST", headers: jsonHeaders(A), body: JSON.stringify({ bot: "zz-email", email: EM, code: j2.body.code }) });
+  ok("owner links it: /api/admin/id/link → ok", lk.status === 200 && lk.body.ok === true, JSON.stringify(lk.body));
+  const h4 = await chat("zz-email", D2);
+  ok("the linked device chats → 200", h4.status === 200, `got ${h4.status}`);
+  const me = await j("/api/id/me?bot=zz-email", { headers: D2 });
+  ok("/api/id/me on that device → linked, with the email", me.body.linked === true && me.body.email === EM, JSON.stringify(me.body));
   const hc = (await j("/api/config?project=zz-email")).body;
   ok("/api/config?project=zz-email says email:true, key:false", hc.access?.email === true && hc.access?.key === false, JSON.stringify(hc.access));
+  const hc2 = (await j("/api/config?project=zz-email", { headers: D1 })).body;
+  ok("/api/config from a linked device → identity.linked with the email", hc2.identity?.linked === true && hc2.identity?.email === EM, JSON.stringify(hc2.identity));
+  const hc3 = (await j("/api/config?project=zz-email", { headers: { "x-device-key": devKey() } })).body;
+  ok("/api/config from a stranger → identity.linked false", hc3.identity && hc3.identity.linked === false, JSON.stringify(hc3.identity));
 
   // (i) admin events: the writes above, with a hash of the IP and never the IP
   console.log("\n(i) admin events");

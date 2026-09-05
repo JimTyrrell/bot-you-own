@@ -1,7 +1,7 @@
 import { CONFIG } from "../../YourBots/config.js";
 import { normaliseProject, normaliseWebsite, savedProjects, saveProject, deleteSavedProject, inFolder, resolveProject, resolveList, pickPublic, hrefFor, exportFiles, KINDS, KIND_LABELS, cleanKind } from "./projects.js";
 import { getSettings, saveSettings, settingsFileContent, cleanBadge, SETTINGS_FILE_VIEW as SETTINGS_FILE } from "./settings.js";
-import { handleIdentity, signInMethods, adminNeedsCode, adminCodeOk } from "../identity/index.js";
+import { handleIdentity, identify, linkByCode, signInMethods, adminNeedsCode, adminCodeOk } from "../identity/index.js";
 import { buildSystemPrompt, PROMPT_FILES, ROOT_PROMPT_FILES } from "./prompt.js";
 import { complete, gatewayStatus } from "./gateway.js";
 import { classifyTurn, recordRoute, routingStats } from "./router.js";
@@ -75,6 +75,20 @@ export default {
     //     Settings screen). `guard(project)` = is THIS request allowed in?
     const settings = await getSettings(env);
     const guard = (project, opts = {}) => accessGate(request, env, project, settings, { isAdmin, ...opts });
+    // Email mode for a CHAT bot: WHO the visitor is comes from the device identity
+    // (Engine/identity/ — the same email + device key Plate uses), never from a field
+    // in the request body. An unknown browser gives "" and the gate answers 401 "email";
+    // the page then offers the join screen. Anything that breaks here also gives "":
+    // identity fails closed. Leads, the audit log and handoffs all key on this email.
+    const visitorOf = async (project) => {
+      try {
+        if (isAdmin) return "";                                                   // the admin is "admin" to the gate
+        const a = effectiveAccess(project, settings);
+        if (!a.wantEmail || cleanKind(project.kind) !== "chat" || !env.DB) return "";
+        const who = await identify(request, env, project);
+        return who.user ? who.user.email : "";
+      } catch (err) { console.error("identity lookup failed — treating the visitor as unknown", err?.message || err); return ""; }
+    };
 
     if (url.pathname === "/api/admin/unlock") {
       if (request.method !== "POST") return json({ error: "POST only" }, 405);
@@ -115,6 +129,19 @@ export default {
       if (url.pathname === "/api/admin/audit") return json(await auditView(env, url.searchParams));
       if (url.pathname === "/api/admin/library" || url.pathname.startsWith("/api/admin/library/")) return handleLibrary(request, env, url);
       if (url.pathname === "/api/admin/leads" || url.pathname.startsWith("/api/admin/leads/")) return handleLeads(request, env, url);
+      // The owner links a visitor's second browser: the visitor reads out the 6-character
+      // code their screen shows, the owner types it here with the email. Both must match.
+      if (url.pathname === "/api/admin/id/link") {
+        if (request.method !== "POST") return json({ error: "POST only" }, 405);
+        if (!env.DB) return json({ error: "Identity needs the D1 database (wrangler.jsonc → d1_databases)." }, 503);
+        const { body: b, error } = await readJson(request, { max: 8 * 1024, strict: false }); if (error) return error;
+        const target = await resolveProject(env, String(b.bot || "").toLowerCase());
+        const email = cleanEmail(b.email);
+        if (!target.id || !email) return json({ error: "bot and email are required" }, 400);
+        const r = await linkByCode(env, target.id, { email, code: b.code });
+        if (r.ok) await logAdminEvent(env, request, "device-link", target.id, `linked a second device for ${email}`);
+        return json(r, r.ok ? 200 : r.status || 400);
+      }
       if (url.pathname === "/api/admin/gaps" || url.pathname.startsWith("/api/admin/gaps/")) return handleGaps(request, env, url);
       if (url.pathname === "/api/admin/handoffs" || url.pathname.startsWith("/api/admin/handoff/")) return handlePersonAdmin(request, env, url);
       if (url.pathname === "/api/admin/projects") return json({ projects: (await resolveList(env)).map((p) => ({ ...p, href: hrefFor(p) })), kinds: Object.keys(KINDS).map((id) => ({ id, label: KIND_LABELS[id] })), adminNeedsCode: adminNeedsCode(env), jobs: Object.values(MODES).map((m) => ({ id: m.id, blurb: m.blurb, role: m.role, shape: m.shape, done: m.done })), model: CONFIG.model, canSave: Boolean(env.DB), rootPrompt: ROOT_PROMPT_FILES, github: { repo: CONFIG.github?.repo || "", branch: CONFIG.github?.branch || "main", ready: Boolean(CONFIG.github?.repo && env.GITHUB_TOKEN) }, library: libraryMeta(env, CONFIG), access: { default: settings.default, floor: settings.floor, modes: ACCESS_MODES.map((id) => ({ id, line: MODE_LINES[id] })), sharedKey: Boolean(env.ACCESS_PASSPHRASE) } });
@@ -209,8 +236,16 @@ export default {
       // handoffText rides along so the page can offer "Talk to a person" under a
       // reply that contains it. It is said to visitors word for word anyway.
       for (const p of projects) p.handoffText = p.kind === "chat" ? (await resolveProject(env, p.id)).handoffText || "" : "";
+      // Email mode: is THIS browser already someone? The server says, not localStorage.
+      let identity = null;
+      if (view.email && !isAdmin && cleanKind(current.kind) === "chat") {
+        if (!env.DB) identity = { linked: false, pending: null, reason: "Email mode needs the D1 database (wrangler.jsonc → d1_databases)." };
+        else try { const who = await identify(request, env, { ...current, id: curId }); identity = who.user ? { linked: true, email: who.user.email } : { linked: false, pending: who.pending ? { code: who.pending.code, email: who.pending.email } : null }; }
+        catch (err) { console.error("identity lookup failed on /api/config", err?.message || err); identity = { linked: false, pending: null }; }
+      }
       return json({
         version: await versionStamp(env),
+        identity,
         locked: view.key,                                                    // this bot needs a key (and the caller has one)
         accessMode: view.mode,
         access: view,
@@ -236,7 +271,7 @@ export default {
     // that themselves (the bot id is in the body / the form), with `guard`.
     if (url.pathname === "/api/chat") {
       if (request.method !== "POST") return json({ error: "POST only" }, 405);
-      return handleChat(request, env, ctx, { isAdmin, guard });
+      return handleChat(request, env, ctx, { isAdmin, guard, visitorOf });
     }
 
     // The paperclip. Same door as /api/chat; switched off = it doesn't exist.
@@ -257,7 +292,7 @@ export default {
 
     // Talk to a person. Same door as /api/chat: the bot's own gate decides.
     if (url.pathname === "/api/handoff" || url.pathname.startsWith("/api/handoff/")) {
-      return handlePerson(request, env, ctx, url, { isAdmin, guard });
+      return handlePerson(request, env, ctx, url, { isAdmin, guard, visitorOf });
     }
 
     return env.ASSETS ? env.ASSETS.fetch(request) : new Response("Not found", { status: 404 });
@@ -313,7 +348,7 @@ async function readJson(request, { max = MAX_JSON, strict = true } = {}) {
   catch { return { error: json({ error: "bad request" }, 400) }; }
 }
 
-async function handleChat(request, env, ctx, { isAdmin = false, guard } = {}) {
+async function handleChat(request, env, ctx, { isAdmin = false, guard, visitorOf = async () => "" } = {}) {
   if (!(await allowed(env, request))) {
     return json({ reply: "You're sending messages faster than I can think. Give me a moment and try again.", flags: ["rate-limited"] }, 429);
   }
@@ -331,7 +366,7 @@ async function handleChat(request, env, ctx, { isAdmin = false, guard } = {}) {
   // An app-shaped bot (kind "food") has no chat: its page is /apps/<id>.
   if (project.kind && project.kind !== "chat") return json({ error: "not a chat bot", reply: `${project.name} is an app, not a chat bot. Open /apps/${project.id}.`, href: `/apps/${project.id}` }, 404);
   // --- THE GATE. This bot's door: key, email, admin code, or draft. Engine/worker/access.js.
-  const g = await guard(project, { draftPreview, email: String(body.visitor?.email || "") });
+  const g = await guard(project, { draftPreview, email: await visitorOf(project) });   // body.visitor is ignored: identity says who
   if (!g.ok) return json({ error: g.error, reply: g.reply, access: g.mode }, g.status);
   const who = g.who;                                                          // the email they typed, "admin", or ""
   const stream = body.stream !== false;
@@ -837,7 +872,7 @@ async function handleGaps(request, env, url) {
 //   GET  /api/handoff/<id>?since=<msgId>  { status, messages } — the page polls this every 10 s
 //   POST /api/handoff/<id>/message        { text } → the visitor's reply into the thread
 // The id is the visitor's secret: 48 random hex characters, stored with their chat.
-async function handlePerson(request, env, ctx, url, { isAdmin = false, guard } = {}) {
+async function handlePerson(request, env, ctx, url, { isAdmin = false, guard, visitorOf = async () => "" } = {}) {
   if (!env.DB) return json({ error: "no-database", reply: "Talking to a person isn't switched on here: no database is bound (wrangler.jsonc → d1_databases)." }, 503);
   await ensureSchema(env);
   const parts = url.pathname.split("/").filter(Boolean);        // api, handoff, <id>, <action>
@@ -847,7 +882,7 @@ async function handlePerson(request, env, ctx, url, { isAdmin = false, guard } =
       if (!(await allowed(env, request))) return json({ error: "rate-limited", reply: "Give me a moment and try again." }, 429);
       let b; try { b = await request.json(); } catch { return json({ error: "bad request" }, 400); }
       const project = await resolveProject(env, String(b.project || ""));
-      const g = await guard(project, { email: String(b.visitor?.email || "") });     // the bot's door, email included
+      const g = await guard(project, { email: await visitorOf(project) });            // the bot's door, the identity's email included
       if (!g.ok) return json({ error: g.error, reply: g.reply }, g.status);
       const who = g.who;
       const chatId = String(b.chatId || "").replace(/[^\w-]/g, "").slice(0, 40);

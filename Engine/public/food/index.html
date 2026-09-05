@@ -122,8 +122,8 @@
     <div class="card">
       <p style="font-size:20px;font-weight:700;margin:0 0 4px">Snap your plate.<br>Get the numbers.</p>
       <p class="muted small">Your email is your log. This browser remembers you — no password, nothing to install.</p>
-      <label for="email">Email</label>
       <div class="signin" id="passkey-join" hidden><button id="pk-login">Use a passkey</button><p class="muted small center" style="margin:2px 0 6px">Already logging on another device with a passkey? That's the fast way in.</p></div>
+      <label for="email">Email</label>
       <input id="email" type="email" inputmode="email" autocomplete="username webauthn" placeholder="you@example.com">
       <button class="primary" id="joinbtn" style="width:100%;margin-top:14px">Start logging</button>
       <div class="signin" id="signin-join"></div>
@@ -361,7 +361,11 @@ $('totplink').onclick = async () => {
   toast('Linked'); const me = await api('me'); if (me.linked) onLinked(me);
 };
 $('totp-setup').onclick = async () => {
-  const r = await idApi('totp/setup');
+  let r = await idApi('totp/setup');
+  if (r.status === 409 && r.confirmed) {
+    if (!confirm('An authenticator app is already set up for this email. Replace it? The codes in the old app will stop working.')) return;
+    r = await idApi('totp/setup', { replace: true });
+  }
   if (!r.ok) return toast(r.reason || 'Couldn\'t start.');
   $('totpbox').hidden = false;
   try { window.drawQr($('totpqr'), r.uri, { scale: 4 }); } catch (e) { $('totpqr').hidden = true; }
@@ -370,7 +374,7 @@ $('totp-setup').onclick = async () => {
 $('totpok').onclick = async () => {
   const r = await idApi('totp/confirm', { code: $('totpconfirm').value });
   if (!r.ok) return toast(r.reason || 'That code didn\'t match.');
-  $('totpbox').hidden = true; $('totp-setup').textContent = 'Authenticator app is set up'; toast('Done. Six digits link your next device.');
+  $('totpbox').hidden = true; $('totp-setup').textContent = 'Authenticator app is set up · tap to replace it'; toast('Done. Six digits link your next device.');
 };
 
 // ---------- sign in with … (only when the deployment has a client id) ----------
@@ -637,8 +641,17 @@ async function openReceipts() {
 }
 
 // ---------- household ----------
+// What this person already has — asked of the server, because the phone that set up the
+// authenticator or the passkey may not be this one. Labels follow the truth, not local memory.
+async function refreshIdentityState() {
+  const m = await api('methods?bot=' + encodeURIComponent(BOT), { base: '/api/id/' });
+  const me = m.me || {};
+  $('totp-setup').textContent = me.totp ? 'Authenticator app is set up · tap to replace it' : 'Set up an authenticator app';
+  $('pk-register').textContent = me.passkeys ? 'Add a passkey on this device (' + me.passkeys + ' set up)' : 'Set up a passkey on this device';
+}
 async function openSettings() {
   show('settings');
+  refreshIdentityState().catch(() => {});
   const r = await api('household'); const h = r.household;
   const unit = (S.targets && S.targets.unit) || 'kg';
   if (!h) $('hh').innerHTML = '<div class="card"><p style="margin-top:0">Share with your spouse or family: see each other’s days, one receipts list, both weight trends. Everyone keeps their own targets and meals.</p><button class="primary" id="hcreate" style="width:100%">Create a household</button><div class="row" style="margin-top:10px"><input id="hcode" placeholder="Invite code" style="text-transform:uppercase" maxlength="6"><button id="hjoin" style="flex:0 0 auto">Join</button></div></div>';
