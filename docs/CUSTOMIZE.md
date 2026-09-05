@@ -70,8 +70,9 @@ Each bot can call a webhook and/or send an email **after** the reply has gone ou
 or the firewall had to add the contact; injection / rate-limit / model-error turns do
 **not** count), `intake-complete` (an intake bot collected everything — the job prompt
 makes the model end its summary with a `[INTAKE COMPLETE]` line that the code strips
-before anyone sees it), `every-turn` (off by default; noisy). One event per turn, the
-most specific one.
+before anyone sees it), `booking` (a booking bot put a call on the calendar — see
+"Booking as an action" below; the payload carries the booking), `every-turn` (off by
+default; noisy). One event per turn, the most specific one.
 
 **Zapier / Make / n8n / Slack in three lines:**
 1. Make a "Catch hook" (Zapier), "Custom webhook" (Make), "Webhook" node (n8n) or a Slack
@@ -112,6 +113,66 @@ logs, `handoff-email-skipped` on the Audit row) and the webhook still works. To 
 in `YourBots/config.js`, uncomment the `send_email` block in `wrangler.jsonc`, deploy.
 Under the hood → Gateway & model shows the webhook host, the email, `on`, and whether the
 secret and the email binding exist.
+
+## Booking as an action (Cal.com)
+A booking bot that ends with "here's the link" still loses half the people at the link.
+Connect a Cal.com calendar and the bot offers the next free times **in the chat** and
+books the one they pick. Four steps:
+
+1. **Cal.com → Settings → Developer → API keys**: make one. Then, on your machine:
+   ```bash
+   printf 'cal_live_…' | npx wrangler secret put CAL_API_KEY      # local: CAL_API_KEY=… in .dev.vars
+   ```
+2. **Find the event type id**: Cal.com → Event Types → open the one the bot should book;
+   the number is in the URL (`/event-types/123`).
+3. **Tell the bot** — `YourBots/<bot>/project.json`, or Configure → "Booking" (the block
+   appears when the job is `booking`):
+   ```json
+   "mode": "booking",
+   "bookingFitRules": "A call is for … It is NOT for …",
+   "bookingUrl": "https://cal.com/you/intro",
+   "booking": { "provider": "cal.com", "eventTypeId": 123, "timezone": "America/New_York", "durationNote": "a 20-minute intro call" }
+   ```
+   `bookingUrl` stays: it's the fallback if the calendar can't be reached. `timezone` is the
+   one the times are shown in (yours, usually). `durationNote` is said to the visitor.
+4. **Deploy, then try it**: tell the bot you fit, ask for a call. Under the hood →
+   Gateway & model → Booking says whether it's live and why not if it isn't.
+
+**What the visitor sees.** The bot qualifies them as before (`bookingFitRules`, two
+questions max). Then: *"I can do (America/New_York, a 20-minute intro call): Mon 7 Sep
+2026, 10:00 · Mon 7 Sep 2026, 14:00 · … Which works for you? I'll need a name and an
+email address to book it."* They pick one and give both. The bot: *"Booked: Mon 7 Sep
+2026, 14:00 (America/New_York). You'll get an email from the calendar with the details."*
+Cal.com sends its own confirmation and calendar invite; the bot never claims a booking
+the calendar didn't confirm.
+
+**How it works** (`Engine/worker/booking.js`). The model writes one of two lines at the end
+of a reply — `[BOOKING: OFFER]` or `[BOOKING: CONFIRM 2026-09-07T14:00 | Sam Jones | sam@example.com]`
+— exactly like the intake job's `[INTAKE COMPLETE]`. The code removes the line before
+anyone sees it (visitor, audit log, streaming), then does the work: `GET /v2/slots` for
+the next 7 days (at most 6 offered), or `POST /v2/bookings` for the chosen time. **The
+time in a CONFIRM line has to match a slot the calendar returns at that moment**, so the
+model cannot book a time that doesn't exist. Taken in the meantime → *"That slot just
+went — here are the next ones."* Calendar down or key wrong → the `bookingUrl` link and a
+line in the logs. No provider / no id / no key → the old behaviour, link only, nothing
+called.
+
+**Flags** on the Audit row: `booking-slots-offered`, `booking-created`, `booking-failed`
+(the time had gone; fresh ones offered), `booking-provider-failed` (fell back to the link),
+`booking-no-slots`, `booking-incomplete` (the model tried to confirm without a name/email/time).
+
+**Tell someone.** A booking fires the handoff webhook (above) as event `booking` — on by
+default in `handoffActions.on` — with a `booking` field: `{ uid, start, end, when, timezone,
+eventTypeId, name, email }`. Name and email are kept unredacted on purpose, like `visitor`.
+
+**Adding Calendly** (or anything else): `booking.js` has two provider functions,
+`listSlots` and `createBooking`, keyed on `provider`. Another provider is another pair
+with the same shape. The conversation, the markers and the fallbacks don't change.
+
+**Testing without a Cal.com account:** `node Engine/tests/fakes/calcom.mjs` runs a fake
+of the two endpoints on port 8781 (clearly not the real API — it records bookings to a
+file and can be told to fail); point a bot at it with `"baseUrl": "http://localhost:8781/v2"`
+in `booking` and `CAL_API_KEY=test-key` in `.dev.vars`.
 
 ## Leads: who asked, and what they want ⭐
 Turn on email mode (`YourBots/config.js` → `access.mode: "email"` or `"key+email"`)

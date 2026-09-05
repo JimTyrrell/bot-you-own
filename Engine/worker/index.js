@@ -7,6 +7,7 @@ import { MODES } from "./modes.js";
 import { retrieve, uploadFile, listFiles, deleteFile, downloadFile, rescanLibrary, extractText, libraryMeta, allExtensions, gate, safeName, scanText, websiteOf, crawlWebsite, websiteStatus, deleteWebsite } from "./library.js";
 import { normaliseHandoffActions, stripIntakeMarker, handoffEvent, runHandoffActions, handoffActionsView } from "./handoff.js";
 import { listLeads, getLead, summariseLead, sendLead, maybeAutoLead, leadsConfig, cleanVisitor } from "./leads.js";
+import { normaliseBooking, bookingLive, bookingStep, bookingView } from "./booking.js";
 
 // ============================================================================
 //  THE WORKER. Four routes and a static folder.
@@ -278,7 +279,7 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
   if (found.website) flags.push("website-used");
 
   // --- LAYER 1: build the prompt --------------------------------------------
-  const prompt = buildSystemPrompt({ config: CONFIG, project, passages, attachments });
+  const prompt = buildSystemPrompt({ config: CONFIG, project, passages, attachments, bookingLive: bookingLive(env, project) });
   const outboundOpts = { allowedLinks: project.allowedLinks, protectedText: prompt.protectedText, config: CONFIG, project };
   // A second, non-streaming call with the same prompt — used only if the first reply came out as garbage (see finish()).
   const retry = () => complete({ env, config: CONFIG, system: prompt.text, messages: history, stream: false });
@@ -296,8 +297,8 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
 
   // --- Non-streaming path -----------------------------------------------------
   if (!stream) {
-    const out = await finish(String(result), { env, fw, flags, handoff, outboundOpts, retry });
-    ctx.waitUntil(afterReply(env, { project, question: last.content, reply: out.reply, flags: out.flags, who, history, url: request.url }));
+    const out = await finish(String(result), { env, fw, flags, handoff, outboundOpts, retry, who, history });
+    ctx.waitUntil(afterReply(env, { project, question: last.content, reply: out.reply, flags: out.flags, who, history, url: request.url, booking: out.booking }));
     return json({ reply: out.reply, flags: out.flags, sources });
   }
 
@@ -314,9 +315,9 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
           full += chunk;
           push({ type: "delta", text: chunk });
         }
-        const out = await finish(full, { env, fw, flags, handoff, outboundOpts, retry });
+        const out = await finish(full, { env, fw, flags, handoff, outboundOpts, retry, who, history });
         push({ type: "final", text: out.reply, flags: out.flags, sources });
-        ctx.waitUntil(afterReply(env, { project, question: last.content, reply: out.reply, flags: out.flags, who, history, url: request.url }));
+        ctx.waitUntil(afterReply(env, { project, question: last.content, reply: out.reply, flags: out.flags, who, history, url: request.url, booking: out.booking }));
       } catch (err) {
         console.error("stream failed", err);
         push({ type: "final", text: handoff, flags: [...flags, "stream-error"] });
@@ -328,10 +329,11 @@ async function handleChat(request, env, ctx, { wantEmail = false, isAdmin = fals
 }
 
 // LAYER 3a outbound: links, leaks, optional Llama Guard on the answer.
-async function finish(raw, { env, fw, flags, handoff, outboundOpts, retry = null }) {
+async function finish(raw, { env, fw, flags, handoff, outboundOpts, retry = null, who = "", history = [] }) {
   const out = screenOutbound(raw.trim(), outboundOpts);
   let reply = out.text;
   const f = [...flags, ...out.flags];
+  let booking = null;
   // Models occasionally come apart and emit "!!!!!!!!" or "Quick Quick Quick…"
   // for a whole reply (seen three times in one evening's test runs, always
   // gpt-oss). A visitor should never see that. Enforced in code: a reply that
@@ -352,13 +354,22 @@ async function finish(raw, { env, fw, flags, handoff, outboundOpts, retry = null
     // (On the streaming path the line may flash for a moment before "final" replaces the text.)
     const m = stripIntakeMarker(reply);
     if (m.found) { reply = m.text; if (m.done && outboundOpts.project.mode === "intake") f.push("intake-complete"); }
+    // A booking bot ends with "[BOOKING: OFFER]" or "[BOOKING: CONFIRM …]" (YourBots/_prompt/jobs/booking.md).
+    // Engine/worker/booking.js takes the line out and does the actual work: lists free
+    // times, or books the chosen one. Without a provider configured it only strips the line.
+    if (outboundOpts.project.mode === "booking") {
+      try {
+        const b = await bookingStep(env, outboundOpts.project, reply, { who, history });
+        reply = b.reply; f.push(...b.flags); booking = b.booking;
+      } catch (err) { console.error("booking step failed (continuing)", err?.message || err); }
+    }
   }
   if (reply && fw.llamaGuard) {
     const g = await llamaGuard(env, [{ role: "user", content: "(user message)" }, { role: "assistant", content: reply }]);
     if (g.ran && !g.safe) { f.push("guard-blocked-output:" + g.categories.join(",")); reply = ""; }
   }
   if (!reply) reply = handoff;
-  return { reply, flags: f };
+  return { reply, flags: f, booking };
 }
 
 // --- THE PAPERCLIP: a visitor attaches one file to the conversation. ----------
@@ -425,14 +436,14 @@ async function handleAttach(request, env, ctx) {
 // handoff-email-skipped) instead of a guess, and the only cost is that the row
 // lands up to five seconds later. The reply already went out, so the chips on
 // the visitor's screen don't show these flags; the Audit tab does.
-async function afterReply(env, { project, question, reply, flags, who, history, url }) {
+async function afterReply(env, { project, question, reply, flags, who, history, url, booking = null }) {
   let f = flags;
   try {
     const event = handoffEvent(project, reply, flags);
     if (event) {
       let page = "";
       try { const u = new URL(url); page = `${u.origin}/?project=${encodeURIComponent(project.id || "")}`; } catch {}
-      f = [...flags, ...(await runHandoffActions(env, CONFIG, { project, event, question, reply, history, flags, who, url: page }))];
+      f = [...flags, ...(await runHandoffActions(env, CONFIG, { project, event, question, reply, history, flags, who, url: page, booking }))];
     }
   } catch (err) {
     console.error("handoff action failed (continuing)", err);
@@ -545,6 +556,7 @@ function normaliseProject(p, id) {
     thinkingWords: (Array.isArray(p.thinkingWords) ? p.thinkingWords : []).map((x) => String(x).slice(0, 60)).filter(Boolean).slice(0, 40),
     intakeQuestions: (Array.isArray(p.intakeQuestions) ? p.intakeQuestions : []).map((x) => String(x).slice(0, 200)).slice(0, 10),
     bookingUrl: String(p.bookingUrl || ""), bookingFitRules: String(p.bookingFitRules || "").slice(0, 2000),
+    booking: normaliseBooking(p.booking),                       // { provider, eventTypeId, timezone, durationNote } — Engine/worker/booking.js
     nextSteps: (Array.isArray(p.nextSteps) ? p.nextSteps : []).slice(0, 10),
     // the bot's website (optional): one URL, and glob patterns for which pages to keep / skip
     website: normaliseWebsite(p.website),
@@ -826,7 +838,7 @@ async function versionStamp(env) {
 // "Under the hood": everything the admin view shows, for one project.
 async function engineView(env, projectId) {
   const project = await resolveProject(env, String(projectId || ""));
-  const prompt = buildSystemPrompt({ config: CONFIG, project });
+  const prompt = buildSystemPrompt({ config: CONFIG, project, bookingLive: bookingLive(env, project) });
   let sources = [];
   try { sources = await (await env.ASSETS.fetch(new Request("https://x/engine/index.json"))).json(); } catch {}
   const { files, instructions, ...meta } = project;
@@ -861,6 +873,12 @@ async function engineView(env, projectId) {
         "leak-blocked:paraphrase": "answer described its rules in its own words; withheld",
         "handoff-appended": "a decline in a strict project was missing the contact; added",
         "intake-complete": "an intake bot collected everything (the [INTAKE COMPLETE] line was found and removed)",
+        "booking-slots-offered": "a booking bot asked the calendar for free times and listed them (the [BOOKING: OFFER] line was found and removed)",
+        "booking-created": "the call was booked on the calendar (the [BOOKING: CONFIRM …] line was found, the time re-checked, the booking made)",
+        "booking-failed": "the chosen time was no longer free (or didn't match an offered one); fresh times were offered",
+        "booking-provider-failed": "the calendar couldn't be reached or refused; the bot fell back to bookingUrl",
+        "booking-no-slots": "the calendar had nothing free in the next 7 days",
+        "booking-incomplete": "the model tried to confirm without a time, a name or an email; asked for the missing bit",
         "handoff-webhook-sent / handoff-webhook-failed": "the bot's handoff webhook was called after the reply; Audit tab only",
         "handoff-email-sent / -failed / -skipped": "the handoff email; skipped = no send_email binding or no handoffEmailFrom",
         "library-used": "excerpts from this bot's documents (AI Search) were put in the prompt for this question",
@@ -877,6 +895,7 @@ async function engineView(env, projectId) {
     },
     gateway: { provider: CONFIG.provider, model: CONFIG.model, maxTokens: CONFIG.maxTokens, gateway: CONFIG.gateway },
     handoffActions: handoffActionsView(env, CONFIG, project),
+    booking: bookingView(env, project),
     version: await versionStamp(env),
     sources,
   };

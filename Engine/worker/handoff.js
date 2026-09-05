@@ -16,6 +16,8 @@
 //    intake-complete  an intake bot collected everything. The job prompt tells the
 //                     model to end its summary with the line "[INTAKE COMPLETE]";
 //                     the code detects that line, strips it, and fires.
+//    booking          a booking bot put a call on the calendar (Engine/worker/booking.js).
+//                     The payload carries the booking: when, name, email, uid.
 //    every-turn       every turn, blocked ones included. Off by default: noisy.
 //
 //  Everything here fails OPEN and never touches the reply: the visitor got their
@@ -25,8 +27,8 @@
 
 import { redact } from "./firewall.js";
 
-export const HANDOFF_EVENTS = ["handoff", "intake-complete", "every-turn"];
-const DEFAULT_ON = ["handoff", "intake-complete"];
+export const HANDOFF_EVENTS = ["handoff", "intake-complete", "booking", "every-turn"];
+const DEFAULT_ON = ["handoff", "intake-complete", "booking"];
 const EMAIL_SHAPE = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
 const TIMEOUT_MS = 5000;
 
@@ -74,6 +76,7 @@ export function handoffEvent(project, reply, flags) {
   const declined = !firewallTurn && (flags.includes("handoff-appended") || (project.handoffText && String(reply).includes(project.handoffText)));
   const candidates = [
     flags.includes("intake-complete") && "intake-complete",
+    flags.includes("booking-created") && "booking",
     declined && "handoff",
     "every-turn",
   ].filter(Boolean);
@@ -82,7 +85,7 @@ export function handoffEvent(project, reply, flags) {
 
 // Run the configured actions for one turn. Returns the outcome flags to add to
 // the audit row: handoff-webhook-sent / -failed, handoff-email-sent / -failed / -skipped.
-export async function runHandoffActions(env, config, { project, event, question, reply, history, flags, who, url }) {
+export async function runHandoffActions(env, config, { project, event, question, reply, history, flags, who, url, booking = null }) {
   const actions = normaliseHandoffActions(project.handoffActions);
   if (!actions.webhook && !actions.email) return [];
   const bot = { id: project.id || "", name: project.name || "" };
@@ -94,6 +97,8 @@ export async function runHandoffActions(env, config, { project, event, question,
     question: q, reply: a, transcript, flags, url,
     // Slack incoming webhooks render "text" as the message; Zapier/Make/n8n see every field.
     text: `[${bot.name}] ${event}${who ? ` · ${who}` : ""}\nAsked: ${q}\nBot: ${a}`,
+    // event "booking": what was booked — name and email are kept on purpose, like `visitor`.
+    ...(booking ? { booking, text: `[${bot.name}] booking · ${booking.name} <${booking.email}> · ${booking.when} (${booking.timezone})` } : {}),
   };
   const out = [];
   if (actions.webhook) out.push(await sendWebhook(env, actions.webhook, payload, bot));

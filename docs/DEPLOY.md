@@ -49,6 +49,10 @@ before every dev/deploy (`build.command` in `wrangler.jsonc`) and is git-ignored
 webhook then carries `x-handoff-signature` (hex HMAC-SHA256 of the body). Local: `.dev.vars`.
 Setup and verification: `docs/CUSTOMIZE.md → When it hands off, tell someone`.
 
+## B3c. Booking as an action (optional)
+`printf 'cal_live_…' | npx wrangler secret put CAL_API_KEY` — a booking bot with `project.json → booking`
+set then offers free times and books the call through Cal.com. Local: `.dev.vars`. Setup: `docs/CUSTOMIZE.md → Booking as an action (Cal.com)`.
+
 ## B4. Versioning
 Bump `"version"` in `package.json`, commit, deploy. `public/version.json` is generated at build with
 `{version, builtAt, commit}`; `/health` returns `ok 2.1.0 <commit> <builtAt>`.
