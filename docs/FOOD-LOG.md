@@ -1,13 +1,24 @@
-# The food log · `/food`
+# The food log · `/apps/plate` (a bot of kind `food`)
 
 A photo food log a coach deploys for their clients. Not a chat bot: a page with a
 camera button. Snap the plate → the model names the foods and guesses the numbers →
 fix the portion with a tap → the day is a ring and three bars. It also reads barcodes,
 nutrition labels and receipts, takes weigh-ins, and lets a household share.
 
-It lives inside this Worker. Nothing extra to deploy. **On by default** —
-`YourBots/config.js → foodLog.enabled: false` switches it off (`/food` and every
-`/api/food/*` route become 404s).
+It lives inside this Worker. Nothing extra to deploy. Since v3.7 it is **a bot
+folder like any other**: `YourBots/plate/project.json` with `"kind": "food"` and
+its settings in a `"food": { … }` block (model, photo limits, coach name, sign-in
+methods). Common fields — name, tagline, greeting, `access`, `listed` — are the same
+as a chat bot's. Delete the folder and it's gone; copy it to `YourBots/plate-two/`
+and you have a second, separate food log (its own people, its own coach view).
+
+Where it answers: `/apps/<id>` (the app), `/apps/<id>/coach` (the coach),
+`/api/apps/<id>/…` and `/api/admin/apps/<id>/…`. **For one release** `/apps/plate`,
+`/apps/plate/coach`, `/api/apps/plate/…` and `/api/admin/apps/plate/…` still reach the bot whose id
+is `plate`. A `foodLog` block left in `YourBots/config.js` is still honoured as a
+deprecated fallback (it becomes the bot `plate`, with a warning in the logs).
+The sidebar lists it with a camera icon; the Configure screen edits it (kind →
+food log) like any bot; Export / Commit to GitHub write `project.json`.
 
 ![the day screen](food-log.png)
 
@@ -18,9 +29,9 @@ It lives inside this Worker. Nothing extra to deploy. **On by default** —
    `npx wrangler secret put FOODLOG_PEPPER` (any long random string; it salts the
    user ids so an email can't be turned into an id from outside). Until it's set the
    log warns and uses a dev value.
-3. Put your name in `foodLog.coachName` so the page says "Your coach: …".
-4. Send clients to `https://YOUR-BOT-URL/food`. Their phone. That's it.
-5. You look at `https://YOUR-BOT-URL/food/coach` with the admin code (the
+3. Put your name in `project.json → food.coachName` so the page says "Your coach: …" (or Configure → the food log settings).
+4. Send clients to `https://YOUR-BOT-URL/apps/plate`. Their phone. That's it.
+5. You look at `https://YOUR-BOT-URL/apps/plate/coach` with the admin code (the
    `ADMIN_PASSPHRASE`, same one as "Under the hood"): every client, targets, streak,
    last log, 7-day adherence, weight trend, household; click for their week; **Export
    CSV**; link a second device.
@@ -63,34 +74,34 @@ It lives inside this Worker. Nothing extra to deploy. **On by default** —
 
 ## Identity, in plain English
 
-- Your **email is your log**. The browser makes a random 32-byte **device key**,
-  keeps it in localStorage with the email, and sends it with every request. The
-  server stores only the SHA-256 of the key. No password. "Remembered forever on
-  this browser" — until you clear site data or tap *Forget me*.
-- The user id is `SHA-256(lowercased email + FOODLOG_PEPPER)`. Same email → same id.
-- **A second browser typing the same email does not get the log.** (Otherwise
-  anyone who knew your email could read your meals.) It shows a 6-character code and:
-  *"This email is already logging on another device. Sign in with Google to link
-  devices, or ask your coach to link them."* The page keeps checking; the moment
-  it's linked, it opens.
-  - **Coach links it:** `/food/coach` → "Link a second device" → email + code.
-    Codes expire after 7 days. Or `POST /api/admin/food/link {email, deviceCode}`.
-  - **Sign in with Google / Microsoft / Apple:** proves the email, links the device.
-- The device key check **fails closed** (bad key = 401). Features **fail open**
-  (no barcode database → a message, the page still works).
-- Household reads are checked server-side on every call: `GET /api/food/day?user=X`
-  is allowed only when X shares your household. Everything else is yours alone.
+The whole of it is `docs/IDENTITY.md`; the short version:
+
+- Your **email is your log**. The browser makes a random **device key**, keeps it
+  in localStorage, sends it with every request; the server keeps only its hash. No
+  password. "Remembered forever on this browser" — until *Forget me*.
+- The user id is `SHA-256(email + FOODLOG_PEPPER + bot id)` — two food logs on one
+  deployment are two different people even with the same email.
+- **A second browser typing the same email does not get the log.** It shows a
+  6-character code and, in this order: **Use a passkey** · **Sign in with
+  Google/Microsoft/Apple** (if set up) · **type your authenticator code** · or the
+  coach links it from `/apps/plate/coach` (email + code; `POST
+  /api/admin/apps/plate/link {email, deviceCode}`; codes expire in 7 days).
+- Once in, the *This device* card offers **Set up a passkey** and **Set up an
+  authenticator app** so the next device needs nobody's help.
+- The device key check **fails closed** (bad key = 401). Features **fail open**.
+- Household reads are checked server-side on every call: `GET …/day?user=X` is
+  allowed only when X shares your household.
 
 ## "Sign in with …" (optional)
 
 A provider's own button gives the browser a signed ID token (a JWT). The browser
-posts it to `POST /api/food/signin {provider, idToken}` with its device key; the
-Worker (`Engine/worker/food-signin.js`) fetches the provider's published public
+posts it to `POST /api/apps/plate/signin {provider, idToken}` with its device key; the
+Worker (`Engine/identity/idtoken.js`) fetches the provider's published public
 keys (JWKS, cached an hour), checks the **RS256 signature**, the **issuer**, the
 **audience** (= your client id), the **expiry**, and that the email is **verified**.
 Only then is the device linked. No client secret, no redirect, no callback route.
 
-Each button appears only when it has a client id — `foodLog.signIn[].clientId`
+Each button appears only when it has a client id — `project.json → food.signIn[].clientId`
 or the secret `GOOGLE_CLIENT_ID` / `MICROSOFT_CLIENT_ID` / `APPLE_CLIENT_ID`.
 No ids = no buttons; the coach code still links devices.
 
@@ -110,18 +121,18 @@ No ids = no buttons; the coach code still links devices.
 **Microsoft** (free): entra.microsoft.com → Identity → Applications → **App
 registrations** → New → name it → Supported account types: **Accounts in any
 organizational directory and personal Microsoft accounts** → Redirect URI: platform
-**Single-page application**, value = your bot origin + `/food/` → Register → copy
+**Single-page application**, value = your bot origin + `/apps/plate/` → Register → copy
 the **Application (client) ID** → `npx wrangler secret put MICROSOFT_CLIENT_ID`.
 
 **Apple**: needs the **paid** Apple Developer account ($99/yr). Certificates, IDs &
 Profiles → Identifiers → a **Services ID** with Sign in with Apple enabled, your
-domain and `https://YOUR-BOT/food/` as the return URL; the Services ID is the
+domain and `https://YOUR-BOT/apps/plate/` as the return URL; the Services ID is the
 client id → `npx wrangler secret put APPLE_CLIENT_ID`.
 
 Facebook is not included: Facebook Login returns an access token, not an OpenID
 ID token, so verifying it needs a Graph API call — a different mechanism.
 
-The verifier is unit-tested without any provider: `node Engine/tests/food-signin.mjs`
+The verifier is unit-tested without any provider: `node Engine/tests/identity.mjs`
 signs tokens with a throwaway RSA key against a local fake JWKS and checks that a
 good token passes and wrong audience, expired, bad signature, wrong issuer,
 unverified email, tampered payload and `alg: none` are all refused (16/16).
@@ -155,7 +166,7 @@ is switched off with `chat_template_kwargs: { enable_thinking: false }`.
 **Cost** (developers.cloudflare.com/workers-ai/platform/pricing): Gemma 4 is $0.10
 per M input and $0.30 per M output tokens. A plate photo was 380–680 tokens and
 6–12 neurons in testing — about **$0.0001 a photo**. The free 10,000 neurons a day
-cover roughly a thousand photos. `foodLog.dailyPhotoLimit` (default 60 per person)
+cover roughly a thousand photos. `food.dailyPhotoLimit` (default 60 per person)
 is the ceiling.
 
 ## Privacy
@@ -179,9 +190,12 @@ is the ceiling.
 
 ## Under the hood
 
-`Engine/worker/food.js` (routes, identity, meals, day/week, coach) ·
-`track-vision.js` (the model, prompts, JSON checks, barcode check digit, image
-header sizes) · `track-extras.js` (barcodes, labels, receipts, weights,
-households) · `track-signin.js` (ID-token verifier) · `track-common.js`.
-Tables are in `Engine/schema.sql` (`track_*`), created on first use.
+`Engine/worker/track.js` (routes, meals, day/week, coach) · `track-vision.js`
+(the model, prompts, JSON checks, barcode check digit, image header sizes) ·
+`track-extras.js` (barcodes, labels, receipts, weights, households) ·
+`track-common.js`. Who a person is: `Engine/identity/` (`docs/IDENTITY.md`).
+The bot's settings are normalised by `Engine/worker/projects.js` → `normaliseFood`.
+Tables are in `Engine/schema.sql` (`id_*`, `track_*`), created on first use.
+Upgrading from v3.6: people re-join once (ids now include the bot id; the old
+`track_devices` / `track_pending` tables are left alone and can be dropped).
 Pages: `Engine/public/food/index.html` (the app) and `coach.html`.

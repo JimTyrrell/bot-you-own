@@ -83,8 +83,9 @@ CREATE TABLE IF NOT EXISTS handoff_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_hmsg_handoff ON handoff_messages(handoff_id, id);
 
--- Settings: one row per key. "access" holds { "default": "...", "floor": "..." } from
--- under the hood → Settings. Overrides YourBots/settings.json and YourBots/config.js → access.
+-- Settings: one row per key. "access" holds { "default", "floor" }, "createYourOwn" the badge —
+-- from under the hood → Settings. Merge order (Engine/worker/settings.js):
+-- YourBots/config.js < YourBots/settings.json < these rows.
 -- The Worker creates this itself on first use; kept here for reading.
 CREATE TABLE IF NOT EXISTS settings (
   key        TEXT PRIMARY KEY,   -- 'access'
@@ -107,27 +108,69 @@ CREATE TABLE IF NOT EXISTS admin_events (
 );
 CREATE INDEX IF NOT EXISTS idx_adminev_created ON admin_events(id);
 
--- The food log (Engine/worker/food.js; docs/FOOD-LOG.md). Created by the Worker on first use.
+-- Identity (Engine/identity/; docs/IDENTITY.md). Shared by every kind of bot; every
+-- table has a `bot` column. Created by the Worker on first use.
+CREATE TABLE IF NOT EXISTS id_users (
+  id         TEXT PRIMARY KEY,     -- sha256(lowercased email + FOODLOG_PEPPER + bot id)
+  bot        TEXT NOT NULL,
+  email      TEXT NOT NULL,        -- the only personal thing stored
+  created_at TEXT NOT NULL,
+  last_seen  TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_id_users_bot_email ON id_users(bot, email);
+CREATE TABLE IF NOT EXISTS id_devices (
+  key_hash   TEXT NOT NULL,        -- sha256 of the browser's random device key; the key itself never leaves the browser
+  bot        TEXT NOT NULL,
+  user_id    TEXT NOT NULL,
+  label      TEXT,                 -- 'first device' | 'linked with a passkey' | 'signed in with google' | 'linked with an authenticator code' | 'linked by the owner'
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (key_hash, bot)
+);
+CREATE INDEX IF NOT EXISTS idx_id_devices_user ON id_devices(user_id);
+CREATE TABLE IF NOT EXISTS id_pending (
+  code       TEXT PRIMARY KEY,     -- the 6-character code a second device shows
+  bot        TEXT NOT NULL,
+  key_hash   TEXT NOT NULL,        -- that device's key hash, bound when someone links it
+  email      TEXT NOT NULL,
+  created_at TEXT NOT NULL         -- codes expire after 7 days
+);
+CREATE TABLE IF NOT EXISTS id_passkeys (
+  credential_id TEXT PRIMARY KEY,  -- base64url, what the browser calls credential.id
+  bot           TEXT NOT NULL,
+  user_id       TEXT NOT NULL,
+  public_key    TEXT NOT NULL,     -- JWK (EC P-256 or RSA)
+  alg           TEXT NOT NULL,     -- ES256 | RS256
+  counter       INTEGER DEFAULT 0, -- must go up on every login; a clone is refused
+  label         TEXT,
+  created_at    TEXT NOT NULL,
+  last_used     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_id_passkeys_user ON id_passkeys(user_id);
+CREATE TABLE IF NOT EXISTS id_challenges (
+  challenge  TEXT PRIMARY KEY,     -- what we asked the browser to sign; 5 minutes; used once
+  bot        TEXT NOT NULL,
+  kind       TEXT NOT NULL,        -- register | login
+  user_id    TEXT,
+  key_hash   TEXT,
+  expires_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS id_totp (
+  user_id    TEXT PRIMARY KEY,
+  bot        TEXT NOT NULL,
+  secret     TEXT NOT NULL,        -- base32, 20 random bytes
+  confirmed  INTEGER DEFAULT 0,    -- 1 once a right code was typed
+  created_at TEXT NOT NULL
+);
+
+-- The food log (Engine/worker/track.js; docs/FOOD-LOG.md). The food side of a person:
+-- who they are is id_users above. Created by the Worker on first use.
+-- (track_devices / track_pending from v3.6 are no longer used; drop them when convenient.)
 CREATE TABLE IF NOT EXISTS track_users (
-  id           TEXT PRIMARY KEY,   -- sha256(lowercased email + FOODLOG_PEPPER)
-  email        TEXT UNIQUE,        -- the identity; the only personal thing stored
+  id           TEXT PRIMARY KEY,   -- = id_users.id
+  email        TEXT,               -- unused since v3.7 (kept so older databases still fit)
   targets_json TEXT,               -- {kcal, protein_g, carbs_g, fat_g, unit, name, preset, weight_kg}
   created_at   TEXT NOT NULL,
   last_seen    TEXT
-);
-CREATE TABLE IF NOT EXISTS track_devices (
-  key_hash   TEXT PRIMARY KEY,     -- sha256 of the browser's random device key; the key itself never leaves the browser
-  user_id    TEXT NOT NULL,
-  label      TEXT,                 -- 'first device' | 'linked by coach' | 'signed in with google' …
-  created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_track_devices_user ON track_devices(user_id);
-CREATE TABLE IF NOT EXISTS track_pending (
-  code        TEXT PRIMARY KEY,    -- the 6-character code a second device shows
-  key_hash    TEXT NOT NULL,       -- that device's key hash, linked when the coach approves
-  user_id_new TEXT,
-  email       TEXT NOT NULL,
-  created_at  TEXT NOT NULL        -- codes expire after 7 days
 );
 CREATE TABLE IF NOT EXISTS track_meals (
   id         TEXT PRIMARY KEY,

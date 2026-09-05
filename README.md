@@ -71,10 +71,13 @@ jobs? Make two projects; the sidebar shows both.
 - `"strict"` — it answers **only** from your files and hands off otherwise. For anything customer-facing.
 - `"open"` — it behaves like ChatGPT, using your files first when they apply. For yourself and your team.
 
-**Bonus, for coaches: a photo food log.** `/food` is a camera-first food log your
-clients use on their phones — snap the plate, fix the portion, see the day as a ring
-and three bars; barcodes, labels, receipts, weigh-ins, a shared household. You see
-every client at `/food/coach`. On by default; `docs/FOOD-LOG.md` has the whole thing.
+**Bonus, for coaches: a photo food log.** `YourBots/plate/` is a bot of kind
+`food`: a camera-first food log your clients use on their phones at `/apps/plate` —
+snap the plate, fix the portion, see the day as a ring and three bars; barcodes,
+labels, receipts, weigh-ins, a shared household. You see every client at
+`/apps/plate/coach`. Sign-in is passkeys, Google/Microsoft/Apple, an authenticator
+code or email + device — never an email sent (`docs/IDENTITY.md`). Copy the folder
+for a second, separate log. `docs/FOOD-LOG.md` has the whole thing.
 
 ### 4. Put it on your website · `Engine/public/widget.js`
 One script tag. Inline or bubble. See `https://YOUR-BOT-URL/embed-example`.

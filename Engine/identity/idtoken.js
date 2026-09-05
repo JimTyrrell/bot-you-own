@@ -1,11 +1,12 @@
 // ============================================================================
-//  FOOD LOG — "Sign in with …" to link a second device.
+//  IDENTITY — ID tokens ("Sign in with Google / Microsoft / Apple").
 //
-//  The page never sends a password. A provider's own button (Google Identity
-//  Services, Microsoft MSAL, Sign in with Apple JS) hands the browser a signed
-//  ID token — a JWT — that says "this person proved they own this email".
-//  The browser posts it here with its device key; this file checks the token
-//  the proper way and, if the email matches the log, links the device.
+//  Shared by every kind of bot. The page never sends a password. A provider's
+//  own button (Google Identity Services, Microsoft MSAL, Sign in with Apple JS)
+//  hands the browser a signed ID token — a JWT — that says "this person proved
+//  they own this email". The browser posts it here; this file checks the token
+//  the proper way and hands back the verified email. What the bot does with
+//  that email (link a device, open a door, look up a person) is its business.
 //
 //  What "checks properly" means, in order:
 //    1. the token is three base64url parts and the header says RS256

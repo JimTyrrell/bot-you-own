@@ -224,7 +224,7 @@
 <div id="adminlock" class="lockwrap"><form id="adminform">
   <h2>Admin code</h2>
   <p>Opens "Under the hood": the prompt, the files, the firewall rules and the source for this project.</p>
-  <input id="adminpass" type="password" placeholder="Admin code" autocomplete="off" />
+  <input id="adminpass" type="password" placeholder="Admin code" autocomplete="off" /><input id="admincode" inputmode="numeric" placeholder="Authenticator code (only if the owner set one up)" autocomplete="one-time-code" style="margin-top:6px" />
   <div style="display:flex;gap:8px"><button type="submit" style="flex:1">Open</button><button type="button" id="admincancel" style="flex:1;background:var(--panel);color:var(--text)">Cancel</button></div>
   <div id="adminmsg" class="lockmsg"></div>
 </form></div>
@@ -232,7 +232,7 @@
   <h2 id="locktitle">Before we start</h2>
   <p id="lockhint">Enter the passphrase to continue.</p>
   <input id="pass" type="password" placeholder="Passphrase" autocomplete="current-password" />
-  <input id="adminkey" type="password" placeholder="Admin code" autocomplete="off" hidden />
+  <input id="adminkey" type="password" placeholder="Admin code" autocomplete="off" hidden /><input id="adminkeycode" inputmode="numeric" placeholder="Authenticator code (only if the owner set one up)" autocomplete="one-time-code" hidden />
   <input id="email" type="email" placeholder="Your email address" autocomplete="email" />
   <div style="display:flex;gap:8px"><button type="submit" id="lockgo" style="flex:1">Continue</button><button type="button" id="lockback" style="flex:1;background:var(--panel);color:var(--text)" hidden>Back</button></div>
   <div id="lockmsg"></div>
@@ -374,9 +374,9 @@ $('lockform').addEventListener('submit', async (e) => {
   const go = $('lockgo'); go.disabled = true; go.textContent = 'Checking…'; $('lockmsg').textContent = '';
   try {
     if (needAdmin) {
-      const res = await fetch('/api/admin/unlock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ passphrase: $('adminkey').value }) });
+      const res = await fetch('/api/admin/unlock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ passphrase: $('adminkey').value, code: $('adminkeycode').value }) });
       const data = await res.json().catch(() => ({}));
-      if (!(res.ok && data.token)) { $('lockmsg').textContent = res.status === 429 ? 'Too many attempts. Wait a minute.' : 'Wrong admin code.'; return; }
+      if (!(res.ok && data.token)) { $('adminkeycode').hidden = !data.needsCode; $('lockmsg').textContent = res.status === 429 ? 'Too many attempts. Wait a minute.' : data.needsCode && data.error !== 'wrong admin code' ? 'This deployment also asks for the authenticator code.' : 'Wrong admin code.'; return; }
       ADMIN = data.token; try { localStorage.setItem('byo:admin', ADMIN); } catch {} $('adminkey').value = '';
     }
     if (needKey) {
@@ -516,8 +516,10 @@ function renderProjects() {
   state.projects.forEach((p) => {
     const el = document.createElement('div');
     el.className = 'item' + (p.id === state.project?.id ? ' active' : '');
-    el.innerHTML = '<span>' + esc(p.name) + accessBadge(p) + '</span><small>' + esc(p.tagline || '') + '</small>';
-    el.onclick = () => { selectProject(p); $('side').classList.remove('open'); };
+    const isApp = p.kind && p.kind !== 'chat';
+    el.innerHTML = '<span>' + (isApp ? '📷 ' : '') + esc(p.name) + accessBadge(p) + (isApp ? ' <span class="pill" style="vertical-align:1px">app</span>' : '') + '</span><small>' + esc(p.tagline || '') + '</small>';
+    // An app-shaped bot (the food log) lives on its own page: /apps/<id>. Chat bots stay here.
+    el.onclick = () => { if (isApp) { location.href = p.href || ('/apps/' + encodeURIComponent(p.id)); return; } selectProject(p); $('side').classList.remove('open'); };
     $('projects').appendChild(el);
   });
 }
@@ -922,9 +924,9 @@ $('adminform').addEventListener('submit', async (e) => {
   e.preventDefault();
   const btn = $('adminform').querySelector('button[type=submit]'); btn.disabled = true; btn.textContent = 'Checking…'; $('adminmsg').textContent = '';
   try {
-    const r = await fetch('/api/admin/unlock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ passphrase: $('adminpass').value }) });
+    const r = await fetch('/api/admin/unlock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ passphrase: $('adminpass').value, code: $('admincode').value }) });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok || !d.token) { $('adminmsg').textContent = r.status === 429 ? 'Too many attempts. Wait a minute.' : 'Wrong admin code.'; return; }
+    if (!r.ok || !d.token) { $('adminmsg').textContent = r.status === 429 ? 'Too many attempts. Wait a minute.' : d.needsCode && d.error !== 'wrong admin code' ? 'This deployment also asks for the six digits from the owner\'s authenticator app.' : 'Wrong admin code.'; return; }
     ADMIN = d.token; try { localStorage.setItem('byo:admin', ADMIN); } catch {}
     $('signout').hidden = false; if (!VISITOR) $('whoami').textContent = 'admin';
     $('adminlock').classList.remove('show'); const next = pendingAfterAdmin || openHood; pendingAfterAdmin = null; next();
@@ -996,10 +998,16 @@ function renderConfigForm() {
   const d = draft; const m = cfgMeta;
   const jobs = (m.jobs || []).map((j) => '<option value="' + esc(j.id) + '"' + (d.mode === j.id ? ' selected' : '') + '>' + esc(j.id) + ' — ' + esc(j.blurb) + '</option>').join('');
   $('cfgtitle').textContent = d.name || 'New bot';
-  $('cfgform').innerHTML =
+  d.kind = d.kind || 'chat';
+  const kinds = (m.kinds || [{ id: 'chat', label: 'chat bot' }, { id: 'food', label: 'food log (an app)' }]);
+  // Common fields for EVERY kind first; the kind's own panel below (Engine/worker/projects.js → KINDS).
+  const commonTop =
     '<p style="color:var(--muted);font-size:13px;margin:6px 0 0">This form <b>is</b> the folder <code>YourBots/' + esc(d.id) + '/</code>. Each section names the file it lives in; Export gives you exactly those files.</p>' +
+    field('Kind', 'What this folder is. A chat bot answers on this page; an app (the food log) gets its own page at <code>/apps/' + esc(d.id) + '</code>.', '<select id="f_kind">' + kinds.map((k) => '<option value="' + esc(k.id) + '"' + (d.kind === k.id ? ' selected' : '') + '>' + esc(k.label) + '</option>').join('') + '</select>', 'project.json → kind') +
     field('Name', '', '<input type="text" id="f_name" value="' + esc(d.name || '') + '" placeholder="Name your bot" />', 'project.json → name') +
-    field('Description', 'One line under the name in the sidebar.', '<input type="text" id="f_tagline" value="' + esc(d.tagline || '') + '" placeholder="Add a short description about what this bot does" />', 'project.json → tagline') +
+    field('Description', 'One line under the name in the sidebar.', '<input type="text" id="f_tagline" value="' + esc(d.tagline || '') + '" placeholder="Add a short description about what this bot does" />', 'project.json → tagline');
+  if (d.kind !== 'chat') { renderFoodForm(commonTop); return; }
+  $('cfgform').innerHTML = commonTop +
     field('Instructions', 'What does this bot do? How does it behave? What should it avoid doing? Conversations can potentially reveal part or all of this — the firewall makes that hard, not impossible.', '<textarea id="f_instructions" class="big" placeholder="What does this bot do? How does it behave? What should it avoid doing?">' + esc(d.instructions || '') + '</textarea>', 'instructions.md') +
     field('Greeting', 'The first line people see.', '<input type="text" id="f_greeting" value="' + esc(d.greeting || '') + '" />', 'project.json → greeting') +
     field('Conversation starters', 'Up to four.', '<div class="starters-edit">' + [0, 1, 2, 3].map((i) => '<input type="text" data-starter="' + i + '" value="' + esc((d.starters || [])[i] || '') + '" placeholder="Starter ' + (i + 1) + '" />').join('') + '</div>', 'project.json → starters') +
@@ -1026,6 +1034,7 @@ function renderConfigForm() {
     field('Recommended model', 'Set for the whole deployment in YourBots/config.js.', '<input type="text" value="' + esc(m.model || '') + '" disabled />') +
     field('Capabilities', 'What ChatGPT offers here, and what this bot has.', '<div class="caps"><label><input type="checkbox" disabled /> <span class="na">Web search — not in this bot</span></label><label><input type="checkbox" disabled /> <span class="na">Image generation — not in this bot</span></label><label><input type="checkbox" disabled /> <span class="na">Code interpreter &amp; data analysis — not in this bot</span></label><label><input type="checkbox" checked disabled /> File upload by visitors: one file per conversation, read for that chat only, screened, never stored (YourBots/config.js → attachments)</label><label><input type="checkbox" checked disabled /> Voice: a mic (Whisper on Workers AI turns speech into text the visitor checks before sending) and a speaker under each reply (a Deepgram Aura voice reads it) — nothing stored, nothing sent to Google or Apple (YourBots/config.js → voice)</label><label><input type="checkbox" checked disabled /> Firewall: injection screen, link allowlist, leak check (always on)</label><label><input type="checkbox" checked disabled /> Audit log of every turn (when a database is bound)</label></div>') +
     field('Actions', '', '<p style="color:var(--muted);margin:0">Not available. API calls are rebuilt deliberately, in code, if you need them.</p>');
+  wireKind();
   $('f_uploadbtn').onclick = () => $('f_upload').click();
   $('f_upload').onchange = async (e) => { for (const f of e.target.files) { const t = await f.text(); draft.files[f.name.replace(/[^\w. -]/g, '_')] = t; } renderConfigForm(); syncDraft(); };
   $('f_newfile').onclick = () => { let n = 'notes.md', i = 2; while (draft.files[n]) n = 'notes-' + (i++) + '.md'; draft.files[n] = ''; renderConfigForm(); };
@@ -1043,6 +1052,33 @@ function renderConfigForm() {
   $('f_access').addEventListener('change', () => { syncDraft(); renderConfigForm(); });
   // Publish: the draft becomes a bot on the deployment default, saved and live at once.
   if ($('f_publish')) $('f_publish').onclick = async () => { syncDraft(); draft.access = (m.access || {}).default || 'key'; renderConfigForm(); await $('cfgsave').onclick(); if (/^Saved/.test($('cfgmsg').textContent)) $('cfgmsg').textContent = 'Published as ' + draft.access + '. ' + $('cfgmsg').textContent; };
+}
+function wireKind() { $('f_kind').addEventListener('change', () => { syncDraft(); draft.kind = $('f_kind').value; if (draft.kind === 'food' && !draft.food) draft.food = { model: '@cf/google/gemma-4-26b-a4b-it', dailyPhotoLimit: 60, maxPhotoBytes: 2097152, coachName: '', honesty: '', signIn: [{ provider: 'google', clientId: '' }, { provider: 'microsoft', clientId: '' }, { provider: 'apple', clientId: '' }], passkeys: true, totp: true }; if (draft.kind === 'food' && !draft.access) draft.access = 'email'; renderConfigForm(); }); }
+// The food log's panel (kind "food"): the common fields above, its own settings below. Engine/worker/projects.js → normaliseFood.
+function renderFoodForm(commonTop) {
+  const d = draft, m = cfgMeta, f = d.food || {};
+  const acc = m.access || {};
+  const prov = (id) => ((f.signIn || []).find((s) => s.provider === id) || {}).clientId || '';
+  $('cfgform').innerHTML = commonTop +
+    field('Greeting', 'The first line people see on the app\'s join screen.', '<input type="text" id="f_greeting" value="' + esc(d.greeting || '') + '" />', 'project.json → greeting') +
+    field('Who can use it', 'A food log identifies people by email + device key, then passkeys / sign-in / authenticator codes (docs/IDENTITY.md). The access mode still applies on top: <b>key</b> means visitors need the passphrase before the app loads.', '<select id="f_access"><option value=""' + (!d.access ? ' selected' : '') + '>Deployment default (' + esc(acc.default || 'key') + ')</option>' + (acc.modes || []).map((x) => '<option value="' + esc(x.id) + '"' + (d.access === x.id ? ' selected' : '') + '>' + esc(x.id) + ' — ' + esc(x.line) + '</option>').join('') + '</select>'
+      + '<div class="caps" style="margin-top:6px"><label><input type="checkbox" id="f_listed"' + (d.listed !== false ? ' checked' : '') + ' /> Listed in the sidebar (opens /apps/' + esc(d.id) + ').</label></div>'
+      + '<input type="text" id="f_accessKey" value="' + esc(d.accessKey || '') + '" placeholder="Its own passphrase secret, e.g. ACCESS_PASSPHRASE_CLIENTX (optional)" style="margin-top:6px" />', 'project.json → access · listed · accessKey') +
+    '<h3 style="margin:18px 0 4px">Food log settings <code style="font-weight:400;font-size:11.5px;margin-left:6px">project.json → food</code></h3>' +
+    '<div class="row2">' +
+    field('Vision model', 'Workers AI model that reads the plate.', '<input type="text" id="ff_model" value="' + esc(f.model || '') + '" placeholder="@cf/google/gemma-4-26b-a4b-it" />') +
+    field('Coach name', 'Shown as "Your coach: …". Blank = nothing.', '<input type="text" id="ff_coachName" value="' + esc(f.coachName || '') + '" />') +
+    '</div><div class="row2">' +
+    field('Photos per person per day', '', '<input type="number" id="ff_dailyPhotoLimit" value="' + esc(f.dailyPhotoLimit ?? 60) + '" min="1" max="1000" />') +
+    field('Max photo size (bytes)', 'The page shrinks photos first; this is the hard cap.', '<input type="number" id="ff_maxPhotoBytes" value="' + esc(f.maxPhotoBytes ?? 2097152) + '" min="204800" max="8388608" />') +
+    '</div>' +
+    field('Honesty line', 'Said under every estimate.', '<input type="text" id="ff_honesty" value="' + esc(f.honesty || '') + '" />') +
+    field('Sign-in', 'Which ways a second device can prove it\'s the same person. Email + device key is always on; the owner can always link a device from the coach page. A provider button shows only with a client id here or in the <code>GOOGLE_CLIENT_ID</code> / <code>MICROSOFT_CLIENT_ID</code> / <code>APPLE_CLIENT_ID</code> secret. Nothing is ever emailed.', '<div class="caps"><label><input type="checkbox" id="ff_passkeys"' + (f.passkeys !== false ? ' checked' : '') + ' /> Passkeys (Face ID / fingerprint / PIN — tied to this site\'s address)</label><label><input type="checkbox" id="ff_totp"' + (f.totp !== false ? ' checked' : '') + ' /> Authenticator app code (six digits)</label></div>'
+      + '<div class="row2" style="margin-top:6px"><input type="text" id="ff_google" value="' + esc(prov('google')) + '" placeholder="Google client id" /><input type="text" id="ff_microsoft" value="' + esc(prov('microsoft')) + '" placeholder="Microsoft client id" /></div><input type="text" id="ff_apple" value="' + esc(prov('apple')) + '" placeholder="Apple services id" style="margin-top:6px" />') +
+    field('Where it lives', '', '<p style="color:var(--muted);margin:0">The app: <a href="/apps/' + esc(d.id) + '" target="_blank">/apps/' + esc(d.id) + '</a> · the coach page: <a href="/apps/' + esc(d.id) + '/coach" target="_blank">/apps/' + esc(d.id) + '/coach</a>. Preview on the right doesn\'t apply to apps — open the page.</p>');
+  wireKind();
+  $('cfgform').addEventListener('input', syncDraft);
+  $('f_access').addEventListener('change', syncDraft);
 }
 function kfileHtml(n, t, i) { return '<div class="kfile"><div class="kh"><input type="text" data-kname="' + esc(n) + '" value="' + esc(n) + '" /><span style="color:var(--muted);font-size:12px">' + t.length + ' chars</span><button type="button" class="iconbtn" data-del="' + esc(n) + '" title="Remove">✕</button></div><textarea data-kbody="' + esc(n) + '">' + esc(t) + '</textarea></div>'; }
 
@@ -1163,7 +1199,15 @@ async function forgetWebsite() {
 }
 function syncDraft() {
   const v = (id) => ($(id) ? $(id).value : '');
-  draft.name = v('f_name'); draft.tagline = v('f_tagline'); draft.instructions = v('f_instructions'); draft.greeting = v('f_greeting');
+  draft.kind = v('f_kind') || draft.kind || 'chat';
+  draft.name = v('f_name'); draft.tagline = v('f_tagline'); draft.greeting = v('f_greeting');
+  if (draft.kind !== 'chat') {
+    // the app-shaped kinds: common fields + their own block, nothing else to read
+    draft.access = v('f_access'); draft.listed = $('f_listed') ? $('f_listed').checked : true; draft.accessKey = v('f_accessKey');
+    if (draft.kind === 'food') draft.food = { model: v('ff_model'), coachName: v('ff_coachName'), dailyPhotoLimit: Number(v('ff_dailyPhotoLimit')) || 60, maxPhotoBytes: Number(v('ff_maxPhotoBytes')) || 2097152, honesty: v('ff_honesty'), passkeys: $('ff_passkeys') ? $('ff_passkeys').checked : true, totp: $('ff_totp') ? $('ff_totp').checked : true, signIn: ['google', 'microsoft', 'apple'].map((p) => ({ provider: p, clientId: v('ff_' + p) })) };
+    return;
+  }
+  draft.instructions = v('f_instructions');
   draft.starters = [...document.querySelectorAll('[data-starter]')].map((x) => x.value.trim()).filter(Boolean);
   draft.mode = v('f_mode'); draft.grounding = v('f_grounding'); draft.handoffText = v('f_handoffText'); draft.handoffContact = v('f_handoffContact');
   draft.access = v('f_access'); draft.listed = $('f_listed') ? $('f_listed').checked : true; draft.accessKey = v('f_accessKey').trim().toUpperCase().replace(/[^A-Z0-9_]/g, '_');
@@ -1205,9 +1249,13 @@ $('cfggit').onclick = async () => {
 $('cfgexport').onclick = () => {
   syncDraft(); const id = (draft.name || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || draft.id;
   const { instructions, files, prompt, id: _i, ...meta } = draft;
-  const out = { ['YourBots/' + id + '/project.json']: JSON.stringify(meta, null, 2) + '\n', ['YourBots/' + id + '/instructions.md']: (instructions || '') + '\n' };
-  for (const [n, t] of Object.entries(files || {})) out['YourBots/' + id + '/knowledge/' + n] = t + '\n';
-  for (const [n, t] of Object.entries(prompt || {})) out['YourBots/' + id + '/prompt/' + n] = t + '\n';
+  if (!meta.kind || meta.kind === 'chat') delete meta.kind;
+  const out = { ['YourBots/' + id + '/project.json']: JSON.stringify(meta, null, 2) + '\n' };
+  if (!draft.kind || draft.kind === 'chat') {                       // the chat files; an app is its project.json alone
+    out['YourBots/' + id + '/instructions.md'] = (instructions || '') + '\n';
+    for (const [n, t] of Object.entries(files || {})) out['YourBots/' + id + '/knowledge/' + n] = t + '\n';
+    for (const [n, t] of Object.entries(prompt || {})) out['YourBots/' + id + '/prompt/' + n] = t + '\n';
+  }
   $('plog').innerHTML = '<div><h4 style="margin:0 0 8px">Files to put in GitHub — the folder is the version you own</h4>' + Object.entries(out).map(([n, t]) => '<div style="margin:10px 0"><div style="display:flex;justify-content:space-between;align-items:center"><code>' + esc(n) + '</code><button class="btn" data-copy="' + esc(n) + '">Copy</button></div><pre style="white-space:pre-wrap;background:var(--code);border:1px solid var(--edge);border-radius:8px;padding:10px;font-size:12px;max-height:220px;overflow:auto">' + esc(t) + '</pre></div>').join('') + '</div>';
   $('plog').onclick = (e) => { const b = e.target.closest('button[data-copy]'); if (!b) return; navigator.clipboard?.writeText(out[b.dataset.copy]); b.textContent = 'Copied'; setTimeout(() => (b.textContent = 'Copy'), 1200); };
 };
@@ -1244,14 +1292,15 @@ async function renderSettings() {
       + '<div><label style="margin-top:0">Floor<small>The most open ANY bot may be — the panic switch. Now from: ' + esc(d.source.floor) + '.</small></label>' + sel('s_floor', d.access.floor) + '<div id="s_floor_line" style="color:var(--muted);font-size:12px;margin-top:4px">' + (d.access.floor === 'open' ? 'No floor: each bot decides for itself.' : esc(line(d.access.floor))) + '</div></div></div>'
       + '<p style="color:var(--muted);font-size:12.5px;margin:10px 0">Order, most open first: <code>' + esc(d.order) + '</code>. A bot\'s effective mode is the stricter of what it says (or the default) and the floor. Save is live within seconds; Commit to GitHub writes <code>YourBots/settings.json</code> so the repo carries it.</p>'
       + '<div class="btnrow"><button class="btn primary" id="s_save"' + (d.canSave ? '' : ' disabled title="No database bound: edit YourBots/config.js → access instead"') + '>Save</button><button class="btn" id="s_git"' + (d.github.ready ? '' : ' disabled') + ' title="' + (d.github.ready ? 'Write YourBots/settings.json into ' + esc(d.github.repo) : d.github.repo ? 'Set the GITHUB_TOKEN secret to enable (docs/DEPLOY.md §B5)' : 'Set github.repo in YourBots/config.js to enable') + '">Commit to GitHub</button><span id="s_msg" style="color:var(--muted);font-size:13px"></span></div>'
-      + '<div class="kv" style="margin-top:12px"><b>Shared key</b><span>' + (d.sharedKey ? 'ACCESS_PASSPHRASE is set.' : 'ACCESS_PASSPHRASE is NOT set — a bot that wants a key runs open and says so in the logs.') + '</span><b>Admin token</b><span>version ' + esc(d.adminTokenVersion) + ' — set the ADMIN_TOKEN_VERSION secret to a new value to log every admin out (docs/DEPLOY.md §B3).</span></div>'
-      + '<h4>Every bot, and what it actually requires</h4><div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">' + d.bots.map((b) => '<tr style="border-top:1px solid var(--edge);vertical-align:top"><td style="padding:6px 8px 6px 0;white-space:nowrap"><b>' + esc(b.name) + '</b><br><span style="color:var(--muted)">' + esc(b.id) + (b.listed ? '' : ' · unlisted') + ' · ' + esc(b.source) + '</span></td><td style="padding:6px 8px;white-space:nowrap"><b>' + esc(b.effective) + '</b></td><td style="padding:6px 0;color:var(--muted)">' + esc(b.reason) + (b.ownKey ? '<br>own key: ' + esc(b.ownKey) : '') + '</td></tr>').join('') + '</table></div>';
+      + '<div class="kv" style="margin-top:12px"><b>Shared key</b><span>' + (d.sharedKey ? 'ACCESS_PASSPHRASE is set.' : 'ACCESS_PASSPHRASE is NOT set — a bot that wants a key runs open and says so in the logs.') + '</span><b>Admin token</b><span>version ' + esc(d.adminTokenVersion) + ' — set the ADMIN_TOKEN_VERSION secret to a new value to log every admin out (docs/DEPLOY.md §B3).</span><b>Admin second factor</b><span>' + (d.adminTotp ? 'ON — ADMIN_TOTP_SECRET is set; the admin code needs the six digits too.' : 'off — set the ADMIN_TOTP_SECRET secret (a base32 key from an authenticator app) to require six digits with the admin code (docs/IDENTITY.md).') + '</span></div>'
+      + '<h4>The badge under the chat</h4><div class="caps"><label><input type="checkbox" id="s_badge_show"' + (d.createYourOwn.show ? ' checked' : '') + ' /> Show "create your own" (now from: ' + esc(d.createYourOwn.source) + ')</label></div><div class="row2" style="margin-top:6px"><input type="text" id="s_badge_text" value="' + esc(d.createYourOwn.text) + '" placeholder="Create your own bot" /><input type="url" id="s_badge_url" value="' + esc(d.createYourOwn.url) + '" placeholder="https://…" /></div>'
+      + '<h4>Every bot, every kind, and what it actually requires</h4><div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">' + d.bots.map((b) => '<tr style="border-top:1px solid var(--edge);vertical-align:top"><td style="padding:6px 8px 6px 0;white-space:nowrap"><b>' + (b.kind && b.kind !== 'chat' ? '📷 ' : '') + esc(b.name) + '</b><br><span style="color:var(--muted)">' + esc(b.id) + ' · ' + esc(b.kind || 'chat') + (b.listed ? '' : ' · unlisted') + ' · ' + esc(b.source) + '</span></td><td style="padding:6px 8px;white-space:nowrap"><b>' + esc(b.effective) + '</b></td><td style="padding:6px 0;color:var(--muted)">' + esc(b.reason) + (b.ownKey ? '<br>own key: ' + esc(b.ownKey) : '') + (b.signIn ? '<br>sign-in: ' + esc(b.signIn) : '') + '</td></tr>').join('') + '</table></div>';
     $('s_default').onchange = () => { $('s_default_line').textContent = line($('s_default').value); };
     $('s_floor').onchange = () => { $('s_floor_line').textContent = $('s_floor').value === 'open' ? 'No floor: each bot decides for itself.' : line($('s_floor').value); };
     $('s_save').onclick = async () => {
       $('s_save').disabled = true; $('s_msg').textContent = 'Saving…';
       try {
-        const r2 = await fetch('/api/admin/settings', { method: 'PUT', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ access: { default: $('s_default').value, floor: $('s_floor').value } }) });
+        const r2 = await fetch('/api/admin/settings', { method: 'PUT', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ access: { default: $('s_default').value, floor: $('s_floor').value }, createYourOwn: { show: $('s_badge_show').checked, text: $('s_badge_text').value, url: $('s_badge_url').value } }) });
         const d2 = await r2.json(); if (!r2.ok) throw new Error(d2.error || r2.status);
         renderSettings();
       } catch (err) { $('s_msg').textContent = 'Not saved: ' + err.message; $('s_save').disabled = false; }

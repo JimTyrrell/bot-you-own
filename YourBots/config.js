@@ -226,19 +226,10 @@ export const CONFIG = {
   //   gemma-4-26b-a4b-it  $0.10 per M input tokens, $0.30 per M output tokens.
   //   A plate photo is about 400 input + 150 output tokens ≈ 10 neurons ≈ $0.0001
   //   — a hundredth of a cent. The free 10,000 neurons a day cover ~1,000 photos.
-  foodLog: {
-    enabled: true,                              // false = /food and /api/food/* don't exist
-    name: "Plate",                              // what the app calls itself (header, tab title). The address stays /food
-    model: "@cf/google/gemma-4-26b-a4b-it",     // the vision model. Chosen by testing 5 plates — see docs/FOOD-LOG.md
-    maxPhotoBytes: 2 * 1024 * 1024,             // the page shrinks photos to ≤1024 px first; this is the hard cap
-    dailyPhotoLimit: 60,                        // vision calls per person per day (plates, labels, receipts, barcodes)
-    coachName: "",                              // shown on the page: "Your coach: …". Empty = nothing
-    signIn: [                                   // "Sign in with …" buttons, each shown only when it has a client id
-      { provider: "google", clientId: "" },     //   or the GOOGLE_CLIENT_ID secret
-      { provider: "microsoft", clientId: "" },  //   or MICROSOFT_CLIENT_ID
-      { provider: "apple", clientId: "" },      //   or APPLE_CLIENT_ID (needs the paid Apple developer account)
-    ],
-  },
+  // foodLog: DEPRECATED here since v3.7. The food log is a bot folder now —
+  // YourBots/plate/project.json with "kind": "food" and a "food": { … } block
+  // (docs/FOOD-LOG.md). A foodLog block left here still works, with a warning
+  // in the logs, until the next release.
 
   // ---- 7. LOOKS --------------------------------------------------------------
   accent: "#10a37f",

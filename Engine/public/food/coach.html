@@ -35,7 +35,7 @@
   </div>
   <div id="main" hidden>
     <div class="row" style="justify-content:space-between"><div><h1>Clients</h1><p class="muted small" id="sub"></p></div>
-      <div class="row"><a href="/food" class="small">the client page →</a><button id="csv">Export CSV</button><button id="refresh">Refresh</button></div></div>
+      <div class="row"><a href="/food" id="clientlink" class="small">the client page →</a><button id="csv">Export CSV</button><button id="refresh">Refresh</button></div></div>
     <div class="card"><div class="row"><b>Link a second device</b><input id="lemail" placeholder="client email" type="email"><input id="lcode" placeholder="6-char code" maxlength="6" style="width:120px;text-transform:uppercase"><button id="link">Link</button><span class="muted small" id="lmsg"></span></div>
       <p class="muted small" style="margin:6px 0 0">A client who types their email on a second phone sees a code instead of their log. Type both here and that phone is in. Codes last 7 days.</p></div>
     <div class="tbl" id="list"></div>
@@ -43,11 +43,17 @@
   </div>
 </div>
 <script>
+// /apps/<id>/coach → that bot's coach API; /food/coach → the old alias for "plate".
+const APPM = location.pathname.match(/^\/apps\/([a-z0-9-]+)/);
+const ADMIN_API = APPM ? '/api/admin/apps/' + APPM[1] + '/' : '/api/admin/food/';
+const CLIENT_PAGE = APPM ? '/apps/' + APPM[1] : '/food';
+document.addEventListener('DOMContentLoaded', () => { document.querySelectorAll('#clientlink, .clientlink2').forEach((a) => a.href = CLIENT_PAGE); });
+
 'use strict';
 const $ = (id) => document.getElementById(id);
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
 let TOKEN = ''; try { TOKEN = localStorage.getItem('adminToken') || ''; } catch {}
-async function api(path, opts = {}) { const r = await fetch('/api/admin/food/' + path, { method: opts.method || 'GET', headers: { 'x-admin-token': TOKEN, ...(opts.json ? { 'content-type': 'application/json' } : {}) }, body: opts.json ? JSON.stringify(opts.json) : undefined }); if (r.status === 401) { $('main').hidden = true; $('login').hidden = false; throw new Error('admin'); } return r; }
+async function api(path, opts = {}) { const r = await fetch(ADMIN_API + path, { method: opts.method || 'GET', headers: { 'x-admin-token': TOKEN, ...(opts.json ? { 'content-type': 'application/json' } : {}) }, body: opts.json ? JSON.stringify(opts.json) : undefined }); if (r.status === 401) { $('main').hidden = true; $('login').hidden = false; throw new Error('admin'); } return r; }
 $('lf').onsubmit = async (e) => { e.preventDefault(); const r = await fetch('/api/admin/unlock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ passphrase: $('code').value }) }); const d = await r.json().catch(() => ({})); if (!r.ok) { $('lerr').textContent = d.error || 'Wrong code'; return; } TOKEN = d.token; try { localStorage.setItem('adminToken', TOKEN); } catch {} $('login').hidden = true; $('main').hidden = false; list(); };
 (async () => { if (!TOKEN) { $('login').hidden = false; return; } try { $('main').hidden = false; await list(); } catch {} })();
 $('refresh').onclick = list; $('csv').onclick = async () => { const r = await api('export.csv'); const b = await r.blob(); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'clients.csv'; a.click(); };
@@ -56,7 +62,7 @@ function ago(t) { if (!t) return '—'; const m = (Date.now() - Date.parse(t)) /
 async function list() {
   const r = await api('clients'); const d = await r.json();
   $('sub').textContent = d.clients.length + ' client' + (d.clients.length === 1 ? '' : 's') + (d.coachName ? ' · ' + d.coachName : '');
-  $('list').innerHTML = d.clients.length ? '<table><tr><th>Client</th><th>Targets</th><th>Streak</th><th>7-day adherence</th><th>Logged / 7 d</th><th>Avg kcal</th><th>Weight</th><th>Household</th><th>Devices</th><th>Last log</th></tr>' + d.clients.map((c) => '<tr class="row" data-id="' + c.id + '"><td><b>' + esc(c.name || c.email) + '</b>' + (c.name ? '<div class="muted small">' + esc(c.email) + '</div>' : '') + '</td><td class="small">' + (c.targets ? c.targets.kcal + ' kcal · P' + c.targets.protein_g + ' C' + c.targets.carbs_g + ' F' + c.targets.fat_g : '<span class="muted">not set</span>') + '</td><td>' + (c.streak ? '🔥 ' + c.streak : '—') + '</td><td>' + (c.adherence == null ? '<span class="muted">—</span>' : '<span class="bar"><i style="width:' + c.adherence + '%"></i></span> ' + c.adherence + '%') + '</td><td>' + c.daysLogged + '</td><td>' + (c.daysLogged ? c.avgKcal : '—') + '</td><td>' + (c.weight ? c.weight + ' kg' + (c.weightChange30 != null ? ' <span class="muted small">(' + (c.weightChange30 > 0 ? '+' : '') + c.weightChange30 + ')</span>' : '') : '—') + '</td><td>' + esc(c.household || '—') + '</td><td>' + c.devices + (c.pending ? ' <span class="pill">' + c.pending + ' waiting</span>' : '') + '</td><td class="small">' + ago(c.last_log) + '</td></tr>').join('') + '</table>' : '<p class="muted">No clients yet. Send them to <a href="/food">/food</a>.</p>';
+  $('list').innerHTML = d.clients.length ? '<table><tr><th>Client</th><th>Targets</th><th>Streak</th><th>7-day adherence</th><th>Logged / 7 d</th><th>Avg kcal</th><th>Weight</th><th>Household</th><th>Devices</th><th>Last log</th></tr>' + d.clients.map((c) => '<tr class="row" data-id="' + c.id + '"><td><b>' + esc(c.name || c.email) + '</b>' + (c.name ? '<div class="muted small">' + esc(c.email) + '</div>' : '') + '</td><td class="small">' + (c.targets ? c.targets.kcal + ' kcal · P' + c.targets.protein_g + ' C' + c.targets.carbs_g + ' F' + c.targets.fat_g : '<span class="muted">not set</span>') + '</td><td>' + (c.streak ? '🔥 ' + c.streak : '—') + '</td><td>' + (c.adherence == null ? '<span class="muted">—</span>' : '<span class="bar"><i style="width:' + c.adherence + '%"></i></span> ' + c.adherence + '%') + '</td><td>' + c.daysLogged + '</td><td>' + (c.daysLogged ? c.avgKcal : '—') + '</td><td>' + (c.weight ? c.weight + ' kg' + (c.weightChange30 != null ? ' <span class="muted small">(' + (c.weightChange30 > 0 ? '+' : '') + c.weightChange30 + ')</span>' : '') : '—') + '</td><td>' + esc(c.household || '—') + '</td><td>' + c.devices + (c.pending ? ' <span class="pill">' + c.pending + ' waiting</span>' : '') + '</td><td class="small">' + ago(c.last_log) + '</td></tr>').join('') + '</table>' : '<p class="muted">No clients yet. Send them to <a href="/food" class="clientlink2">the client page</a>.</p>';
   $('list').querySelectorAll('tr.row').forEach((tr) => tr.onclick = () => detail(tr.dataset.id));
 }
 async function detail(id) {

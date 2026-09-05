@@ -7,26 +7,22 @@
 //  meal, scan a barcode, read a nutrition label, scan a receipt, weigh in,
 //  share a household with a spouse. The coach sees every client at /food/coach.
 //
-//  IDENTITY, in plain English (docs/FOOD-LOG.md says the same at length):
-//   · A person types their email once. Their browser makes a random 32-byte
-//     DEVICE KEY, keeps it in localStorage, and sends it with every request.
-//     The server keeps only the SHA-256 of that key. That's the whole login:
-//     "remembered forever on this browser", no passwords.
-//   · The user id is SHA-256(lowercased email + FOODLOG_PEPPER). Same email,
-//     same id, on any device — but knowing an email does NOT open the log.
-//   · A SECOND browser typing the same email gets a 6-character code and a
-//     message, not the log. The coach links it (Clients → link), or the
-//     person proves the email with "Sign in with Google/Microsoft/Apple"
-//     (track-signin.js verifies the ID token properly).
-//   · Identity fails CLOSED: a bad or missing device key is a 401, always.
-//     Features fail OPEN: no thumbnail, no barcode database, no model → the
-//     page still works, with less.
+//  IDENTITY lives in Engine/identity/ (docs/IDENTITY.md) and is shared by every
+//  kind of bot: email + device key, passkeys, Google/Microsoft/Apple, an
+//  authenticator code, or the coach's link for a second device. This file only
+//  asks "who is this browser?" and keeps the food side of a person (targets).
+//  Identity fails CLOSED (unknown device = 401); features fail OPEN (no
+//  thumbnail, no barcode database, no model → the page still works, with less).
 //
-//  ROUTES (all under /api/food/, device key in the x-device-key header):
+//  A food log is a bot of kind "food" (YourBots/<id>/project.json). It lives at
+//  /apps/<id> with its API at /api/apps/<id>/… and the coach at /api/admin/apps/<id>/….
+//  /food and /api/food/… are aliases for the bot whose id is "plate" (one release).
+//
+//  ROUTES (under /api/apps/<id>/, device key in the x-device-key header):
 //   GET  config                       what the page needs (coach name, sign-in buttons)
 //   POST join {email}                 → { linked, userId } or { linked:false, code, message }
 //   GET  me                           who am I, my targets, my household, still pending?
-//   POST signin {provider, idToken}   link this device by proving the email
+//   POST signin {provider, idToken}   link this device by proving the email (passkeys, codes: /api/id/*)
 //   GET/POST targets                  daily kcal + macros (+ unit, name)
 //   POST photo (multipart)            photo, thumb, kind=food|barcode|label|receipt, date, correction, mealId
 //   POST text {text, date, correction, mealId}
@@ -35,33 +31,28 @@
 //   POST barcode {code}               · POST weight {date, value, unit}
 //   GET/POST household, POST household/join, POST household/leave
 //   GET  receipts · DELETE receipt/<id>
-//  Admin (x-admin-token): GET /api/admin/food/clients · GET client/<id> ·
+//  Admin (x-admin-token): GET /api/admin/apps/<id>/clients · GET client/<uid> ·
 //   GET export.csv · POST link {email, deviceCode}
-//  Pages: /food (the app) · /food/coach (the coach view). Both are static
-//  files in Engine/public/food/, served through here so foodLog.enabled=false
-//  really does make them disappear.
+//  Pages: /apps/<id> (the app) · /apps/<id>/coach (the coach view). Both are the
+//  static files in Engine/public/food/, served through here per bot.
 // ============================================================================
 
-import { CONFIG } from "../../YourBots/config.js";
-import { foodLogConfig, json, sha256hex, nowIso, pickDate, addDays, todayUtc, randomCode, randomId, clamp, round1, cleanEmail, readJson, toBase64, DEV_PEPPER } from "./track-common.js";
+import { json, nowIso, pickDate, addDays, todayUtc, clamp, round1, cleanEmail, readJson, toBase64, randomId } from "./track-common.js";
+import { identify, signInMethods, verifyIdToken } from "../identity/index.js";
+import { join as idJoin, userIdFor, userById as idUserById, bindDevice, linkByCode, deviceCount, listDevices, pendingByEmail, touch as idTouch, DEV_PEPPER, pepperOf } from "../identity/devices.js";
 import { runVision, PROMPTS, extractJson, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize } from "./track-vision.js";
-import { verifyIdToken } from "./track-signin.js";
 import { lookupBarcode, rememberLabel, saveReceipt, listReceipts, deleteReceipt, setWeight, listWeights, householdOf, createHousehold, joinHousehold, leaveHousehold, canView } from "./track-extras.js";
 
-const DEVICE_KEY_RE = /^[0-9a-f]{64}$/;
 const THUMB_MAX_PX = 256, THUMB_MAX_BYTES = 48 * 1024;
-const HONESTY = "Photo estimates are typically within about 30%. Fix the portion when it's off.";
-const PENDING_TTL_MS = 7 * 864e5;
+let HONESTY = "Photo estimates are typically within about 30%. Fix the portion when it's off.";   // per bot: project.json → food.honesty
 
 // --- The tables. Created on first use, like the rest of the Worker. ------------
 let TRACK_SCHEMA_OK = false;
 export async function ensureTrackSchema(env) {
   if (TRACK_SCHEMA_OK || !env.DB) return;
   await env.DB.batch([
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS track_users (id TEXT PRIMARY KEY, email TEXT UNIQUE, targets_json TEXT, created_at TEXT NOT NULL, last_seen TEXT)`),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS track_devices (key_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, label TEXT, created_at TEXT NOT NULL)`),
-    env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_track_devices_user ON track_devices(user_id)`),
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS track_pending (code TEXT PRIMARY KEY, key_hash TEXT NOT NULL, user_id_new TEXT, email TEXT NOT NULL, created_at TEXT NOT NULL)`),
+    // The food side of a person: targets. Who they ARE (email, devices) is Engine/identity/ (id_users, id_devices …).
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS track_users (id TEXT PRIMARY KEY, email TEXT, targets_json TEXT, created_at TEXT NOT NULL, last_seen TEXT)`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS track_meals (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, date TEXT NOT NULL, time TEXT, items_json TEXT NOT NULL, kcal REAL, protein_g REAL, carbs_g REAL, fat_g REAL, thumb TEXT, source TEXT, created_at TEXT NOT NULL)`),
     env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_track_meals_day ON track_meals(user_id, date)`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS track_usage (user_id TEXT NOT NULL, date TEXT NOT NULL, photos INTEGER DEFAULT 0, PRIMARY KEY (user_id, date))`),
@@ -76,32 +67,35 @@ export async function ensureTrackSchema(env) {
   TRACK_SCHEMA_OK = true;
 }
 
-// --- The router. Called from index.js for /food*, /api/food/*, /api/admin/food/*.
-export async function handleTrack(request, env, url, { isAdmin = false, adminEnabled = false, allowed = async () => true } = {}) {
-  const cfg = foodLogConfig(CONFIG, env);
+// --- The router. Called from index.js for one food bot: the app's page, its API, its coach API.
+//     `bot` is the resolved project (kind food); api/page/admin are the path prefixes it answers on
+//     ("/api/apps/plate/", "/apps/plate", "/api/admin/apps/plate/" — or the /food aliases).
+export async function handleTrack(request, env, url, { bot, api, page, admin, isAdmin = false, adminEnabled = false, allowed = async () => true } = {}) {
+  const cfg = foodConfig(bot, env);
+  HONESTY = cfg.honesty;
   const p = url.pathname;
-  if (!cfg.enabled) return p.startsWith("/api/") ? json({ error: "not found" }, 404) : new Response("Not found", { status: 404 });
 
-  // The pages. /food → the app; /food/coach → the coach view. Static files, gated here.
-  if (p === "/food" || p === "/food/") return env.ASSETS.fetch(new Request(`${url.origin}/food/`, { headers: request.headers }));
-  if (p.startsWith("/food/")) return env.ASSETS.fetch(request);
+  // The pages. /apps/<id> → the app; /apps/<id>/coach → the coach view. Static files in Engine/public/food/.
+  if (p === page || p === page + "/") return env.ASSETS.fetch(new Request(`${url.origin}/food/`, { headers: request.headers }));
+  if (p.startsWith(page + "/")) return env.ASSETS.fetch(new Request(`${url.origin}/food/${p.slice(page.length + 1)}`, { headers: request.headers }));
 
-  if (p.startsWith("/api/admin/food/")) {
+  if (p.startsWith(admin)) {
     if (!isAdmin) return json({ error: "admin only" }, adminEnabled ? 401 : 404);
     if (!env.DB) return json({ error: "No D1 database is bound (wrangler.jsonc → d1_databases)." }, 503);
     await ensureTrackSchema(env);
-    return handleCoach(request, env, url, cfg);
+    return handleCoach(request, env, url, cfg, p.slice(admin.length));
   }
 
-  if (p === "/api/food/config") return json({ enabled: true, name: String(cfg.name || "Plate"), coachName: cfg.coachName, honesty: HONESTY, signIn: cfg.signIn.filter((s) => s.clientId), dailyPhotoLimit: cfg.dailyPhotoLimit, maxPhotoBytes: cfg.maxPhotoBytes });
+  if (p === api + "config") return json({ enabled: true, id: bot.id, name: cfg.name, coachName: cfg.coachName, honesty: cfg.honesty, signIn: cfg.signIn, methods: { passkeys: cfg.methods.passkeys, totp: cfg.methods.totp, providers: cfg.signIn.map((s) => s.provider) }, dailyPhotoLimit: cfg.dailyPhotoLimit, maxPhotoBytes: cfg.maxPhotoBytes, api, page });
   if (!env.DB) return json({ error: "The food log needs the D1 database (wrangler.jsonc → d1_databases)." }, 503);
   await ensureTrackSchema(env);
   if (cfg.pepper === DEV_PEPPER) console.warn("FOODLOG_PEPPER is not set — user ids use the dev pepper. Set it before real people use this: npx wrangler secret put FOODLOG_PEPPER");
 
-  const deviceKey = String(request.headers.get("x-device-key") || "");
-  const keyHash = DEVICE_KEY_RE.test(deviceKey) ? await sha256hex(deviceKey) : null;
+  // Who is this browser? Engine/identity/index.js — fails closed.
+  const who = await identify(request, env, bot);
+  const keyHash = who.keyHash;
 
-  if (p === "/api/food/join") {
+  if (p === api + "join") {
     if (request.method !== "POST") return json({ error: "POST only" }, 405);
     if (!(await allowed(env, request))) return json({ error: "rate-limited", reason: "Too many tries. Give it a minute." }, 429);
     if (!keyHash) return json({ error: "no device key", reason: "This browser didn't send a device key. Reload the page." }, 400);
@@ -109,22 +103,21 @@ export async function handleTrack(request, env, url, { isAdmin = false, adminEna
   }
 
   // Everything below needs a known device. Unknown → 401, no exceptions.
-  const me = keyHash ? await userForDevice(env, keyHash) : null;
-  if (p === "/api/food/signin") {
+  const me = who.user ? await withProfile(env, who.user) : null;
+  if (p === api + "signin") {
     if (request.method !== "POST") return json({ error: "POST only" }, 405);
     if (!(await allowed(env, request))) return json({ error: "rate-limited" }, 429);
     if (!keyHash) return json({ error: "no device key" }, 400);
     return signIn(env, cfg, await readJson(request), keyHash, me);
   }
-  if (p === "/api/food/me") {
+  if (p === api + "me") {
     if (me) return json({ linked: true, ...(await profile(env, me)) });
-    const pend = keyHash ? await env.DB.prepare(`SELECT code, email FROM track_pending WHERE key_hash = ?`).bind(keyHash).first() : null;
-    return json(pend ? { linked: false, code: pend.code, email: pend.email, message: PENDING_MESSAGE } : { linked: false }, 401);
+    return json(who.pending ? { linked: false, code: who.pending.code, email: who.pending.email, message: PENDING_MESSAGE } : { linked: false }, 401);
   }
   if (!me) return json({ error: "unknown device", reason: "This browser isn't linked to a log. Enter your email to start." }, 401);
   touch(env, me);
 
-  const sub = p.slice("/api/food/".length);
+  const sub = p.slice(api.length);
   const body = request.method === "POST" || request.method === "PATCH" ? await readJson(request.clone()) : {};
 
   if (sub === "targets") {
@@ -163,7 +156,7 @@ export async function handleTrack(request, env, url, { isAdmin = false, adminEna
   if (sub === "day" || sub === "week") {
     const target = String(url.searchParams.get("user") || me.id);
     if (target !== me.id && !(await canView(env, me.id, target))) return json({ error: "not allowed", reason: "You can only see days of people in your household." }, 403);
-    const who = target === me.id ? me : await userById(env, target);
+    const who = target === me.id ? me : await userById(env, me.bot, target);
     if (!who) return json({ error: "no such user" }, 404);
     return json(sub === "day" ? await dayView(env, who, pickDate(url.searchParams.get("date")), { readOnly: target !== me.id }) : await weekView(env, who, pickDate(url.searchParams.get("end"))));
   }
@@ -196,31 +189,22 @@ export async function handleTrack(request, env, url, { isAdmin = false, adminEna
   return json({ error: "not found" }, 404);
 }
 
-const PENDING_MESSAGE = "This email is already logging on another device. Sign in with Google to link devices, or ask your coach to link them.";
+const PENDING_MESSAGE = "This email is already logging on another device. Use a passkey, sign in, type your authenticator code, or ask your coach to link this device.";
 
-// --- JOIN: first device creates the log; a second device gets a code instead. ------
+// The bot's food block + the sign-in methods it has on + the pepper. Every value already checked by Engine/worker/projects.js.
+function foodConfig(bot, env) {
+  const f = bot.food || {};
+  const methods = signInMethods(bot, env);
+  return { id: bot.id, name: bot.name, model: f.model, maxPhotoBytes: f.maxPhotoBytes, dailyPhotoLimit: f.dailyPhotoLimit, coachName: f.coachName, honesty: f.honesty, signIn: methods.providers, methods, pepper: pepperOf(env) };
+}
+
+// --- JOIN: first device creates the log; a second device gets a code instead (Engine/identity/devices.js). ---
 async function join(env, cfg, body, keyHash) {
   const email = cleanEmail(body.email);
   if (!email) return json({ error: "email", reason: "That doesn't look like an email address." }, 400);
-  const existingDevice = await userForDevice(env, keyHash);
-  if (existingDevice) return json({ linked: true, ...(await profile(env, existingDevice)) });   // reload of a known browser
-  const userId = await sha256hex(`${email}\n${cfg.pepper}`);
-  const user = await env.DB.prepare(`SELECT id FROM track_users WHERE id = ?`).bind(userId).first();
-  const now = nowIso();
-  if (!user) {
-    await env.DB.batch([
-      env.DB.prepare(`INSERT INTO track_users (id, email, targets_json, created_at, last_seen) VALUES (?, ?, NULL, ?, ?)`).bind(userId, email, now, now),
-      env.DB.prepare(`INSERT INTO track_devices (key_hash, user_id, label, created_at) VALUES (?, ?, 'first device', ?)`).bind(keyHash, userId, now),
-    ]);
-    console.log(JSON.stringify({ event: "foodlog-join", userId: userId.slice(0, 8) }));
-    return json({ linked: true, ...(await profile(env, await userById(env, userId))), fresh: true });
-  }
-  // The email already has a log. This device is NOT let in; it gets a code the coach can link.
-  await env.DB.prepare(`DELETE FROM track_pending WHERE created_at < ?`).bind(new Date(Date.now() - PENDING_TTL_MS).toISOString()).run();
-  const prior = await env.DB.prepare(`SELECT code FROM track_pending WHERE key_hash = ?`).bind(keyHash).first();
-  const code = prior?.code || randomCode(6);
-  if (!prior) await env.DB.prepare(`INSERT INTO track_pending (code, key_hash, user_id_new, email, created_at) VALUES (?, ?, ?, ?, ?)`).bind(code, keyHash, randomId(8), email, now).run();
-  return json({ linked: false, code, email, message: PENDING_MESSAGE, signIn: cfg.signIn.filter((s) => s.clientId).map((s) => s.provider) }, 202);
+  const r = await idJoin(env, cfg.id, { email, keyHash });
+  if (r.linked) return json({ linked: true, ...(await profile(env, await withProfile(env, r.user))), ...(r.fresh ? { fresh: true } : {}) });
+  return json({ linked: false, code: r.code, email, message: PENDING_MESSAGE, signIn: cfg.signIn.map((s) => s.provider), methods: { passkeys: cfg.methods.passkeys, totp: cfg.methods.totp } }, 202);
 }
 
 // --- SIGN IN: the provider's ID token proves the email; the device is linked. ------
@@ -230,16 +214,10 @@ async function signIn(env, cfg, body, keyHash, me) {
   if (!conf) return json({ error: "provider not configured" }, 404);
   const v = await verifyIdToken(body.idToken, provider, { clientId: conf.clientId });
   if (!v.ok) { console.warn("foodlog signin refused", provider, v.reason); return json({ error: "refused", reason: `Sign-in refused: ${v.reason}.` }, 401); }
-  const userId = await sha256hex(`${v.email}\n${cfg.pepper}`);
+  const userId = await userIdFor(v.email, env, cfg.id);
   if (me && me.id !== userId) return json({ error: "different email", reason: "This device is already linked to a different email." }, 409);
-  const now = nowIso();
-  const user = await env.DB.prepare(`SELECT id FROM track_users WHERE id = ?`).bind(userId).first();
-  const ops = [];
-  if (!user) ops.push(env.DB.prepare(`INSERT INTO track_users (id, email, targets_json, created_at, last_seen) VALUES (?, ?, NULL, ?, ?)`).bind(userId, v.email, now, now));
-  if (!me) ops.push(env.DB.prepare(`INSERT INTO track_devices (key_hash, user_id, label, created_at) VALUES (?, ?, ?, ?)`).bind(keyHash, userId, `signed in with ${provider}`, now));
-  ops.push(env.DB.prepare(`DELETE FROM track_pending WHERE key_hash = ?`).bind(keyHash));
-  await env.DB.batch(ops);
-  return json({ linked: true, ...(await profile(env, await userById(env, userId))) });
+  const user = await bindDevice(env, cfg.id, { userId, email: v.email, keyHash, label: `signed in with ${provider}` });
+  return json({ linked: true, ...(await profile(env, await withProfile(env, user))) });
 }
 
 // --- PHOTO: one call to the vision model, four kinds of picture. -----------------------
@@ -388,17 +366,18 @@ function adherenceOf(days, targets) {
   return Math.round(100 * hit / logged.length);
 }
 
-// --- PEOPLE ---------------------------------------------------------------------------
-async function userForDevice(env, keyHash) {
-  const r = await env.DB.prepare(`SELECT u.* FROM track_devices d JOIN track_users u ON u.id = d.user_id WHERE d.key_hash = ?`).bind(keyHash).first();
-  return r ? userOut(r) : null;
+// --- PEOPLE. Identity rows come from Engine/identity/; the food profile (targets) is track_users. ----
+async function withProfile(env, user) {
+  if (!user) return null;
+  let r = await env.DB.prepare(`SELECT targets_json, created_at, last_seen FROM track_users WHERE id = ?`).bind(user.id).first();
+  if (!r) { await env.DB.prepare(`INSERT OR IGNORE INTO track_users (id, targets_json, created_at, last_seen) VALUES (?, NULL, ?, ?)`).bind(user.id, user.created_at || nowIso(), nowIso()).run(); r = {}; }
+  let targets = null; try { targets = r.targets_json ? JSON.parse(r.targets_json) : null; } catch {}
+  return { id: user.id, bot: user.bot, email: user.email, targets, name: targets?.name || null, created_at: user.created_at, last_seen: user.last_seen };
 }
-async function userById(env, id) { const r = await env.DB.prepare(`SELECT * FROM track_users WHERE id = ?`).bind(id).first(); return r ? userOut(r) : null; }
-function userOut(r) { let targets = null; try { targets = r.targets_json ? JSON.parse(r.targets_json) : null; } catch {} return { id: r.id, email: r.email, targets, name: targets?.name || null, created_at: r.created_at, last_seen: r.last_seen }; }
-function touch(env, me) { env.DB.prepare(`UPDATE track_users SET last_seen = ? WHERE id = ?`).bind(nowIso(), me.id).run().catch(() => {}); }
+async function userById(env, bot, id) { return withProfile(env, await idUserById(env, bot, id)); }
+function touch(env, me) { idTouch(env, me); env.DB.prepare(`UPDATE track_users SET last_seen = ? WHERE id = ?`).bind(nowIso(), me.id).run().catch(() => {}); }
 async function profile(env, me) {
-  const devices = (await env.DB.prepare(`SELECT COUNT(*) n FROM track_devices WHERE user_id = ?`).bind(me.id).first())?.n || 1;
-  return { userId: me.id, email: me.email, targets: me.targets, devices, household: await householdView(env, me) };
+  return { userId: me.id, email: me.email, targets: me.targets, devices: (await deviceCount(env, me.id)) || 1, household: await householdView(env, me) };
 }
 async function householdView(env, me) {
   const h = await householdOf(env, me.id);
@@ -417,45 +396,33 @@ function cleanTargets(t) {
   };
 }
 
-// --- THE COACH (admin token). ------------------------------------------------------------
-async function handleCoach(request, env, url, cfg) {
-  const sub = url.pathname.slice("/api/admin/food/".length);
-  if (sub === "clients") return json({ clients: await clientRows(env), coachName: cfg.coachName });
+// --- THE COACH (admin token). One bot's clients only. ------------------------------------
+async function handleCoach(request, env, url, cfg, sub) {
+  if (sub === "clients") return json({ clients: await clientRows(env, cfg.id), coachName: cfg.coachName, name: cfg.name, id: cfg.id });
   if (sub.startsWith("client/")) {
-    const who = await userById(env, sub.slice(7));
+    const who = await userById(env, cfg.id, sub.slice(7));
     if (!who) return json({ error: "no such client" }, 404);
     const end = todayUtc();
     const days = [];
     for (let i = 6; i >= 0; i--) days.push(await dayView(env, who, addDays(end, -i)));
     const week = await weekView(env, who, end);
-    const pending = (await env.DB.prepare(`SELECT code, created_at FROM track_pending WHERE email = ?`).bind(who.email).all()).results || [];
-    const devices = (await env.DB.prepare(`SELECT label, created_at FROM track_devices WHERE user_id = ? ORDER BY created_at`).bind(who.id).all()).results || [];
-    return json({ client: { ...who, household: await householdOf(env, who.id) }, days, week, pending, devices });
+    return json({ client: { ...who, household: await householdOf(env, who.id) }, days, week, pending: await pendingByEmail(env, cfg.id, who.email), devices: await listDevices(env, who.id) });
   }
-  if (sub === "export.csv") return csv(await clientRows(env));
+  if (sub === "export.csv") return csv(await clientRows(env, cfg.id));
   if (sub === "link") {
     if (request.method !== "POST") return json({ error: "POST only" }, 405);
     const b = await readJson(request);
-    const email = cleanEmail(b.email), code = String(b.deviceCode || b.code || "").trim().toUpperCase();
-    const pend = await env.DB.prepare(`SELECT * FROM track_pending WHERE code = ?`).bind(code).first();
-    if (!pend) return json({ error: "no such code", reason: "No device is waiting with that code. Codes expire after 7 days." }, 404);
-    if (pend.email !== email) return json({ error: "email mismatch", reason: "That code was requested for a different email. Both must match — that's the point." }, 409);
-    const user = await env.DB.prepare(`SELECT id FROM track_users WHERE email = ?`).bind(email).first();
-    if (!user) return json({ error: "no such client" }, 404);
-    await env.DB.batch([
-      env.DB.prepare(`INSERT OR IGNORE INTO track_devices (key_hash, user_id, label, created_at) VALUES (?, ?, 'linked by coach', ?)`).bind(pend.key_hash, user.id, nowIso()),
-      env.DB.prepare(`DELETE FROM track_pending WHERE code = ?`).bind(code),
-    ]);
-    return json({ ok: true, linked: true, userId: user.id });
+    const out = await linkByCode(env, cfg.id, { email: cleanEmail(b.email), code: b.deviceCode || b.code });
+    return json(out, out.ok ? 200 : out.status || 400);
   }
   return json({ error: "not found" }, 404);
 }
-
-async function clientRows(env) {
-  const rows = (await env.DB.prepare(`SELECT u.id, u.email, u.targets_json, u.created_at, u.last_seen, (SELECT MAX(created_at) FROM track_meals m WHERE m.user_id = u.id) last_log, (SELECT COUNT(*) FROM track_devices d WHERE d.user_id = u.id) devices, (SELECT COUNT(*) FROM track_pending p WHERE p.email = u.email) pending, (SELECT h.name FROM track_members mb JOIN track_households h ON h.id = mb.household_id WHERE mb.user_id = u.id) household FROM track_users u ORDER BY last_log DESC`).all()).results || [];
+async function clientRows(env, bot) {
+  const rows = (await env.DB.prepare(`SELECT u.id, u.email, u.created_at, u.last_seen, t.targets_json, (SELECT MAX(created_at) FROM track_meals m WHERE m.user_id = u.id) last_log, (SELECT COUNT(*) FROM id_devices d WHERE d.user_id = u.id) devices, (SELECT COUNT(*) FROM id_pending p WHERE p.bot = u.bot AND p.email = u.email) pending, (SELECT h.name FROM track_members mb JOIN track_households h ON h.id = mb.household_id WHERE mb.user_id = u.id) household FROM id_users u LEFT JOIN track_users t ON t.id = u.id WHERE u.bot = ? ORDER BY last_log DESC`).bind(bot).all()).results || [];
   const out = [];
   for (const r of rows) {
-    const who = userOut(r);
+    let targets = null; try { targets = r.targets_json ? JSON.parse(r.targets_json) : null; } catch {}
+    const who = { id: r.id, email: r.email, targets, name: targets?.name || null, created_at: r.created_at, last_seen: r.last_seen };
     const week = await weekView(env, who, todayUtc());
     const w = await listWeights(env, who.id, 30);
     out.push({ id: who.id, email: who.email, name: who.name, targets: who.targets, created_at: who.created_at, last_seen: who.last_seen, last_log: r.last_log, devices: r.devices, pending: r.pending, household: r.household, streak: week.streak, adherence: week.adherence, daysLogged: week.days.filter((d) => d.meals).length, avgKcal: Math.round(week.days.filter((d) => d.meals).reduce((a, d) => a + d.kcal, 0) / (week.days.filter((d) => d.meals).length || 1)), weight: w.latest, weightChange30: w.change });

@@ -6,26 +6,8 @@
 
 export const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 export const EMAIL_SHAPE = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
-export const DEV_PEPPER = "dev-pepper-change-me";   // used only when FOODLOG_PEPPER is unset; the log warns
 
-// YourBots/config.js → foodLog, with every value checked so a typo can't break the page.
-export function foodLogConfig(config, env = {}) {
-  const f = config.foodLog || {};
-  const signIn = (Array.isArray(f.signIn) ? f.signIn : []).map((s) => {
-    const provider = String(s?.provider || "").toLowerCase();
-    const fromSecret = env[`${provider.toUpperCase()}_CLIENT_ID`];
-    return { provider, clientId: String(s?.clientId || fromSecret || "").trim() };
-  }).filter((s) => ["google", "microsoft", "apple"].includes(s.provider));
-  return {
-    enabled: f.enabled !== false,
-    model: String(f.model || "@cf/google/gemma-4-26b-a4b-it"),
-    maxPhotoBytes: clamp(f.maxPhotoBytes, 200 * 1024, 8 * 1024 * 1024, 2 * 1024 * 1024),
-    dailyPhotoLimit: clamp(f.dailyPhotoLimit, 1, 1000, 60),
-    coachName: String(f.coachName || "").slice(0, 80),
-    signIn,
-    pepper: env.FOODLOG_PEPPER || DEV_PEPPER,
-  };
-}
+// (The food block itself is normalised by Engine/worker/projects.js → kind "food".)
 
 export function json(data, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });

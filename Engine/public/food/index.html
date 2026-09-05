@@ -7,7 +7,9 @@
 <title>Plate</title>
 <!-- ======================================================================
   THE FOOD LOG PAGE. Camera first, one tap, a ring and three bars.
-  Everything it needs is in Engine/worker/food.js. No framework, no build.
+  Everything it needs is in Engine/worker/track.js (the food side) and Engine/identity/
+  (who you are). No framework, no build. Served at /apps/<id> for every food bot;
+  the page works out its own API base from the address.
   Identity: the email + a random device key live in localStorage — that's the
   whole "remembered forever on this browser". docs/FOOD-LOG.md.
 ====================================================================== -->
@@ -121,7 +123,8 @@
       <p style="font-size:20px;font-weight:700;margin:0 0 4px">Snap your plate.<br>Get the numbers.</p>
       <p class="muted small">Your email is your log. This browser remembers you — no password, nothing to install.</p>
       <label for="email">Email</label>
-      <input id="email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com">
+      <div class="signin" id="passkey-join" hidden><button id="pk-login">Use a passkey</button><p class="muted small center" style="margin:2px 0 6px">Already logging on another device with a passkey? That's the fast way in.</p></div>
+      <input id="email" type="email" inputmode="email" autocomplete="username webauthn" placeholder="you@example.com">
       <button class="primary" id="joinbtn" style="width:100%;margin-top:14px">Start logging</button>
       <div class="signin" id="signin-join"></div>
       <p class="muted small" style="margin-top:12px">Privacy: photos are read once and thrown away — only a thumbnail and the numbers are kept, with your email. Your coach can see your log; nobody else can.</p>
@@ -133,9 +136,11 @@
     <div class="top"><h1>One more step</h1></div>
     <div class="card">
       <p id="pendingmsg"></p>
-      <p class="muted small">Show your coach this code, or sign in below with the same email.</p>
-      <div class="code" id="pendingcode"></div>
+      <div class="signin" id="passkey-pending" hidden><button id="pk-login2">Use a passkey</button></div>
       <div class="signin" id="signin-pending"></div>
+      <div class="signin" id="totp-pending" hidden><p class="muted small center" style="margin:6px 0 2px">Set up an authenticator app on your other device? Type its six digits:</p><div class="row"><input id="totpcode" inputmode="numeric" autocomplete="one-time-code" placeholder="123 456" maxlength="7"><button id="totplink" style="flex:0 0 auto">Link</button></div></div>
+      <p class="muted small">Or show your coach this code — they link it from their side.</p>
+      <div class="code" id="pendingcode"></div>
       <p class="muted small center" id="pendingwait">Waiting for the link… this page checks by itself.</p>
       <button class="ghost" id="pendingreset" style="width:100%">Use a different email</button>
     </div>
@@ -205,6 +210,8 @@
     <h2>This device</h2>
     <div class="card">
       <p class="small" id="whoami"></p>
+      <div class="signin" id="passkey-settings" hidden><button id="pk-register">Set up a passkey on this device</button><p class="muted small" style="margin:2px 0 6px" id="pk-note">Your phone's own lock (Face ID, fingerprint, PIN) then opens the log on a new device — no coach needed. Passkeys are tied to this site's address.</p></div>
+      <div class="signin" id="totp-settings" hidden><button id="totp-setup">Set up an authenticator app</button><div id="totpbox" hidden><canvas id="totpqr" style="display:block;margin:8px auto;background:#fff;border-radius:8px"></canvas><p class="muted small center" id="totpsecret" style="word-break:break-all"></p><div class="row"><input id="totpconfirm" inputmode="numeric" autocomplete="one-time-code" placeholder="six digits from the app" maxlength="7"><button id="totpok" style="flex:0 0 auto">Confirm</button></div></div><p class="muted small" style="margin:2px 0 6px">Google Authenticator, 1Password, Authy… scan once; then a new device is linked by typing the six digits. Nothing is ever emailed.</p></div>
       <div class="signin" id="signin-settings"></div>
       <button data-go="targets" style="width:100%;margin-top:6px">Change targets</button>
       <button class="ghost danger" id="forget" style="width:100%;margin-top:6px">Forget me on this browser</button>
@@ -230,12 +237,18 @@
 <div class="sheet" id="sheet" hidden><div class="box"><div class="grip"></div><div id="sheetbody"></div></div></div>
 <div id="toast" class="toast" hidden></div>
 
+<script src="/id/qr.js"></script>
 <script>
 'use strict';
+// ---------- where am I? /apps/<id> → its own API; /food → the old alias for the bot "plate" ----------
+const APPM = location.pathname.match(/^\/apps\/([a-z0-9-]+)/);
+const BOT = APPM ? APPM[1] : 'plate';
+const PAGE = APPM ? '/apps/' + BOT : '/food';
+const API = APPM ? '/api/apps/' + BOT + '/' : '/api/food/';
 // ---------- state ----------
-const LS = 'foodlog';
+const LS = APPM ? 'foodlog:' + BOT : 'foodlog';
 let S = load();                                  // { email, deviceKey, userId, pending, targets, household }
-let CFG = { coachName: '', honesty: '', signIn: [] };
+let CFG = { coachName: '', honesty: '', signIn: [], methods: {} };
 let day = localDate(), DAY = null, WEEK = null, viewUser = null, lastPhoto = null;
 function load() { try { return JSON.parse(localStorage.getItem(LS) || '{}'); } catch { return {}; } }
 function save() { try { localStorage.setItem(LS, JSON.stringify(S)); } catch {} }
@@ -254,15 +267,18 @@ if (!S.deviceKey) { const b = crypto.getRandomValues(new Uint8Array(32)); S.devi
 async function api(path, opts = {}) {
   const headers = Object.assign({ 'x-device-key': S.deviceKey }, opts.headers || {});
   if (opts.json) { headers['content-type'] = 'application/json'; opts.body = JSON.stringify(opts.json); }
-  const r = await fetch('/api/food/' + path, { method: opts.method || (opts.body ? 'POST' : 'GET'), headers, body: opts.body });
+  const r = await fetch((opts.base || API) + path, { method: opts.method || (opts.body ? 'POST' : 'GET'), headers, body: opts.body });
   let data = {}; try { data = await r.json(); } catch {}
   return { ok: r.ok, status: r.status, ...data };
 }
+// Engine/identity/ routes: passkeys and authenticator codes. Same device key, the bot id in the body.
+const idApi = (path, json = {}) => api(path, { base: '/api/id/', json: { bot: BOT, ...json } });
 
 // ---------- boot ----------
 (async function boot() {
-  try { const c = await fetch('/api/food/config'); if (c.ok) CFG = await c.json(); } catch {}
+  try { const c = await fetch(API + 'config'); if (c.ok) CFG = await c.json(); } catch {}
   if (CFG.name) { document.title = CFG.name; const h = document.querySelector('.top h1'); if (h) h.textContent = CFG.name; }
+  renderIdentity();
   if (CFG.coachName) $('coachline').textContent = 'Your coach: ' + CFG.coachName;
   $('honesty').textContent = CFG.honesty || '';
   renderSignIn();
@@ -303,7 +319,59 @@ function showPending(j) {
   showPending._t = setInterval(async () => { const me = await api('me'); if (me.linked) { clearInterval(showPending._t); toast('Linked!'); onLinked(me); } }, 5000);
 }
 $('pendingreset').onclick = () => { S = { deviceKey: S.deviceKey }; save(); location.reload(); };
-$('forget').onclick = () => { if (confirm('Forget this browser? Your log stays with your coach; you can link again with the code or a sign-in.')) { localStorage.removeItem(LS); location.reload(); } };
+$('forget').onclick = () => { if (confirm('Forget this browser? Your log stays with your coach; you can link again with a passkey, a sign-in, your authenticator code, or the coach\'s link.')) { localStorage.removeItem(LS); location.reload(); } };
+
+// ---------- passkeys and authenticator codes (Engine/identity/, docs/IDENTITY.md) ----------
+// Order on the join screen: passkey → Google/Microsoft/Apple → email + device → six digits / coach code.
+const b64u = { enc: (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''), dec: (s) => Uint8Array.from(atob(String(s).replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0)) };
+const canPasskey = () => Boolean(window.PublicKeyCredential && navigator.credentials && (CFG.methods || {}).passkeys !== false);
+function renderIdentity() {
+  const pk = canPasskey(), tp = (CFG.methods || {}).totp !== false;
+  for (const id of ['passkey-join', 'passkey-pending', 'passkey-settings']) $(id).hidden = !pk;
+  $('totp-pending').hidden = !tp; $('totp-settings').hidden = !tp;
+  // Conditional UI: browsers that can, offer the passkey in the email field's autofill.
+  if (pk && PublicKeyCredential.isConditionalMediationAvailable) PublicKeyCredential.isConditionalMediationAvailable().then((yes) => { if (yes && !S.email) passkeyLogin(true).catch(() => {}); }).catch(() => {});
+}
+async function passkeyLogin(conditional = false) {
+  const o = await idApi('passkey/login/options');
+  if (!o.ok) { if (!conditional) toast(o.reason || 'Passkeys aren\'t on here.'); return; }
+  let cred;
+  try { cred = await navigator.credentials.get({ publicKey: { challenge: b64u.dec(o.challenge), rpId: o.rpId, userVerification: o.userVerification, timeout: o.timeout, allowCredentials: [] }, ...(conditional ? { mediation: 'conditional' } : {}) }); }
+  catch (e) { if (!conditional) toast('No passkey used.'); return; }
+  const r = await idApi('passkey/login', { challenge: o.challenge, id: cred.id, response: { clientDataJSON: b64u.enc(cred.response.clientDataJSON), authenticatorData: b64u.enc(cred.response.authenticatorData), signature: b64u.enc(cred.response.signature) } });
+  if (!r.linked) return toast(r.reason || 'Passkey refused.');
+  S.email = r.email; save(); toast('Linked with your passkey');
+  const me = await api('me'); if (me.linked) onLinked(me);
+}
+$('pk-login').onclick = () => passkeyLogin(false);
+$('pk-login2').onclick = () => passkeyLogin(false);
+$('pk-register').onclick = async () => {
+  const o = await idApi('passkey/register/options');
+  if (!o.ok) return toast(o.reason || 'Couldn\'t start.');
+  let cred;
+  try {
+    cred = await navigator.credentials.create({ publicKey: { challenge: b64u.dec(o.challenge), rp: o.rp, user: { id: new TextEncoder().encode(o.user.id), name: o.user.name, displayName: o.user.displayName }, pubKeyCredParams: o.pubKeyCredParams, authenticatorSelection: o.authenticatorSelection, attestation: 'none', timeout: o.timeout, excludeCredentials: (o.excludeCredentials || []).map((c) => ({ type: 'public-key', id: b64u.dec(c.id) })) } });
+  } catch (e) { return toast('No passkey was made.'); }
+  const r = await idApi('passkey/register', { challenge: o.challenge, id: cred.id, label: navigator.platform || 'passkey', response: { clientDataJSON: b64u.enc(cred.response.clientDataJSON), attestationObject: b64u.enc(cred.response.attestationObject) } });
+  toast(r.ok ? 'Passkey saved. Use it on your next device.' : (r.reason || 'Passkey refused.'));
+};
+$('totplink').onclick = async () => {
+  const r = await idApi('totp/link', { email: S.email || $('email').value.trim(), code: $('totpcode').value });
+  if (!r.linked) return toast(r.reason || 'That code didn\'t match.');
+  toast('Linked'); const me = await api('me'); if (me.linked) onLinked(me);
+};
+$('totp-setup').onclick = async () => {
+  const r = await idApi('totp/setup');
+  if (!r.ok) return toast(r.reason || 'Couldn\'t start.');
+  $('totpbox').hidden = false;
+  try { window.drawQr($('totpqr'), r.uri, { scale: 4 }); } catch (e) { $('totpqr').hidden = true; }
+  $('totpsecret').textContent = 'Or type the key: ' + r.secret;
+};
+$('totpok').onclick = async () => {
+  const r = await idApi('totp/confirm', { code: $('totpconfirm').value });
+  if (!r.ok) return toast(r.reason || 'That code didn\'t match.');
+  $('totpbox').hidden = true; $('totp-setup').textContent = 'Authenticator app is set up'; toast('Done. Six digits link your next device.');
+};
 
 // ---------- sign in with … (only when the deployment has a client id) ----------
 function renderSignIn() {
@@ -311,7 +379,7 @@ function renderSignIn() {
   for (const id of ['signin-join', 'signin-pending', 'signin-settings']) {
     const box = $(id); box.innerHTML = '';
     if (!list.length) continue;
-    box.innerHTML = '<p class="muted small center" style="margin:6px 0 2px">' + (id === 'signin-settings' ? 'Link another device by signing in there with:' : 'Already logging on another device? Sign in to link this one:') + '</p>';
+    box.innerHTML = '<p class="muted small center" style="margin:6px 0 2px">' + (id === 'signin-settings' ? 'Link another device by signing in there with:' : 'Prove the email instead:') + '</p>';
     for (const s of list) { const b = document.createElement('button'); b.textContent = { google: 'Sign in with Google', microsoft: 'Sign in with Microsoft', apple: 'Sign in with Apple' }[s.provider]; b.onclick = () => signIn(s); box.appendChild(b); }
   }
 }
@@ -324,12 +392,12 @@ async function signIn(s) {
       idToken = await new Promise((res, rej) => { google.accounts.id.initialize({ client_id: s.clientId, callback: (r) => res(r.credential), ux_mode: 'popup' }); google.accounts.id.prompt((n) => { if (n.isNotDisplayed && n.isNotDisplayed() || n.isSkippedMoment && n.isSkippedMoment()) { /* fall back to a rendered button */ sheet('<h2 style="margin-top:0">Sign in with Google</h2><div id="gbtn"></div>'); google.accounts.id.renderButton($('gbtn'), { theme: 'outline', size: 'large', width: 300 }); } }); });
     } else if (s.provider === 'microsoft') {
       await loadScript('https://alcdn.msauth.net/browser/2.38.1/js/msal-browser.min.js');
-      const app = new msal.PublicClientApplication({ auth: { clientId: s.clientId, authority: 'https://login.microsoftonline.com/common', redirectUri: location.origin + '/food/' } });
+      const app = new msal.PublicClientApplication({ auth: { clientId: s.clientId, authority: 'https://login.microsoftonline.com/common', redirectUri: location.origin + PAGE + '/' } });
       const r = await app.loginPopup({ scopes: ['openid', 'email', 'profile'] });
       idToken = r.idToken;
     } else if (s.provider === 'apple') {
       await loadScript('https://appleid.cdn-apple.com/appleauth/static/jssdk/v1/appleid.auth.js');
-      AppleID.auth.init({ clientId: s.clientId, scope: 'email', redirectURI: location.origin + '/food/', usePopup: true });
+      AppleID.auth.init({ clientId: s.clientId, scope: 'email', redirectURI: location.origin + PAGE + '/', usePopup: true });
       const r = await AppleID.auth.signIn();
       idToken = r.authorization.id_token;
     }

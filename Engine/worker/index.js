@@ -1,5 +1,7 @@
 import { CONFIG } from "../../YourBots/config.js";
-import { PROJECTS, getProject as folderProject, listProjects as folderList } from "../../YourBots/index.js";
+import { normaliseProject, normaliseWebsite, savedProjects, saveProject, deleteSavedProject, inFolder, resolveProject, resolveList, pickPublic, hrefFor, exportFiles, KINDS, KIND_LABELS, cleanKind } from "./projects.js";
+import { getSettings, saveSettings, settingsFileContent, cleanBadge, SETTINGS_FILE_VIEW as SETTINGS_FILE } from "./settings.js";
+import { handleIdentity, signInMethods, adminNeedsCode, adminCodeOk } from "../identity/index.js";
 import { buildSystemPrompt, PROMPT_FILES, ROOT_PROMPT_FILES } from "./prompt.js";
 import { complete, gatewayStatus } from "./gateway.js";
 import { classifyTurn, recordRoute, routingStats } from "./router.js";
@@ -14,7 +16,6 @@ import { normaliseBooking, bookingLive, bookingStep, bookingView } from "./booki
 import { handleTrack } from "./track.js";
 import { isHandoffId, createHandoff, readHandoff, addHandoffMessage, closeHandoff, listHandoffs, getHandoff, notifyHumanRequested, PERSON_LIMITS } from "./person.js";
 import { gate as accessGate, effectiveAccess, accessSettings, accessToken, safeEqual, tokenFor, accessView, cleanMode, cleanKeyName, cleanEmail, ACCESS_MODES, MODE_LINES } from "./access.js";
-import SETTINGS_FILE from "../../YourBots/settings.json";
 
 // ============================================================================
 //  THE WORKER. Four routes and a static folder.
@@ -28,6 +29,9 @@ import SETTINGS_FILE from "../../YourBots/settings.json";
 //    *                  → public/ (the chat page, the widget)
 //  Who can use each of those: Engine/worker/access.js (per-bot access, default + floor).
 //    POST /api/unlock { passphrase, project } → { token } for that bot's key
+//  Apps (bots of kind "food" — Engine/worker/projects.js): /apps/<id> · /api/apps/<id>/… ·
+//    /api/admin/apps/<id>/… (Engine/worker/track.js). /food and /api/food/… still reach
+//    the bot "plate" for one release. Identity for every kind: /api/id/* (Engine/identity/).
 //  Admin (x-admin-token): /api/admin/engine, /audit, /projects, /project,
 //    GET/PUT /api/admin/settings (default + floor) · POST /api/admin/settings/sync (→ YourBots/settings.json)
 //    GET /api/admin/events?limit=100   every admin write, newest first (ip hashed, never stored)
@@ -69,7 +73,7 @@ export default {
     //     Engine/worker/access.js is the one gate every visitor route goes through.
     //     `settings` = the default and the floor (config.js < settings.json < the
     //     Settings screen). `guard(project)` = is THIS request allowed in?
-    const settings = await loadSettings(env);
+    const settings = await getSettings(env);
     const guard = (project, opts = {}) => accessGate(request, env, project, settings, { isAdmin, ...opts });
 
     if (url.pathname === "/api/admin/unlock") {
@@ -78,11 +82,32 @@ export default {
       if (!(await allowed(env, request)) || !(await unlockAllowed(env, request))) return json({ error: "too many attempts" }, 429);
       const { body: b, error } = await readJson(request, { max: 8 * 1024, strict: false }); if (error) return error;
       const given = await accessToken(String(b.passphrase || ""), adminLabel(env));
-      return safeEqual(given, adminToken) ? json({ token: adminToken }) : json({ error: "wrong admin code" }, 401);
+      if (!safeEqual(given, adminToken)) return json({ error: "wrong admin code", needsCode: adminNeedsCode(env) }, 401);
+      // The optional second factor: ADMIN_TOTP_SECRET set → the six digits from the owner's authenticator app, too.
+      if (adminNeedsCode(env) && !(await adminCodeOk(env, b.code))) return json({ error: b.code ? "wrong code" : "code required", needsCode: true, reply: "This deployment asks for the authenticator code as well (docs/IDENTITY.md)." }, 401);
+      return json({ token: adminToken });
     }
+    if (url.pathname === "/api/admin/unlock/needs") return json({ needsCode: adminNeedsCode(env), adminEnabled });
 
-    // The food log (Engine/worker/food.js): /food, /api/food/*, /api/admin/food/*. Off = 404.
-    if (url.pathname === "/food" || url.pathname.startsWith("/food/") || url.pathname.startsWith("/api/food/") || url.pathname.startsWith("/api/admin/food/")) return handleTrack(request, env, url, { isAdmin, adminEnabled, allowed });
+    // --- APPS: a bot of kind "food" answers at /apps/<id> (Engine/worker/track.js). A bot that
+    //     isn't that kind, or doesn't exist, is a 404. /food, /api/food/*, /api/admin/food/* are
+    //     aliases for the bot "plate" for one release (docs/FOOD-LOG.md).
+    const app = url.pathname.match(/^\/(apps|api\/apps|api\/admin\/apps)\/([a-z0-9-]{1,40})(?=\/|$)/) || (/^\/(food|api\/food|api\/admin\/food)(?=\/|$)/.test(url.pathname) ? { alias: true } : null);
+    if (app) {
+      const id = app.alias ? "plate" : app[2];
+      const bot = await resolveProject(env, id);
+      if (bot.id !== id || bot.kind === "chat") return url.pathname.startsWith("/api/") ? json({ error: "not found" }, 404) : new Response("Not found", { status: 404 });
+      const paths = app.alias ? { page: "/food", api: "/api/food/", admin: "/api/admin/food/" } : { page: `/apps/${id}`, api: `/api/apps/${id}/`, admin: `/api/admin/apps/${id}/` };
+      if (bot.kind === "food") return handleTrack(request, env, url, { bot, ...paths, isAdmin, adminEnabled, allowed });
+      return json({ error: "not found" }, 404);
+    }
+    // --- IDENTITY, shared by every kind: passkeys and authenticator codes (Engine/identity/index.js).
+    if (url.pathname.startsWith("/api/id/")) {
+      const bid = String(url.searchParams.get("bot") || (request.method === "POST" ? (await request.clone().json().catch(() => ({})))?.bot : "") || "").toLowerCase();
+      const bot = await resolveProject(env, bid);
+      if (!bid || bot.id !== bid) return json({ error: "which bot? send { bot }" }, 400);
+      return handleIdentity(request, env, url, { bot, allowed, unlockAllowed });
+    }
 
     if (url.pathname.startsWith("/api/admin/") || url.pathname.startsWith("/engine/")) {
       if (!isAdmin) return json({ error: "admin only" }, adminEnabled ? 401 : 404);
@@ -92,10 +117,10 @@ export default {
       if (url.pathname === "/api/admin/leads" || url.pathname.startsWith("/api/admin/leads/")) return handleLeads(request, env, url);
       if (url.pathname === "/api/admin/gaps" || url.pathname.startsWith("/api/admin/gaps/")) return handleGaps(request, env, url);
       if (url.pathname === "/api/admin/handoffs" || url.pathname.startsWith("/api/admin/handoff/")) return handlePersonAdmin(request, env, url);
-      if (url.pathname === "/api/admin/projects") return json({ projects: await resolveList(env), jobs: Object.values(MODES).map((m) => ({ id: m.id, blurb: m.blurb, role: m.role, shape: m.shape, done: m.done })), model: CONFIG.model, canSave: Boolean(env.DB), rootPrompt: ROOT_PROMPT_FILES, github: { repo: CONFIG.github?.repo || "", branch: CONFIG.github?.branch || "main", ready: Boolean(CONFIG.github?.repo && env.GITHUB_TOKEN) }, library: libraryMeta(env, CONFIG), access: { default: settings.default, floor: settings.floor, modes: ACCESS_MODES.map((id) => ({ id, line: MODE_LINES[id] })), sharedKey: Boolean(env.ACCESS_PASSPHRASE) } });
+      if (url.pathname === "/api/admin/projects") return json({ projects: (await resolveList(env)).map((p) => ({ ...p, href: hrefFor(p) })), kinds: Object.keys(KINDS).map((id) => ({ id, label: KIND_LABELS[id] })), adminNeedsCode: adminNeedsCode(env), jobs: Object.values(MODES).map((m) => ({ id: m.id, blurb: m.blurb, role: m.role, shape: m.shape, done: m.done })), model: CONFIG.model, canSave: Boolean(env.DB), rootPrompt: ROOT_PROMPT_FILES, github: { repo: CONFIG.github?.repo || "", branch: CONFIG.github?.branch || "main", ready: Boolean(CONFIG.github?.repo && env.GITHUB_TOKEN) }, library: libraryMeta(env, CONFIG), access: { default: settings.default, floor: settings.floor, modes: ACCESS_MODES.map((id) => ({ id, line: MODE_LINES[id] })), sharedKey: Boolean(env.ACCESS_PASSPHRASE) } });
       if (url.pathname === "/api/admin/project") {
         const id = String(url.searchParams.get("id") || "").toLowerCase();
-        if (request.method === "GET") { const p = await resolveProject(env, id); return json({ project: { ...p, id: p.id || id }, source: (await savedProjects(env))[id] ? "saved" : (PROJECTS[id] ? "folder" : "new"), access: effectiveAccess(p, settings) }); }
+        if (request.method === "GET") { const p = await resolveProject(env, id); return json({ project: { ...p, id: p.id || id }, source: (await savedProjects(env))[id] ? "saved" : (inFolder(id) ? "folder" : "new"), access: effectiveAccess(p, settings), signIn: signInMethods(p, env), href: hrefFor({ ...p, id: p.id || id }) }); }
         if (!env.DB) return json({ error: "Saving needs the D1 database (wrangler.jsonc → d1_databases). Export the files instead." }, 400);
         if (request.method === "PUT") {
           const { body: b, error } = await readJson(request); if (error) return error;
@@ -103,10 +128,10 @@ export default {
           if (!pid) return json({ error: "give the bot a name" }, 400);
           const before = (await savedProjects(env))[pid];
           const p = await saveProject(env, pid, b);
-          await logAdminEvent(env, request, "project-save", pid, `${before ? "updated" : "created"} the saved copy · access ${p.access || "(default)"} · ${p.listed ? "listed" : "unlisted"} · ${Object.keys(p.files).length} files`);
+          await logAdminEvent(env, request, "project-save", pid, `${before ? "updated" : "created"} the saved copy · ${p.kind} · access ${p.access || "(default)"} · ${p.listed ? "listed" : "unlisted"}${p.kind === "chat" ? ` · ${Object.keys(p.files).length} files` : ""}`);
           return json({ ok: true, id: pid, project: p, access: effectiveAccess(p, settings) });
         }
-        if (request.method === "DELETE") { await ensureSchema(env); await env.DB.prepare(`DELETE FROM projects WHERE id = ?`).bind(id).run(); SAVED_CACHE.at = 0; await logAdminEvent(env, request, "project-delete", id, PROJECTS[id] ? "removed the saved copy; the folder is live again" : "removed the saved copy"); return json({ ok: true, fallsBackToFolder: Boolean(PROJECTS[id]) }); }
+        if (request.method === "DELETE") { await deleteSavedProject(env, id); await logAdminEvent(env, request, "project-delete", id, inFolder(id) ? "removed the saved copy; the folder is live again" : "removed the saved copy"); return json({ ok: true, fallsBackToFolder: inFolder(id) }); }
         return json({ error: "method" }, 405);
       }
       if (url.pathname === "/api/admin/project/sync") {
@@ -126,9 +151,10 @@ export default {
         const a = b?.access || {};
         const next = { default: cleanMode(a.default), floor: cleanMode(a.floor) };
         if (!next.default || !next.floor) return json({ error: `default and floor must each be one of: ${ACCESS_MODES.join(", ")}` }, 400);
-        await saveSettings(env, next);
-        await logAdminEvent(env, request, "settings-save", "access", `default ${settings.default} → ${next.default} · floor ${settings.floor} → ${next.floor}`);
-        return json(await settingsView(env, await loadSettings(env)));
+        const badge = cleanBadge(b?.createYourOwn);
+        await saveSettings(env, { access: next, createYourOwn: badge });
+        await logAdminEvent(env, request, "settings-save", "access", `default ${settings.default} → ${next.default} · floor ${settings.floor} → ${next.floor}${badge ? ` · badge ${badge.show ? `"${badge.text}"` : "hidden"}` : ""}`);
+        return json(await settingsView(env, await getSettings(env)));
       }
       if (url.pathname === "/api/admin/settings/sync") {
         if (request.method !== "POST") return json({ error: "POST only" }, 405);
@@ -175,14 +201,14 @@ export default {
       const view = accessView(current, settings);
       const g = await guard(current);                                        // key / admin / draft — the email step is the chat's
       if (!g.ok) return json({ locked: true, project: curId, projectName: current.name, access: view, reason: g.error, reply: g.reply, adminEnabled, siteName: CONFIG.siteName, accent: CONFIG.accent });
-      const all = (await resolveList(env)).map((p) => { const a = effectiveAccess(p, settings); return { ...p, access: a.mode, listed: a.listed }; });
+      const all = (await resolveList(env)).map((p) => { const a = effectiveAccess(p, settings); return { ...p, kind: cleanKind(p.kind), href: hrefFor(p), access: a.mode, listed: a.listed }; });
       // Visitors see listed bots that aren't drafts. The admin sees everything, with a badge.
       // "listed" is visibility, not security: an unlisted bot still checks its own door.
       let projects = (CONFIG.singleProject ? all.filter((p) => p.id === CONFIG.defaultProject) : all).filter((p) => isAdmin || (p.listed && p.access !== "draft"));
-      if (!projects.some((p) => p.id === curId)) projects.push({ ...pickPublic({ ...current, thinkingWords: current.thinkingWords || [] }), id: curId, access: view.mode, listed: view.listed, source: "direct link" });
+      if (!projects.some((p) => p.id === curId)) projects.push({ ...pickPublic({ ...current, thinkingWords: current.thinkingWords || [] }), id: curId, href: hrefFor({ ...current, id: curId }), access: view.mode, listed: view.listed, source: "direct link" });
       // handoffText rides along so the page can offer "Talk to a person" under a
       // reply that contains it. It is said to visitors word for word anyway.
-      for (const p of projects) p.handoffText = (await resolveProject(env, p.id)).handoffText || "";
+      for (const p of projects) p.handoffText = p.kind === "chat" ? (await resolveProject(env, p.id)).handoffText || "" : "";
       return json({
         version: await versionStamp(env),
         locked: view.key,                                                    // this bot needs a key (and the caller has one)
@@ -192,7 +218,7 @@ export default {
         adminEnabled,
         owner: CONFIG.owner,
         siteName: CONFIG.siteName,
-        createYourOwn: CONFIG.createYourOwn?.show === false ? null : { text: String(CONFIG.createYourOwn?.text || "Create your own bot"), url: String(CONFIG.createYourOwn?.url || "") },
+        createYourOwn: settings.createYourOwn.show ? { text: settings.createYourOwn.text, url: settings.createYourOwn.url } : null,
         accent: CONFIG.accent,
         thinkingWords: Array.isArray(CONFIG.thinkingWords) ? CONFIG.thinkingWords : ["Thinking"],
         model: CONFIG.model,
@@ -302,6 +328,8 @@ async function handleChat(request, env, ctx, { isAdmin = false, guard } = {}) {
     ? normaliseProject(body.draft, String(body.draft.id || "draft"))
     : await resolveProject(env, String(body.project || ""));
 
+  // An app-shaped bot (kind "food") has no chat: its page is /apps/<id>.
+  if (project.kind && project.kind !== "chat") return json({ error: "not a chat bot", reply: `${project.name} is an app, not a chat bot. Open /apps/${project.id}.`, href: `/apps/${project.id}` }, 404);
   // --- THE GATE. This bot's door: key, email, admin code, or draft. Engine/worker/access.js.
   const g = await guard(project, { draftPreview, email: String(body.visitor?.email || "") });
   if (!g.ok) return json({ error: g.error, reply: g.reply, access: g.mode }, g.status);
@@ -722,7 +750,7 @@ async function handleLeads(request, env, url) {
   try {
     if (parts.length === 3 && request.method === "GET") {
       const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "100", 10) || 100, 1), 500);
-      const access = await loadSettings(env);
+      const access = await getSettings(env);
       return json({ ...(await listLeads(env, { projectName: project ? project.name : "*", limit })), settings: { ...settings, webhook: settings.webhook ? "set" : "" }, emailMode: /email/.test(project ? effectiveAccess(project, access).mode : access.default), note: "The summary reads the redacted log (emails, phones and dates inside messages are already replaced). Names are not redacted. The visitor column is the email they typed; nobody verified it." });
     }
     const visitor = cleanVisitor(decodeURIComponent(parts[3] || ""));
@@ -763,9 +791,9 @@ async function handleGaps(request, env, url) {
     if (parts.length === 3) {
       if (request.method !== "GET") return json({ error: "method" }, 405);
       if (!bot) return json({ error: "which bot? add ?project=<id>" }, 400);
-      if (!PROJECTS[bot] && !(await savedProjects(env))[bot]) return json({ error: "unknown bot" }, 404);
+      if (!inFolder(bot) && !(await savedProjects(env))[bot]) return json({ error: "unknown bot" }, 404);
       const project = await resolveProject(env, bot);
-      return json({ ...(await listGaps(env, { bot, projectName: project.name, days: url.searchParams.get("days"), limit: url.searchParams.get("limit") })), bot, files: Object.keys(project.files || {}), source: (await savedProjects(env))[bot] ? "saved" : (PROJECTS[bot] ? "folder" : "new"), note: "Questions the bot refused (the firewall's catches are left out). Draft writes from the bot's own files only; blanks mean the files don't say. Add puts the entry on the saved copy — live at once. Commit to GitHub to make the folder the source." });
+      return json({ ...(await listGaps(env, { bot, projectName: project.name, days: url.searchParams.get("days"), limit: url.searchParams.get("limit") })), bot, files: Object.keys(project.files || {}), source: (await savedProjects(env))[bot] ? "saved" : (inFolder(bot) ? "folder" : "new"), note: "Questions the bot refused (the firewall's catches are left out). Draft writes from the bot's own files only; blanks mean the files don't say. Add puts the entry on the saved copy — live at once. Commit to GitHub to make the folder the source." });
     }
     if (request.method !== "POST") return json({ error: "POST only" }, 405);
     const gap = await getGap(env, parts[3]);
@@ -940,69 +968,7 @@ async function logTurn(env, project, question, answer, flags, who = "") {
   }
 }
 
-// --- Saved projects: the Configure screen writes to D1; a saved bot with the same
-//     id overrides the folder version. Folders remain what you commit to GitHub.
-const OVERRIDABLE = ["1-identity.md", "2-capabilities.md", "3-personality.md", "4-formatting.md", "5-owner-instructions-intro.md", "6-files-strict.md", "6-files-open.md", "7-answering-strict.md", "7-answering-open.md", "8-links.md", "9-boundaries.md"];
-let SAVED_CACHE = { at: 0, map: {} };
-async function savedProjects(env) {
-  if (!env.DB) return {};
-  if (Date.now() - SAVED_CACHE.at < 15000) return SAVED_CACHE.map;
-  try {
-    await ensureSchema(env);
-    const rows = (await env.DB.prepare(`SELECT id, json FROM projects`).all()).results || [];
-    const map = {};
-    for (const r of rows) { try { map[r.id] = normaliseProject(JSON.parse(r.json), r.id); } catch {} }
-    SAVED_CACHE = { at: Date.now(), map };
-  } catch (err) { console.error("saved projects read failed", err); }
-  return SAVED_CACHE.map;
-}
-// Write a bot to D1 (Configure → Save, and Gaps → Add). From now on this copy
-// overrides the folder version until it is deleted or committed to GitHub.
-async function saveProject(env, pid, raw) {
-  const p = normaliseProject(raw, pid);
-  await ensureSchema(env);
-  await env.DB.prepare(`INSERT INTO projects (id, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at`).bind(pid, JSON.stringify(p), new Date().toISOString()).run();
-  SAVED_CACHE.at = 0;
-  return p;
-}
-function normaliseProject(p, id) {
-  const clean = (t) => String(t || "").replace(/<!--[\s\S]*?-->/g, "").trim();
-  return {
-    id, order: Number(p.order ?? 100),
-    name: String(p.name || id).slice(0, 80), tagline: String(p.tagline || "").slice(0, 200), greeting: String(p.greeting || "").slice(0, 400),
-    starters: (Array.isArray(p.starters) ? p.starters : []).map((x) => String(x).slice(0, 120)).filter(Boolean).slice(0, 4),
-    mode: MODES[p.mode] ? p.mode : "answer", grounding: p.grounding === "open" ? "open" : "strict",
-    handoffText: String(p.handoffText || "").slice(0, 300), handoffContact: String(p.handoffContact || "").slice(0, 300),
-    handoffActions: normaliseHandoffActions(p.handoffActions),   // { webhook, email, on } — Engine/worker/handoff.js
-    allowedLinks: (Array.isArray(p.allowedLinks) ? p.allowedLinks : []).map((x) => String(x).trim()).filter((x) => /^https?:\/\//.test(x)).slice(0, 40),
-    thinkingWords: (Array.isArray(p.thinkingWords) ? p.thinkingWords : []).map((x) => String(x).slice(0, 60)).filter(Boolean).slice(0, 40),
-    intakeQuestions: (Array.isArray(p.intakeQuestions) ? p.intakeQuestions : []).map((x) => String(x).slice(0, 200)).slice(0, 10),
-    bookingUrl: String(p.bookingUrl || ""), bookingFitRules: String(p.bookingFitRules || "").slice(0, 2000),
-    booking: normaliseBooking(p.booking),                       // { provider, eventTypeId, timezone, durationNote } — Engine/worker/booking.js
-    nextSteps: (Array.isArray(p.nextSteps) ? p.nextSteps : []).slice(0, 10),
-    // the bot's website (optional): one URL, and glob patterns for which pages to keep / skip
-    website: normaliseWebsite(p.website),
-    // who can use THIS bot (Engine/worker/access.js): "" = the deployment default; listed = in the sidebar;
-    // accessKey = the NAME of a per-bot secret (ACCESS_PASSPHRASE_…), never a passphrase itself
-    access: cleanMode(p.access), listed: p.listed !== false, accessKey: cleanKeyName(p.accessKey),
-    instructions: clean(p.instructions).slice(0, 20000),
-    files: Object.fromEntries(Object.entries(p.files || {}).filter(([n]) => /^[\w. -]{1,80}\.(md|txt|csv)$/i.test(n)).map(([n, t]) => [n, clean(t).slice(0, 200000)]).slice(0, 40)),
-    // this bot's own copies of root prompt/ files (same names) — the folder-wins rule, from the form
-    prompt: Object.fromEntries(Object.entries(p.prompt || {}).filter(([n]) => OVERRIDABLE.includes(n) || /^jobs\/[a-z-]+\.md$/.test(n)).map(([n, t]) => [n, clean(t).slice(0, 20000)]).filter(([, t]) => t.length > 0)),
-  };
-}
-function normaliseWebsite(w) {
-  const globs = (v) => (Array.isArray(v) ? v : String(v || "").split(/[\n,]/)).map((x) => String(x).trim().slice(0, 200)).filter(Boolean).slice(0, 10);
-  const url = String(w?.url || "").trim().slice(0, 500);
-  const sitemap = String(w?.sitemap || "").trim().slice(0, 500);
-  return { url: /^https?:\/\/\S+$/i.test(url) ? url : "", include: globs(w?.include), exclude: globs(w?.exclude), ...(sitemap ? { sitemap } : {}) };
-}
-async function resolveProject(env, id) {
-  const saved = await savedProjects(env);
-  if (id && saved[id]) return saved[id];
-  if (id && PROJECTS[id]) return { id, ...folderProject(id, CONFIG.defaultProject) };
-  return saved[CONFIG.defaultProject] || { id: CONFIG.defaultProject, ...folderProject(CONFIG.defaultProject, CONFIG.defaultProject) };
-}
+// --- Saved projects, normalising, resolving: Engine/worker/projects.js (one loader for every kind).
 
 // --- The library: this bot's documents in AI Search. Admin only; every upload
 //     is scanned first (Engine/worker/library.js). ---------------------------------
@@ -1110,16 +1076,7 @@ async function libraryAudit(env, project, limitRaw) {
   return { enabled: true, rows };
 }
 
-async function resolveList(env) {
-  const saved = await savedProjects(env);
-  const folder = folderList().map((p) => ({ ...p, source: saved[p.id] ? "saved (overrides folder)" : "folder" }));
-  const extra = Object.values(saved).filter((p) => !PROJECTS[p.id]).map((p) => ({ id: p.id, ...pickPublic(p), source: "saved" }));
-  const merged = [...folder.map((p) => saved[p.id] ? { ...p, ...pickPublic(saved[p.id]), source: p.source } : p), ...extra];
-  return merged.sort((a, b) => (a.order ?? 100) - (b.order ?? 100) || String(a.name).localeCompare(String(b.name)));
-}
-// What a bot shows to the page. `access` here is what the bot SAYS ("" = default); the
-// effective mode is worked out per request. Never the secret's name.
-function pickPublic(p) { return { name: p.name, tagline: p.tagline, greeting: p.greeting, starters: p.starters, mode: p.mode, grounding: p.grounding, thinkingWords: (p.thinkingWords || []).length ? p.thinkingWords : undefined, order: p.order, access: cleanMode(p.access), listed: p.listed !== false }; }
+// resolveList / pickPublic: Engine/worker/projects.js.
 
 // The audit table creates itself the first time it's needed (no schema step for
 // attendees). Engine/schema.sql is the same DDL, kept for reading; this is the source.
@@ -1155,42 +1112,23 @@ async function ensureSchema(env) {
   SCHEMA_OK = true;
 }
 
-// --- Settings: the deployment's default and floor. -----------------------------
-//     YourBots/config.js → access  <  YourBots/settings.json  <  the D1 row "access"
-//     (the Settings screen's Save). The row is cached for 10 s per isolate, so a
-//     floor change lands within seconds everywhere. If the database can't be read,
-//     the last row seen is kept — stale beats open — and failing that the file.
-let SETTINGS_CACHE = { at: 0, row: null };
-async function loadSettings(env) {
-  let row = SETTINGS_CACHE.row;
-  if (env.DB && Date.now() - SETTINGS_CACHE.at >= 10000) {
-    try {
-      await ensureSchema(env);
-      const r = await env.DB.prepare(`SELECT json FROM settings WHERE key = 'access'`).first();
-      row = r ? { access: JSON.parse(r.json) } : null;
-      SETTINGS_CACHE = { at: Date.now(), row };
-    } catch (err) { console.error("settings read failed (keeping the last known)", err?.message || err); }
-  }
-  return accessSettings(CONFIG, SETTINGS_FILE, row);
-}
-async function saveSettings(env, access) {
-  await ensureSchema(env);
-  await env.DB.prepare(`INSERT INTO settings (key, json, updated_at, updated_by) VALUES ('access', ?, ?, 'admin') ON CONFLICT(key) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at, updated_by = excluded.updated_by`)
-    .bind(JSON.stringify({ default: access.default, floor: access.floor }), new Date().toISOString()).run();
-  SETTINGS_CACHE = { at: 0, row: null };
-}
+// --- Settings: Engine/worker/settings.js (config.js < settings.json < D1). ------------------
 // Under the hood → Settings: what applies, where it came from, and every bot's effective mode (and why).
 async function settingsView(env, settings) {
   const bots = [];
   for (const p of await resolveList(env)) {
     const full = await resolveProject(env, p.id);
     const a = effectiveAccess(full, settings);
-    bots.push({ id: p.id, name: p.name, access: a.botMode, effective: a.mode, reason: a.reason, listed: a.listed, source: p.source, ownKey: a.keyName ? (env[a.keyName] ? `${a.keyName} (set)` : `${a.keyName} (NOT set — the shared key is used)`) : "" });
+    const m = signInMethods(full, env);
+    const signIn = full.kind === "chat" ? (a.wantEmail ? "email typed at the door (not verified)" : "") : ["email + device key", m.passkeys ? "passkeys" : "", ...m.providers.map((x) => `sign in with ${x.provider}`), m.totp ? "authenticator code" : "", "owner links a device"].filter(Boolean).join(" · ");
+    bots.push({ id: p.id, kind: cleanKind(full.kind), href: hrefFor(full), name: p.name, access: a.botMode, effective: a.mode, reason: a.reason, listed: a.listed, source: p.source, ownKey: a.keyName ? (env[a.keyName] ? `${a.keyName} (set)` : `${a.keyName} (NOT set — the shared key is used)`) : "", signIn });
   }
   return {
     access: { default: settings.default, floor: settings.floor },
+    createYourOwn: settings.createYourOwn,
     source: settings.source,
     file: SETTINGS_FILE?.access || {},
+    adminTotp: adminNeedsCode(env),
     modes: ACCESS_MODES.map((id) => ({ id, line: MODE_LINES[id] })),
     order: ACCESS_MODES.join(" < "),
     sharedKey: Boolean(env.ACCESS_PASSPHRASE),
@@ -1207,7 +1145,7 @@ async function syncSettingsToGitHub(env, settings) {
   if (!repo) return { error: "YourBots/config.js → github.repo is empty" };
   if (!env.GITHUB_TOKEN) return { error: "GITHUB_TOKEN secret is not set (fine-grained token, Contents: read & write, only this repo)" };
   const path = "YourBots/settings.json";
-  const content = JSON.stringify({ access: { default: settings.default, floor: settings.floor } }, null, 2) + "\n";
+  const content = settingsFileContent(settings);
   const gh = async (p, init = {}) => {
     const r = await fetch(`https://api.github.com/repos/${repo}/${p}`, { ...init, headers: { authorization: `Bearer ${env.GITHUB_TOKEN}`, accept: "application/vnd.github+json", "user-agent": "bot-you-own", "content-type": "application/json", ...(init.headers || {}) } });
     return { ok: r.ok, status: r.status, body: await r.json().catch(() => ({})) };
@@ -1269,19 +1207,13 @@ async function auditView(env, q) {
 // --- Commit a bot's folder to GitHub (Contents API). One commit per file; files
 //     that no longer exist in the bot are deleted from the folder. Needs the
 //     GITHUB_TOKEN secret (fine-grained, Contents read/write, this repo only).
-function exportFiles(p, id) {
-  const { instructions, files, prompt, id: _i, ...meta } = p;
-  const out = { [`YourBots/${id}/project.json`]: JSON.stringify(meta, null, 2) + "\n", [`YourBots/${id}/instructions.md`]: (instructions || "") + "\n" };
-  for (const [n, t] of Object.entries(files || {})) out[`YourBots/${id}/knowledge/${n}`] = t + "\n";
-  for (const [n, t] of Object.entries(prompt || {})) out[`YourBots/${id}/prompt/${n}`] = t + "\n";
-  return out;
-}
+// exportFiles: Engine/worker/projects.js (project.json for every kind; the chat files for chat bots).
 async function syncToGitHub(env, id) {
   const repo = CONFIG.github?.repo, branch = CONFIG.github?.branch || "main";
   if (!repo) return { error: "YourBots/config.js → github.repo is empty" };
   if (!env.GITHUB_TOKEN) return { error: "GITHUB_TOKEN secret is not set (fine-grained token, Contents: read & write, only this repo)" };
   const p = await resolveProject(env, id);
-  if (!p || (p.id && p.id !== id && !PROJECTS[id])) return { error: "unknown bot" };
+  if (!p || p.id !== id) return { error: "unknown bot" };
   const want = exportFiles(p, id);                    // text: project.json, instructions, knowledge/*.md|txt|csv, prompt/*
   const gh = async (path, init = {}) => {
     const r = await fetch(`https://api.github.com/repos/${repo}/${path}`, { ...init, headers: { authorization: `Bearer ${env.GITHUB_TOKEN}`, accept: "application/vnd.github+json", "user-agent": "bot-you-own", "content-type": "application/json", ...(init.headers || {}) } });
@@ -1304,7 +1236,7 @@ async function syncToGitHub(env, id) {
   const docs = {};                                    // path → { bytes }
   const docErrors = [];
   let approvedNames = [];
-  if (libraryMeta(env, CONFIG).enabled) {
+  if (p.kind === "chat" && libraryMeta(env, CONFIG).enabled) {
     try {
       for (const f of await listFiles(env, CONFIG, id)) {
         if (f.status === "error" || f.status === "skipped") { docErrors.push(`${f.name}: not committed (status ${f.status})`); continue; }
@@ -1394,7 +1326,7 @@ async function engineView(env, projectId) {
     firewall: {
       config: CONFIG.firewall,
       rateLimit: env.RATE_LIMITER ? "on (wrangler.jsonc → ratelimits)" : "off (no binding)",
-      door: (function (a) { return `${a.mode} — ${a.reason}${a.wantKey ? (a.keyName ? ` · own key ${a.keyName}${env[a.keyName] ? "" : " (NOT set; shared key used)"}` : env.ACCESS_PASSPHRASE ? " · shared key set" : " · NO shared key set: runs open") : ""}${a.listed ? "" : " · unlisted"}`; })(effectiveAccess(project, await loadSettings(env))),
+      door: (function (a) { return `${a.mode} — ${a.reason}${a.wantKey ? (a.keyName ? ` · own key ${a.keyName}${env[a.keyName] ? "" : " (NOT set; shared key used)"}` : env.ACCESS_PASSPHRASE ? " · shared key set" : " · NO shared key set: runs open") : ""}${a.listed ? "" : " · unlisted"}`; })(effectiveAccess(project, await getSettings(env))),
       injectionPatterns: INJECTION_PATTERNS.map(String),
       secretPatterns: SECRET_PATTERNS.map(String),
       llamaGuardModel: LLAMA_GUARD_MODEL,

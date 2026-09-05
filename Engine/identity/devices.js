@@ -1,0 +1,123 @@
+// ============================================================================
+//  IDENTITY — email + device key. The base every other method builds on.
+//
+//  In plain English:
+//   · A person types their email once. Their browser makes a random 32-byte
+//     DEVICE KEY, keeps it in localStorage, and sends it with every request in
+//     the x-device-key header. The server keeps only the SHA-256 of that key.
+//     That's the whole login: "remembered forever on this browser", no passwords.
+//   · The user id is SHA-256(email + FOODLOG_PEPPER + bot id). Same email, same
+//     id, on any device — but knowing an email does NOT open anything.
+//   · A SECOND browser typing the same email is NOT let in. It gets a
+//     6-character code and waits. It gets linked by: a passkey, a Google/
+//     Microsoft/Apple sign-in, the six digits from an authenticator app, or the
+//     owner (coach) typing the code in. Each of those is its own file here.
+//   · Every table carries a `bot` column, so two apps on one deployment keep
+//     their people apart: joining "plate" says nothing about "plate-two".
+//   · Identity fails CLOSED: a bad or missing device key is a 401, always.
+// ============================================================================
+
+export const DEV_PEPPER = "dev-pepper-change-me";     // used only when FOODLOG_PEPPER is unset; the log warns
+const DEVICE_KEY_RE = /^[0-9a-f]{64}$/;
+const EMAIL_SHAPE = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
+const PENDING_TTL_MS = 7 * 864e5;
+const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";   // no 0/O/1/I: survives being read out loud
+
+export const hex = (bytes) => [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
+export async function sha256hex(text) { return hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(text)))); }
+export const nowIso = () => new Date().toISOString();
+export function cleanEmail(e) { e = String(e || "").trim().toLowerCase().slice(0, 254); return EMAIL_SHAPE.test(e) ? e : ""; }
+export function randomCode(n = 6) { const b = crypto.getRandomValues(new Uint8Array(n)); return [...b].map((x) => CODE_ALPHABET[x % CODE_ALPHABET.length]).join(""); }
+export const pepperOf = (env) => env.FOODLOG_PEPPER || DEV_PEPPER;
+export async function userIdFor(email, env, bot) { return sha256hex(`${email}\n${pepperOf(env)}\n${bot}`); }
+
+// --- The tables. Created on first use, like the rest of the Worker (Engine/schema.sql lists them too).
+let SCHEMA_OK = false;
+export async function ensureIdentitySchema(env) {
+  if (SCHEMA_OK || !env.DB) return;
+  await env.DB.batch([
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS id_users (id TEXT PRIMARY KEY, bot TEXT NOT NULL, email TEXT NOT NULL, created_at TEXT NOT NULL, last_seen TEXT)`),
+    env.DB.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_id_users_bot_email ON id_users(bot, email)`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS id_devices (key_hash TEXT NOT NULL, bot TEXT NOT NULL, user_id TEXT NOT NULL, label TEXT, created_at TEXT NOT NULL, PRIMARY KEY (key_hash, bot))`),
+    env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_id_devices_user ON id_devices(user_id)`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS id_pending (code TEXT PRIMARY KEY, bot TEXT NOT NULL, key_hash TEXT NOT NULL, email TEXT NOT NULL, created_at TEXT NOT NULL)`),
+    // passkeys: one row per credential. public_key is a JWK; counter guards against a cloned authenticator.
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS id_passkeys (credential_id TEXT PRIMARY KEY, bot TEXT NOT NULL, user_id TEXT NOT NULL, public_key TEXT NOT NULL, alg TEXT NOT NULL, counter INTEGER DEFAULT 0, label TEXT, created_at TEXT NOT NULL, last_used TEXT)`),
+    env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_id_passkeys_user ON id_passkeys(user_id)`),
+    // challenges: what we asked the browser to sign, 5 minutes to answer, used once.
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS id_challenges (challenge TEXT PRIMARY KEY, bot TEXT NOT NULL, kind TEXT NOT NULL, user_id TEXT, key_hash TEXT, expires_at TEXT NOT NULL)`),
+    // authenticator app (TOTP): one secret per user; confirmed = they typed a right code once.
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS id_totp (user_id TEXT PRIMARY KEY, bot TEXT NOT NULL, secret TEXT NOT NULL, confirmed INTEGER DEFAULT 0, created_at TEXT NOT NULL)`),
+  ]);
+  SCHEMA_OK = true;
+}
+
+// The device key from the request → its hash, or null when it's missing or malformed.
+export async function deviceHash(request) {
+  const k = String(request.headers.get("x-device-key") || "");
+  return DEVICE_KEY_RE.test(k) ? sha256hex(k) : null;
+}
+
+export async function userForDevice(env, bot, keyHash) {
+  if (!keyHash) return null;
+  const r = await env.DB.prepare(`SELECT u.* FROM id_devices d JOIN id_users u ON u.id = d.user_id WHERE d.key_hash = ? AND d.bot = ?`).bind(keyHash, bot).first();
+  return r || null;
+}
+export async function userById(env, bot, id) { return (await env.DB.prepare(`SELECT * FROM id_users WHERE id = ? AND bot = ?`).bind(id, bot).first()) || null; }
+export async function userByEmail(env, bot, email) { return (await env.DB.prepare(`SELECT * FROM id_users WHERE bot = ? AND email = ?`).bind(bot, email).first()) || null; }
+export function touch(env, user) { env.DB.prepare(`UPDATE id_users SET last_seen = ? WHERE id = ?`).bind(nowIso(), user.id).run().catch(() => {}); }
+export async function deviceCount(env, userId) { return (await env.DB.prepare(`SELECT COUNT(*) n FROM id_devices WHERE user_id = ?`).bind(userId).first())?.n || 0; }
+export async function listDevices(env, userId) { return (await env.DB.prepare(`SELECT label, created_at FROM id_devices WHERE user_id = ? ORDER BY created_at`).bind(userId).all()).results || []; }
+
+// Make the user row if it's new, and bind this device to it. The one write every method ends with.
+export async function bindDevice(env, bot, { userId, email, keyHash, label }) {
+  const now = nowIso();
+  const ops = [
+    env.DB.prepare(`INSERT OR IGNORE INTO id_users (id, bot, email, created_at, last_seen) VALUES (?, ?, ?, ?, ?)`).bind(userId, bot, email, now, now),
+    env.DB.prepare(`INSERT OR IGNORE INTO id_devices (key_hash, bot, user_id, label, created_at) VALUES (?, ?, ?, ?, ?)`).bind(keyHash, bot, userId, String(label || "device").slice(0, 60), now),
+    env.DB.prepare(`DELETE FROM id_pending WHERE key_hash = ? AND bot = ?`).bind(keyHash, bot),
+  ];
+  await env.DB.batch(ops);
+  return userById(env, bot, userId);
+}
+
+// --- JOIN: the first device creates the person; a second device gets a code instead. ---
+//   → { linked: true, user, fresh }  or  { linked: false, code, email }
+export async function join(env, bot, { email, keyHash }) {
+  const known = await userForDevice(env, bot, keyHash);
+  if (known) return { linked: true, user: known };                          // reload of a known browser
+  const userId = await userIdFor(email, env, bot);
+  const exists = await userById(env, bot, userId);
+  if (!exists) {
+    const user = await bindDevice(env, bot, { userId, email, keyHash, label: "first device" });
+    console.log(JSON.stringify({ event: "identity-join", bot, userId: userId.slice(0, 8) }));
+    return { linked: true, user, fresh: true };
+  }
+  return { linked: false, ...(await pendingCode(env, bot, { email, keyHash })) };
+}
+// The waiting-room code for an unknown device. Reused while it's valid (7 days).
+export async function pendingCode(env, bot, { email, keyHash }) {
+  await env.DB.prepare(`DELETE FROM id_pending WHERE created_at < ?`).bind(new Date(Date.now() - PENDING_TTL_MS).toISOString()).run();
+  const prior = await env.DB.prepare(`SELECT code, email FROM id_pending WHERE key_hash = ? AND bot = ?`).bind(keyHash, bot).first();
+  if (prior && prior.email === email) return { code: prior.code, email };
+  if (prior) await env.DB.prepare(`DELETE FROM id_pending WHERE code = ?`).bind(prior.code).run();
+  const code = randomCode(6);
+  await env.DB.prepare(`INSERT INTO id_pending (code, bot, key_hash, email, created_at) VALUES (?, ?, ?, ?, ?)`).bind(code, bot, keyHash, email, nowIso()).run();
+  return { code, email };
+}
+export async function pendingFor(env, bot, keyHash) {
+  return keyHash ? (await env.DB.prepare(`SELECT code, email FROM id_pending WHERE key_hash = ? AND bot = ?`).bind(keyHash, bot).first()) || null : null;
+}
+export async function pendingByEmail(env, bot, email) { return (await env.DB.prepare(`SELECT code, created_at FROM id_pending WHERE bot = ? AND email = ?`).bind(bot, email).all()).results || []; }
+
+// --- THE OWNER LINKS A DEVICE (the coach's button): the code AND the email must match. ---
+export async function linkByCode(env, bot, { email, code }) {
+  code = String(code || "").trim().toUpperCase();
+  const pend = await env.DB.prepare(`SELECT * FROM id_pending WHERE code = ? AND bot = ?`).bind(code, bot).first();
+  if (!pend) return { ok: false, status: 404, error: "no such code", reason: "No device is waiting with that code. Codes expire after 7 days." };
+  if (pend.email !== email) return { ok: false, status: 409, error: "email mismatch", reason: "That code was requested for a different email. Both must match — that's the point." };
+  const user = await userByEmail(env, bot, email);
+  if (!user) return { ok: false, status: 404, error: "no such person" };
+  await bindDevice(env, bot, { userId: user.id, email, keyHash: pend.key_hash, label: "linked by the owner" });
+  return { ok: true, linked: true, userId: user.id };
+}

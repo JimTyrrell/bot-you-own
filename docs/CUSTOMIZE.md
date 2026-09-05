@@ -3,6 +3,18 @@
 Everything here is optional. The bot works without any of it. Come back when you
 actually hit the limit, not before.
 
+## One folder per bot, of any kind · `project.json` → `kind`
+
+Every deployable thing is a folder in `YourBots/` with a `project.json`. `"kind"`
+says what it is: `"chat"` (the default — leave it out and nothing changes) or
+`"food"` (the photo food log, an app at `/apps/<id>`; `docs/FOOD-LOG.md`). The
+common fields are the same for every kind: `name`, `tagline`, `greeting`, `order`,
+`access`, `listed`, `accessKey`, `handoffActions`. A chat bot's own fields stay
+where they always were; an app's live in one nested block (`"food": { … }`).
+`Engine/worker/projects.js` is the one loader (`KINDS` = one function per kind);
+`discover.mjs`, `/api/config`, the sidebar, Configure, Export, Commit to GitHub and
+the Settings table all know every kind.
+
 ## Add a knowledge file to a project
 Drop a `.md`, `.txt` or `.csv` into `YourBots/<name>/knowledge/` and commit. Done.
 (The build scans the folder; there is no list to update.)
@@ -568,6 +580,19 @@ written in the owner's language (`languages.owner`) so the person following up
 can read it.
 
 ## Who can use it · `project.json` → `access` · `config.js` → `access.default` / `access.floor`
+
+**Every kind of bot** has this door — chat bots and apps (the food log, `"kind":
+"food"`) alike. For a chat bot, `email` means an address typed at the door
+(identification, not sign-in). For an app, who you *are* is `Engine/identity/`
+(email + device key, passkeys, Google/Microsoft/Apple, authenticator codes —
+`docs/IDENTITY.md`); the access mode still applies on top (`key` = the passphrase
+before the app even loads). Under the hood → Settings lists every bot, its kind,
+what it requires, and which sign-in methods it has on.
+
+The merge order for the deployment's defaults is one line, in one file
+(`Engine/worker/settings.js`): `YourBots/config.js` < `YourBots/settings.json` <
+the Settings screen. The same order covers the "create your own" badge, which the
+Settings screen now edits too.
 Every bot decides for itself; the deployment sets a default and a floor. What a
 bot can say, most open first:
 
