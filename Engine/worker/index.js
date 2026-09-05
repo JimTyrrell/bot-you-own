@@ -188,6 +188,7 @@ export default {
         adminEnabled,
         owner: CONFIG.owner,
         siteName: CONFIG.siteName,
+        createYourOwn: CONFIG.createYourOwn?.show === false ? null : { text: String(CONFIG.createYourOwn?.text || "Create your own bot"), url: String(CONFIG.createYourOwn?.url || "") },
         accent: CONFIG.accent,
         thinkingWords: Array.isArray(CONFIG.thinkingWords) ? CONFIG.thinkingWords : ["Thinking"],
         model: CONFIG.model,

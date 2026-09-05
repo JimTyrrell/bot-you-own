@@ -13,6 +13,12 @@ export const CONFIG = {
   owner: "Example Co",                 // shown in the UI footer and in the prompt as "run by …"
   siteName: "The Bot You Own",         // browser tab title
 
+  // The "Create your own" line under the chat — the same trick the survey and
+  // funnel tools use: every bot you deploy quietly advertises the workshop.
+  // It shows on the page and inside the embedded widget. Turn it off with
+  // show:false, or point it wherever your own workshop lives.
+  createYourOwn: { show: true, text: "Create your own @ BotYouOwn.com", url: "https://botyouown.com" },
+
   // ---- 2. WHICH PROJECT OPENS FIRST ------------------------------------------
   // Every folder in YourBots/ that is listed in YourBots/index.js is available in
   // the sidebar. This one is selected when someone opens the page.
