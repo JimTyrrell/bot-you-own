@@ -82,3 +82,49 @@ CREATE TABLE IF NOT EXISTS handoff_messages (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_hmsg_handoff ON handoff_messages(handoff_id, id);
+
+-- The food log (Engine/worker/track.js; docs/FOOD-LOG.md). Created by the Worker on first use.
+CREATE TABLE IF NOT EXISTS track_users (
+  id           TEXT PRIMARY KEY,   -- sha256(lowercased email + FOODLOG_PEPPER)
+  email        TEXT UNIQUE,        -- the identity; the only personal thing stored
+  targets_json TEXT,               -- {kcal, protein_g, carbs_g, fat_g, unit, name, preset, weight_kg}
+  created_at   TEXT NOT NULL,
+  last_seen    TEXT
+);
+CREATE TABLE IF NOT EXISTS track_devices (
+  key_hash   TEXT PRIMARY KEY,     -- sha256 of the browser's random device key; the key itself never leaves the browser
+  user_id    TEXT NOT NULL,
+  label      TEXT,                 -- 'first device' | 'linked by coach' | 'signed in with google' …
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_track_devices_user ON track_devices(user_id);
+CREATE TABLE IF NOT EXISTS track_pending (
+  code        TEXT PRIMARY KEY,    -- the 6-character code a second device shows
+  key_hash    TEXT NOT NULL,       -- that device's key hash, linked when the coach approves
+  user_id_new TEXT,
+  email       TEXT NOT NULL,
+  created_at  TEXT NOT NULL        -- codes expire after 7 days
+);
+CREATE TABLE IF NOT EXISTS track_meals (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL,
+  date       TEXT NOT NULL,        -- YYYY-MM-DD, the phone's own day
+  time       TEXT,                 -- HH:MM UTC
+  items_json TEXT NOT NULL,        -- [{name, portion, grams, kcal, protein_g, carbs_g, fat_g, confidence, source, mult, per100?}]
+  kcal REAL, protein_g REAL, carbs_g REAL, fat_g REAL,
+  thumb      TEXT,                 -- data: URI, ≤256 px, ≤48 KB. The photo itself is never kept
+  source     TEXT,                 -- photo | text | barcode | label | receipt
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_track_meals_day ON track_meals(user_id, date);
+CREATE TABLE IF NOT EXISTS track_usage (user_id TEXT NOT NULL, date TEXT NOT NULL, photos INTEGER DEFAULT 0, PRIMARY KEY (user_id, date));   -- the daily photo cap
+CREATE TABLE IF NOT EXISTS track_products (code TEXT PRIMARY KEY, json TEXT NOT NULL, fetched_at TEXT NOT NULL);   -- barcode lookups (Open Food Facts) and read labels ("label:<slug>")
+CREATE TABLE IF NOT EXISTS track_receipts (
+  id TEXT PRIMARY KEY, household_id TEXT, user_id TEXT NOT NULL,   -- household_id set = shared with the household
+  store TEXT, date TEXT, total REAL, currency TEXT, items_json TEXT, thumb TEXT, created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_track_receipts_h ON track_receipts(household_id, date);
+CREATE TABLE IF NOT EXISTS track_weights (user_id TEXT NOT NULL, date TEXT NOT NULL, kg REAL NOT NULL, PRIMARY KEY (user_id, date));   -- always kg; the unit is the person's choice on the page
+CREATE TABLE IF NOT EXISTS track_households (id TEXT PRIMARY KEY, name TEXT, code TEXT UNIQUE, created_at TEXT NOT NULL);   -- code = the 6-character invite
+CREATE TABLE IF NOT EXISTS track_members (household_id TEXT NOT NULL, user_id TEXT PRIMARY KEY, name TEXT, joined_at TEXT NOT NULL);   -- one household per person
+CREATE INDEX IF NOT EXISTS idx_track_members_h ON track_members(household_id);

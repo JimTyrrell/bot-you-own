@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d0d0d">
+<title>Food log</title>
+<!-- ======================================================================
+  THE FOOD LOG PAGE. Camera first, one tap, a ring and three bars.
+  Everything it needs is in Engine/worker/track.js. No framework, no build.
+  Identity: the email + a random device key live in localStorage — that's the
+  whole "remembered forever on this browser". docs/FOOD-LOG.md.
+====================================================================== -->
+<style>
+  :root { --accent:#10a37f; --bg:#ffffff; --panel:#f4f4f5; --text:#0d0d0d; --muted:#6b6b6b; --edge:#e5e5e5; --danger:#b42318;
+          --p:#3b82f6; --c:#f59e0b; --f:#ec4899; --ring:#10a37f; --over:#ef4444; color-scheme: light dark; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f0f10; --panel:#1c1c1e; --text:#ececec; --muted:#9a9a9a; --edge:#2c2c2e; } }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html, body { margin:0; background:var(--bg); color:var(--text); font:16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  body { min-height:100dvh; }
+  .app { max-width:480px; margin:0 auto; padding:0 16px calc(120px + env(safe-area-inset-bottom)); }
+  h1 { font-size:22px; margin:0; letter-spacing:-.01em; }
+  h2 { font-size:17px; margin:22px 0 10px; }
+  p { margin:8px 0; } .muted { color:var(--muted); } .small { font-size:13px; } .center { text-align:center; }
+  button { font:inherit; border:0; border-radius:14px; padding:12px 16px; background:var(--panel); color:var(--text); cursor:pointer; }
+  button.primary { background:var(--accent); color:#fff; font-weight:600; }
+  button.ghost { background:transparent; color:var(--muted); }
+  button:disabled { opacity:.5; cursor:default; }
+  button.danger { color:var(--danger); }
+  input, select, textarea { font:inherit; width:100%; padding:14px; border:1px solid var(--edge); border-radius:14px; background:var(--panel); color:var(--text); }
+  input:focus, textarea:focus { outline:2px solid var(--accent); border-color:transparent; }
+  label { display:block; font-size:13px; color:var(--muted); margin:12px 0 6px; }
+  .row { display:flex; gap:10px; align-items:center; } .row > * { flex:1; }
+  .card { background:var(--panel); border-radius:20px; padding:16px; margin:12px 0; }
+  .screen[hidden] { display:none; }
+  .top { display:flex; align-items:center; justify-content:space-between; padding:14px 0 6px; position:sticky; top:0; background:var(--bg); z-index:5; }
+  .datenav { display:flex; align-items:center; gap:4px; }
+  .datenav button { padding:8px 12px; border-radius:999px; }
+  .streak { font-size:13px; color:var(--muted); }
+  .streak b { color:var(--text); }
+  /* the ring */
+  .ringwrap { display:flex; justify-content:center; margin:8px 0 4px; position:relative; }
+  .ringwrap svg { width:200px; height:200px; transform:rotate(-90deg); }
+  .ringwrap .in { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .ringwrap .kcal { font-size:38px; font-weight:700; letter-spacing:-.02em; line-height:1; }
+  .ringwrap .of { color:var(--muted); font-size:13px; margin-top:6px; }
+  /* three bars */
+  .bars { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin:12px 0; }
+  .bar { background:var(--panel); border-radius:14px; padding:10px 12px; }
+  .bar .n { font-size:12px; color:var(--muted); display:flex; justify-content:space-between; }
+  .bar .v { font-weight:700; font-size:15px; margin:2px 0 6px; }
+  .bar .t { height:6px; border-radius:6px; background:var(--edge); overflow:hidden; }
+  .bar .t i { display:block; height:100%; border-radius:6px; width:0; transition:width .4s; }
+  .bar.p .t i { background:var(--p); } .bar.c .t i { background:var(--c); } .bar.f .t i { background:var(--f); }
+  /* week strip */
+  .week { display:grid; grid-template-columns:repeat(7, 1fr); gap:6px; margin:14px 0 4px; }
+  .week button { padding:6px 0; background:transparent; display:flex; flex-direction:column; align-items:center; gap:4px; border-radius:12px; }
+  .week button.on { background:var(--panel); }
+  .week svg { width:34px; height:34px; transform:rotate(-90deg); }
+  .week span { font-size:11px; color:var(--muted); }
+  /* meals */
+  .meal { display:flex; gap:12px; align-items:center; background:var(--panel); border-radius:16px; padding:10px; margin:8px 0; }
+  .meal img, .meal .ph { width:56px; height:56px; border-radius:12px; object-fit:cover; background:var(--edge); display:flex; align-items:center; justify-content:center; font-size:22px; flex:none; }
+  .meal .b { flex:1; min-width:0; } .meal .b .t { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .meal .b .m { font-size:12px; color:var(--muted); }
+  .meal .k { font-weight:700; white-space:nowrap; }
+  .meal .x { background:transparent; color:var(--muted); padding:8px; }
+  /* the dock */
+  .dock { position:fixed; left:0; right:0; bottom:0; padding:10px 16px calc(12px + env(safe-area-inset-bottom)); background:linear-gradient(to top, var(--bg) 70%, transparent); z-index:6; }
+  .dock .in { max-width:480px; margin:0 auto; }
+  .snap { width:100%; padding:18px; font-size:18px; font-weight:700; border-radius:20px; background:var(--accent); color:#fff; display:flex; align-items:center; justify-content:center; gap:10px; box-shadow:0 8px 24px rgba(16,163,127,.35); }
+  .chips { display:flex; gap:8px; overflow-x:auto; padding:10px 0 2px; scrollbar-width:none; } .chips::-webkit-scrollbar { display:none; }
+  .chips button { flex:none; padding:9px 14px; border-radius:999px; font-size:14px; background:var(--panel); border:1px solid var(--edge); }
+  /* sheets */
+  .sheet { position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:20; display:flex; align-items:flex-end; }
+  .sheet[hidden] { display:none; }
+  .sheet .box { background:var(--bg); width:100%; max-width:480px; margin:0 auto; border-radius:24px 24px 0 0; padding:14px 16px calc(18px + env(safe-area-inset-bottom)); max-height:92dvh; overflow:auto; }
+  .sheet .grip { width:40px; height:4px; border-radius:4px; background:var(--edge); margin:0 auto 12px; }
+  .item { border-bottom:1px solid var(--edge); padding:12px 0; }
+  .item .nm { display:flex; justify-content:space-between; gap:8px; font-weight:600; }
+  .item .nm small { color:var(--muted); font-weight:400; }
+  .item .macros { font-size:12px; color:var(--muted); margin:2px 0 8px; }
+  .item .mults { display:flex; gap:6px; align-items:center; }
+  .item .mults button { padding:8px 0; flex:1; border-radius:10px; font-weight:600; }
+  .item .mults button.on { background:var(--accent); color:#fff; }
+  .item .mults .g { flex:2; min-width:92px; display:flex; align-items:center; gap:4px; background:var(--panel); border-radius:10px; padding:0 8px; }
+  .item .mults .g input { padding:8px 4px; border:0; background:transparent; text-align:right; width:100%; }
+  .item .mults .g span { font-size:12px; color:var(--muted); }
+  .total { display:flex; justify-content:space-between; font-weight:700; padding:12px 0; }
+  .thinking { display:flex; align-items:center; gap:10px; color:var(--muted); padding:20px 0; justify-content:center; }
+  .thinking i { width:18px; height:18px; border:3px solid var(--edge); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .toast { position:fixed; left:50%; transform:translateX(-50%); bottom:calc(150px + env(safe-area-inset-bottom)); background:var(--text); color:var(--bg); padding:10px 16px; border-radius:999px; font-size:14px; z-index:30; max-width:90%; text-align:center; }
+  .presets { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
+  .presets button { padding:14px 6px; border:2px solid transparent; }
+  .presets button.on { border-color:var(--accent); }
+  .presets b { display:block; } .presets small { color:var(--muted); font-size:12px; }
+  .code { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:34px; letter-spacing:.2em; font-weight:700; text-align:center; padding:16px; background:var(--panel); border-radius:16px; }
+  .signin { display:flex; flex-direction:column; gap:8px; margin:12px 0; }
+  .signin button { border:1px solid var(--edge); background:var(--bg); }
+  .list { list-style:none; margin:0; padding:0; } .list li { display:flex; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--edge); align-items:center; }
+  .wchart { width:100%; height:110px; }
+  .receipt { background:var(--panel); border-radius:16px; padding:12px; margin:10px 0; }
+  .receipt .h { display:flex; justify-content:space-between; font-weight:600; }
+  .receipt .it { display:flex; justify-content:space-between; gap:8px; font-size:14px; padding:6px 0; border-top:1px solid var(--edge); align-items:center; }
+  .receipt .it button { padding:6px 10px; font-size:13px; border-radius:999px; }
+  a { color:var(--accent); }
+  .back { background:transparent; padding:8px 4px; color:var(--muted); }
+  .member { display:flex; align-items:center; gap:10px; background:var(--panel); border-radius:16px; padding:12px; margin:8px 0; }
+  .member .av { width:38px; height:38px; border-radius:50%; background:var(--accent); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- JOIN: the only form in the whole thing. Once. -->
+  <section class="screen" id="s-join" hidden>
+    <div class="top"><h1>Food log</h1></div>
+    <p class="muted" id="coachline"></p>
+    <div class="card">
+      <p style="font-size:20px;font-weight:700;margin:0 0 4px">Snap your plate.<br>Get the numbers.</p>
+      <p class="muted small">Your email is your log. This browser remembers you — no password, nothing to install.</p>
+      <label for="email">Email</label>
+      <input id="email" type="email" inputmode="email" autocomplete="email" placeholder="you@example.com">
+      <button class="primary" id="joinbtn" style="width:100%;margin-top:14px">Start logging</button>
+      <div class="signin" id="signin-join"></div>
+      <p class="muted small" style="margin-top:12px">Privacy: photos are read once and thrown away — only a thumbnail and the numbers are kept, with your email. Your coach can see your log; nobody else can.</p>
+    </div>
+  </section>
+
+  <!-- PENDING: a second device -->
+  <section class="screen" id="s-pending" hidden>
+    <div class="top"><h1>One more step</h1></div>
+    <div class="card">
+      <p id="pendingmsg"></p>
+      <p class="muted small">Show your coach this code, or sign in below with the same email.</p>
+      <div class="code" id="pendingcode"></div>
+      <div class="signin" id="signin-pending"></div>
+      <p class="muted small center" id="pendingwait">Waiting for the link… this page checks by itself.</p>
+      <button class="ghost" id="pendingreset" style="width:100%">Use a different email</button>
+    </div>
+  </section>
+
+  <!-- TARGETS -->
+  <section class="screen" id="s-targets" hidden>
+    <div class="top"><button class="back" id="targetsback" hidden>‹ Back</button><h1>Your targets</h1><span></span></div>
+    <div class="card">
+      <p class="muted small" style="margin-top:0">Pick a preset from your weight, or type your own numbers. You can change them any time.</p>
+      <div class="row"><div><label>Your name (shown to your household)</label><input id="tname" placeholder="Sam"></div></div>
+      <div class="row">
+        <div><label>Weight</label><input id="tweight" type="number" inputmode="decimal" placeholder="75"></div>
+        <div style="flex:.6"><label>Unit</label><select id="tunit"><option value="kg">kg</option><option value="lb">lb</option></select></div>
+      </div>
+      <label>Goal</label>
+      <div class="presets" id="presets">
+        <button data-p="cut"><b>Cut</b><small>lose fat</small></button>
+        <button data-p="maintain"><b>Maintain</b><small>stay put</small></button>
+        <button data-p="build"><b>Build</b><small>add muscle</small></button>
+      </div>
+      <p class="muted small" id="formula">Maintenance ≈ 33 kcal per kg of bodyweight (the common 15 kcal/lb rule of thumb); cut = −500, build = +300. Protein 2.0 g/kg (cut) or 1.8 g/kg, fat 25% of calories, carbs the rest. Adjust to what your coach says.</p>
+      <div class="row"><div><label>Calories</label><input id="tkcal" type="number" inputmode="numeric"></div><div><label>Protein g</label><input id="tprot" type="number" inputmode="numeric"></div></div>
+      <div class="row"><div><label>Carbs g</label><input id="tcarb" type="number" inputmode="numeric"></div><div><label>Fat g</label><input id="tfat" type="number" inputmode="numeric"></div></div>
+      <button class="primary" id="targetssave" style="width:100%;margin-top:16px">Save targets</button>
+    </div>
+  </section>
+
+  <!-- HOME: the day -->
+  <section class="screen" id="s-home" hidden>
+    <div class="top">
+      <div class="datenav"><button id="prevday">‹</button><button id="daylabel" style="font-weight:600;min-width:110px">Today</button><button id="nextday">›</button></div>
+      <div class="streak" id="streak"></div>
+      <button class="ghost" id="menubtn" title="Menu" style="padding:8px 10px;font-size:20px">☰</button>
+    </div>
+    <p class="muted small" id="viewing" hidden></p>
+    <div class="ringwrap">
+      <svg viewBox="0 0 120 120"><circle cx="60" cy="60" r="52" fill="none" stroke="var(--edge)" stroke-width="10"/><circle id="ring" cx="60" cy="60" r="52" fill="none" stroke="var(--ring)" stroke-width="10" stroke-linecap="round" stroke-dasharray="326.7" stroke-dashoffset="326.7" style="transition:stroke-dashoffset .5s"/></svg>
+      <div class="in"><div class="kcal" id="kcal">0</div><div class="of" id="kcalof">of — kcal</div></div>
+    </div>
+    <div class="bars">
+      <div class="bar p"><div class="n"><span>Protein</span><span id="pt"></span></div><div class="v" id="pv">0 g</div><div class="t"><i id="pb"></i></div></div>
+      <div class="bar c"><div class="n"><span>Carbs</span><span id="ct"></span></div><div class="v" id="cv">0 g</div><div class="t"><i id="cb"></i></div></div>
+      <div class="bar f"><div class="n"><span>Fat</span><span id="ft"></span></div><div class="v" id="fv">0 g</div><div class="t"><i id="fb"></i></div></div>
+    </div>
+    <div class="week" id="week"></div>
+    <div id="meals"></div>
+    <p class="muted small center" id="empty" hidden>Nothing logged yet. Snap your first plate.</p>
+    <div id="weightbox" class="card" hidden>
+      <div class="row" style="justify-content:space-between"><b style="flex:none">Weight</b><span class="muted small" id="wsum" style="text-align:right"></span></div>
+      <svg class="wchart" id="wchart" viewBox="0 0 320 100" preserveAspectRatio="none"></svg>
+    </div>
+    <p class="muted small center" id="honesty"></p>
+  </section>
+
+  <!-- RECEIPTS -->
+  <section class="screen" id="s-receipts" hidden>
+    <div class="top"><button class="back" data-go="home">‹ Back</button><h1>Receipts</h1><span></span></div>
+    <div class="card" id="rtotals"></div>
+    <div id="rlist"></div>
+  </section>
+
+  <!-- HOUSEHOLD & SETTINGS -->
+  <section class="screen" id="s-settings" hidden>
+    <div class="top"><button class="back" data-go="home">‹ Back</button><h1>Household</h1><span></span></div>
+    <div id="hh"></div>
+    <h2>This device</h2>
+    <div class="card">
+      <p class="small" id="whoami"></p>
+      <div class="signin" id="signin-settings"></div>
+      <button data-go="targets" style="width:100%;margin-top:6px">Change targets</button>
+      <button class="ghost danger" id="forget" style="width:100%;margin-top:6px">Forget me on this browser</button>
+    </div>
+  </section>
+</div>
+
+<!-- THE DOCK: the camera button and the chips -->
+<div class="dock" id="dock" hidden><div class="in">
+  <button class="snap" id="snapbtn"><span style="font-size:22px">📷</span> Snap a plate</button>
+  <div class="chips">
+    <button data-act="text">⌨️ Type it</button>
+    <button data-act="barcode">▥ Barcode</button>
+    <button data-act="label">🏷 Label</button>
+    <button data-act="receipt">🧾 Receipt</button>
+    <button data-act="weigh">⚖️ Weigh in</button>
+  </div>
+</div></div>
+<input type="file" id="cam" accept="image/*" capture="environment" hidden>
+<input type="file" id="pick" accept="image/*" hidden>
+
+<!-- THE SHEET: one container, many contents -->
+<div class="sheet" id="sheet" hidden><div class="box"><div class="grip"></div><div id="sheetbody"></div></div></div>
+<div id="toast" class="toast" hidden></div>
+
+<script>
+'use strict';
+// ---------- state ----------
+const LS = 'foodlog';
+let S = load();                                  // { email, deviceKey, userId, pending, targets, household }
+let CFG = { coachName: '', honesty: '', signIn: [] };
+let day = localDate(), DAY = null, WEEK = null, viewUser = null, lastPhoto = null;
+function load() { try { return JSON.parse(localStorage.getItem(LS) || '{}'); } catch { return {}; } }
+function save() { try { localStorage.setItem(LS, JSON.stringify(S)); } catch {} }
+function localDate(d = new Date()) { return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
+function shift(date, n) { const d = new Date(date + 'T12:00:00'); d.setDate(d.getDate() + n); return localDate(d); }
+const $ = (id) => document.getElementById(id);
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
+function toast(msg, ms = 2600) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(t._t); t._t = setTimeout(() => t.hidden = true, ms); }
+function show(name) { document.querySelectorAll('.screen').forEach((s) => s.hidden = s.id !== 's-' + name); $('dock').hidden = name !== 'home' || Boolean(viewUser); window.scrollTo(0, 0); }
+function sheet(html) { $('sheetbody').innerHTML = html; $('sheet').hidden = false; }
+function closeSheet() { $('sheet').hidden = true; $('sheetbody').innerHTML = ''; }
+$('sheet').addEventListener('click', (e) => { if (e.target === $('sheet')) closeSheet(); });
+
+if (!S.deviceKey) { const b = crypto.getRandomValues(new Uint8Array(32)); S.deviceKey = [...b].map((x) => x.toString(16).padStart(2, '0')).join(''); save(); }
+
+async function api(path, opts = {}) {
+  const headers = Object.assign({ 'x-device-key': S.deviceKey }, opts.headers || {});
+  if (opts.json) { headers['content-type'] = 'application/json'; opts.body = JSON.stringify(opts.json); }
+  const r = await fetch('/api/track/' + path, { method: opts.method || (opts.body ? 'POST' : 'GET'), headers, body: opts.body });
+  let data = {}; try { data = await r.json(); } catch {}
+  return { ok: r.ok, status: r.status, ...data };
+}
+
+// ---------- boot ----------
+(async function boot() {
+  try { const c = await fetch('/api/track/config'); if (c.ok) CFG = await c.json(); } catch {}
+  if (CFG.coachName) $('coachline').textContent = 'Your coach: ' + CFG.coachName;
+  $('honesty').textContent = CFG.honesty || '';
+  renderSignIn();
+  if (!S.email) return show('join');
+  const me = await api('me');
+  if (me.linked) { onLinked(me); return; }
+  if (me.code) { S.pending = me.code; save(); return showPending(me); }
+  // Known email, unknown device (storage was cleared server-side?): try joining again.
+  const j = await api('join', { json: { email: S.email } });
+  if (j.linked) return onLinked(j);
+  if (j.code) { S.pending = j.code; save(); return showPending(j); }
+  show('join');
+})();
+
+function onLinked(me) {
+  S.userId = me.userId; S.email = me.email; S.targets = me.targets; S.household = me.household; S.pending = null; save();
+  $('whoami').textContent = S.email + ' · ' + (me.devices || 1) + ' device' + ((me.devices || 1) === 1 ? '' : 's');
+  if (!S.targets) { show('targets'); prefillTargets(); return; }
+  goHome();
+}
+
+// ---------- join ----------
+$('joinbtn').onclick = async () => {
+  const email = $('email').value.trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return toast('That doesn’t look like an email.');
+  $('joinbtn').disabled = true;
+  const j = await api('join', { json: { email } });
+  $('joinbtn').disabled = false;
+  if (j.linked) { S.email = email; return onLinked(j); }
+  if (j.code) { S.email = email; S.pending = j.code; save(); return showPending(j); }
+  toast(j.reason || 'Couldn’t start. Try again.');
+};
+function showPending(j) {
+  $('pendingmsg').textContent = j.message || 'This email is already logging on another device.';
+  $('pendingcode').textContent = j.code;
+  show('pending');
+  clearInterval(showPending._t);
+  showPending._t = setInterval(async () => { const me = await api('me'); if (me.linked) { clearInterval(showPending._t); toast('Linked!'); onLinked(me); } }, 5000);
+}
+$('pendingreset').onclick = () => { S = { deviceKey: S.deviceKey }; save(); location.reload(); };
+$('forget').onclick = () => { if (confirm('Forget this browser? Your log stays with your coach; you can link again with the code or a sign-in.')) { localStorage.removeItem(LS); location.reload(); } };
+
+// ---------- sign in with … (only when the deployment has a client id) ----------
+function renderSignIn() {
+  const list = (CFG.signIn || []).filter((s) => s.clientId);
+  for (const id of ['signin-join', 'signin-pending', 'signin-settings']) {
+    const box = $(id); box.innerHTML = '';
+    if (!list.length) continue;
+    box.innerHTML = '<p class="muted small center" style="margin:6px 0 2px">' + (id === 'signin-settings' ? 'Link another device by signing in there with:' : 'Already logging on another device? Sign in to link this one:') + '</p>';
+    for (const s of list) { const b = document.createElement('button'); b.textContent = { google: 'Sign in with Google', microsoft: 'Sign in with Microsoft', apple: 'Sign in with Apple' }[s.provider]; b.onclick = () => signIn(s); box.appendChild(b); }
+  }
+}
+function loadScript(src) { return new Promise((res, rej) => { if (document.querySelector('script[src="' + src + '"]')) return res(); const s = document.createElement('script'); s.src = src; s.async = true; s.onload = res; s.onerror = rej; document.head.appendChild(s); }); }
+async function signIn(s) {
+  try {
+    let idToken = null;
+    if (s.provider === 'google') {
+      await loadScript('https://accounts.google.com/gsi/client');
+      idToken = await new Promise((res, rej) => { google.accounts.id.initialize({ client_id: s.clientId, callback: (r) => res(r.credential), ux_mode: 'popup' }); google.accounts.id.prompt((n) => { if (n.isNotDisplayed && n.isNotDisplayed() || n.isSkippedMoment && n.isSkippedMoment()) { /* fall back to a rendered button */ sheet('<h2 style="margin-top:0">Sign in with Google</h2><div id="gbtn"></div>'); google.accounts.id.renderButton($('gbtn'), { theme: 'outline', size: 'large', width: 300 }); } }); });
+    } else if (s.provider === 'microsoft') {
+      await loadScript('https://alcdn.msauth.net/browser/2.38.1/js/msal-browser.min.js');
+      const app = new msal.PublicClientApplication({ auth: { clientId: s.clientId, authority: 'https://login.microsoftonline.com/common', redirectUri: location.origin + '/track/' } });
+      const r = await app.loginPopup({ scopes: ['openid', 'email', 'profile'] });
+      idToken = r.idToken;
+    } else if (s.provider === 'apple') {
+      await loadScript('https://appleid.cdn-apple.com/appleauth/static/jssdk/v1/appleid.auth.js');
+      AppleID.auth.init({ clientId: s.clientId, scope: 'email', redirectURI: location.origin + '/track/', usePopup: true });
+      const r = await AppleID.auth.signIn();
+      idToken = r.authorization.id_token;
+    }
+    if (!idToken) return;
+    closeSheet();
+    const out = await api('signin', { json: { provider: s.provider, idToken } });
+    if (out.linked) { toast('Linked!'); onLinked(out); } else toast(out.reason || 'Sign-in refused.');
+  } catch (e) { toast('Sign-in didn’t complete.'); }
+}
+
+// ---------- targets ----------
+let preset = '';
+function prefillTargets() {
+  const t = S.targets || {};
+  $('tname').value = t.name || ''; $('tunit').value = t.unit || 'kg';
+  $('tweight').value = t.weight_kg ? (t.unit === 'lb' ? Math.round(t.weight_kg * 2.20462) : t.weight_kg) : '';
+  $('tkcal').value = t.kcal || ''; $('tprot').value = t.protein_g || ''; $('tcarb').value = t.carbs_g || ''; $('tfat').value = t.fat_g || '';
+  preset = t.preset || ''; document.querySelectorAll('#presets button').forEach((b) => b.classList.toggle('on', b.dataset.p === preset));
+  $('targetsback').hidden = !S.targets;
+}
+function weightKg() { const w = Number($('tweight').value); return $('tunit').value === 'lb' ? w / 2.20462 : w; }
+document.querySelectorAll('#presets button').forEach((b) => b.onclick = () => {
+  const kg = weightKg(); if (!kg) return toast('Type your weight first.');
+  preset = b.dataset.p; document.querySelectorAll('#presets button').forEach((x) => x.classList.toggle('on', x === b));
+  const maint = kg * 33;
+  const kcal = Math.round((preset === 'cut' ? maint - 500 : preset === 'build' ? maint + 300 : maint) / 10) * 10;
+  const prot = Math.round(kg * (preset === 'cut' ? 2.0 : 1.8));
+  const fat = Math.round(kcal * 0.25 / 9);
+  const carb = Math.max(0, Math.round((kcal - prot * 4 - fat * 9) / 4));
+  $('tkcal').value = kcal; $('tprot').value = prot; $('tfat').value = fat; $('tcarb').value = carb;
+});
+$('targetssave').onclick = async () => {
+  const t = { name: $('tname').value, unit: $('tunit').value, weight_kg: weightKg() || null, preset, kcal: +$('tkcal').value, protein_g: +$('tprot').value, carbs_g: +$('tcarb').value, fat_g: +$('tfat').value };
+  if (!t.kcal) return toast('Calories are needed.');
+  const r = await api('targets', { json: t });
+  if (!r.ok) return toast(r.reason || 'Couldn’t save.');
+  S.targets = r.targets; save(); toast('Targets saved'); goHome();
+};
+$('targetsback').onclick = goHome;
+document.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => { const g = b.dataset.go; if (g === 'home') goHome(); else if (g === 'targets') { show('targets'); prefillTargets(); } });
+
+// ---------- home ----------
+function goHome() { viewUser = null; show('home'); refresh(); }
+async function refresh() {
+  const q = viewUser ? '&user=' + viewUser.id : '';
+  const [d, w] = await Promise.all([api('day?date=' + day + q), api('week?end=' + day + q)]);
+  if (d.status === 401) { S.userId = null; save(); return location.reload(); }
+  if (!d.ok) return toast(d.reason || 'Couldn’t load the day.');
+  DAY = d; WEEK = w; renderDay();
+}
+$('prevday').onclick = () => { day = shift(day, -1); refresh(); };
+$('nextday').onclick = () => { day = shift(day, 1); refresh(); };
+$('daylabel').onclick = () => { day = localDate(); refresh(); };
+$('menubtn').onclick = () => sheet('<h2 style="margin-top:0">Menu</h2>'
+  + '<button style="width:100%;margin:4px 0" onclick="closeSheet();openReceipts()">🧾 Receipts</button>'
+  + '<button style="width:100%;margin:4px 0" onclick="closeSheet();openSettings()">👥 Household & settings</button>'
+  + '<button style="width:100%;margin:4px 0" onclick="closeSheet();show(\'targets\');prefillTargets()">🎯 Targets</button>'
+  + '<button style="width:100%;margin:4px 0" onclick="closeSheet();openWeigh()">⚖️ Weigh in</button>'
+  + (viewUser ? '<button class="primary" style="width:100%;margin:4px 0" onclick="closeSheet();goHome()">← Back to my log</button>' : ''));
+
+function renderDay() {
+  const t = DAY.targets || {}, tot = DAY.totals;
+  const today = localDate();
+  $('daylabel').textContent = day === today ? 'Today' : day === shift(today, -1) ? 'Yesterday' : new Date(day + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  $('nextday').disabled = day >= today;
+  $('streak').innerHTML = WEEK && WEEK.streak ? '🔥 <b>' + WEEK.streak + '</b> day' + (WEEK.streak === 1 ? '' : 's') : '';
+  $('viewing').hidden = !viewUser; if (viewUser) $('viewing').textContent = 'Viewing ' + (DAY.name || viewUser.name) + '’s day (read-only)';
+  const goal = t.kcal || 0, frac = goal ? Math.min(1, tot.kcal / goal) : 0;
+  $('ring').style.strokeDashoffset = 326.7 * (1 - frac); $('ring').style.stroke = goal && tot.kcal > goal * 1.1 ? 'var(--over)' : 'var(--ring)';
+  $('kcal').textContent = tot.kcal; $('kcalof').textContent = goal ? (goal - tot.kcal >= 0 ? (goal - tot.kcal) + ' left of ' + goal : (tot.kcal - goal) + ' over ' + goal) : 'kcal';
+  for (const [k, id] of [['protein_g', 'p'], ['carbs_g', 'c'], ['fat_g', 'f']]) {
+    const g = t[k] || 0; $(id + 'v').textContent = Math.round(tot[k]) + ' g'; $(id + 't').textContent = g ? '/ ' + g : ''; $(id + 'b').style.width = (g ? Math.min(100, 100 * tot[k] / g) : 0) + '%';
+  }
+  // the week strip
+  $('week').innerHTML = (WEEK?.days || []).map((d) => { const f = goal ? Math.min(1, d.kcal / goal) : 0; const c = 2 * Math.PI * 13; return '<button data-d="' + d.date + '" class="' + (d.date === day ? 'on' : '') + '"><svg viewBox="0 0 34 34"><circle cx="17" cy="17" r="13" fill="none" stroke="var(--edge)" stroke-width="4"/><circle cx="17" cy="17" r="13" fill="none" stroke="' + (goal && d.kcal > goal * 1.1 ? 'var(--over)' : 'var(--ring)') + '" stroke-width="4" stroke-linecap="round" stroke-dasharray="' + c.toFixed(1) + '" stroke-dashoffset="' + (c * (1 - f)).toFixed(1) + '"/></svg><span>' + new Date(d.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'narrow' }) + '</span></button>'; }).join('');
+  $('week').querySelectorAll('button').forEach((b) => b.onclick = () => { day = b.dataset.d; refresh(); });
+  // meals
+  $('empty').hidden = DAY.meals.length > 0;
+  $('meals').innerHTML = DAY.meals.map((m) => '<div class="meal" data-id="' + m.id + '">' + (m.thumb ? '<img src="' + m.thumb + '" alt="">' : '<div class="ph">' + ({ text: '⌨️', barcode: '▥', label: '🏷', receipt: '🧾' }[m.source] || '🍽') + '</div>')
+    + '<div class="b"><div class="t">' + esc(m.items.map((i) => i.name).join(', ')) + '</div><div class="m">' + m.time + ' · P ' + Math.round(m.protein_g) + ' · C ' + Math.round(m.carbs_g) + ' · F ' + Math.round(m.fat_g) + '</div></div><div class="k">' + Math.round(m.kcal) + '</div>'
+    + (DAY.readOnly ? '' : '<button class="x" data-del="' + m.id + '" title="Delete">✕</button>') + '</div>').join('');
+  $('meals').querySelectorAll('.meal').forEach((el) => el.onclick = (e) => { if (e.target.dataset.del) return; if (DAY.readOnly) return; const m = DAY.meals.find((x) => x.id === el.dataset.id); openEditor(m, { existing: true }); });
+  $('meals').querySelectorAll('[data-del]').forEach((b) => b.onclick = async (e) => { e.stopPropagation(); if (!confirm('Delete this meal?')) return; await api('meal/' + b.dataset.del, { method: 'DELETE' }); refresh(); });
+  // weight
+  const w = DAY.weights; $('weightbox').hidden = !(w && w.points && w.points.length);
+  if (w && w.points && w.points.length) drawWeights($('wchart'), w, (S.targets && S.targets.unit) || 'kg', $('wsum'));
+}
+function fmtW(kg, unit) { return unit === 'lb' ? (kg * 2.20462).toFixed(1) + ' lb' : kg.toFixed(1) + ' kg'; }
+function drawWeights(svg, w, unit, sumEl) {
+  const pts = w.points; const min = Math.min(...pts.map((p) => p.kg)) - 0.5, max = Math.max(...pts.map((p) => p.kg)) + 0.5;
+  const x = (i) => 10 + (300 * i) / Math.max(1, pts.length - 1), y = (kg) => 90 - (80 * (kg - min)) / (max - min || 1);
+  svg.innerHTML = '<polyline fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round" points="' + pts.map((p, i) => x(i) + ',' + y(p.kg)).join(' ') + '"/>' + pts.map((p, i) => '<circle cx="' + x(i) + '" cy="' + y(p.kg) + '" r="3" fill="var(--accent)"/>').join('');
+  if (sumEl) sumEl.textContent = fmtW(w.latest, unit) + (w.avg7 ? ' · 7-day avg ' + fmtW(w.avg7, unit) : '') + (w.change != null && pts.length > 1 ? ' · ' + (w.change > 0 ? '+' : '') + fmtW(w.change, unit).replace(' ', ' ') + ' / 30d' : '');
+}
+
+// ---------- the camera ----------
+let camKind = 'food';
+$('snapbtn').onclick = () => { camKind = 'food'; $('cam').click(); };
+document.querySelectorAll('.chips button').forEach((b) => b.onclick = () => {
+  const a = b.dataset.act;
+  if (a === 'text') return openText();
+  if (a === 'weigh') return openWeigh();
+  camKind = a; $('cam').click();
+});
+$('cam').onchange = () => { const f = $('cam').files[0]; $('cam').value = ''; if (f) handlePhoto(f, camKind); };
+$('pick').onchange = () => { const f = $('pick').files[0]; $('pick').value = ''; if (f) handlePhoto(f, camKind); };
+
+// Shrink in the browser: ≤1024 px JPEG over the wire, and a ≤256 px thumbnail for the meal card.
+async function shrink(file, max, quality) {
+  const bmp = await (window.createImageBitmap ? createImageBitmap(file) : new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(file); }));
+  const s = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas'); c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  return new Promise((res) => c.toBlob(res, 'image/jpeg', quality));
+}
+async function handlePhoto(file, kind) {
+  sheet('<div class="thinking"><i></i> ' + ({ food: 'Looking at your plate…', barcode: 'Reading the barcode…', label: 'Reading the label…', receipt: 'Reading the receipt…' }[kind]) + '</div>');
+  try {
+    const [photo, thumb] = await Promise.all([shrink(file, 1024, 0.85), shrink(file, 256, 0.7)]);
+    lastPhoto = { photo, thumb };
+    // Barcodes: the browser can often read them itself (Chrome / Android). Free and instant.
+    if (kind === 'barcode' && 'BarcodeDetector' in window) {
+      try {
+        const det = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a', 'upc_e'] });
+        const found = await det.detect(await createImageBitmap(photo));
+        if (found.length) { const r = await api('barcode', { json: { code: found[0].rawValue } }); if (r.ok) return openProduct(r.product); toast(r.reason || 'Not found'); }
+      } catch {}
+    }
+    const fd = new FormData(); fd.append('photo', photo, 'photo.jpg'); fd.append('thumb', thumb, 'thumb.jpg'); fd.append('kind', kind); fd.append('date', day);
+    const r = await api('photo', { body: fd });
+    if (!r.ok) { closeSheet(); return toast(r.reason || 'That didn’t work.', 4000); }
+    if (kind === 'food') return openEditor(r.meal, { fresh: true, notes: r.notes });
+    if (kind === 'barcode') return openProduct(r.product);
+    if (kind === 'label') return openProduct(r.product, r.previous);
+    if (kind === 'receipt') { closeSheet(); toast('Receipt saved' + (r.shared ? ' to the household' : '')); return openReceipts(); }
+  } catch (e) { closeSheet(); toast('Couldn’t read that photo.'); }
+}
+
+// ---------- the editor: fix the portion with a tap ----------
+let ED = null;   // { meal, items:[{...item, base:{...}}] }
+function openEditor(meal, { fresh = false, existing = false, notes = '' } = {}) {
+  ED = { meal, fresh, items: meal.items.map((it) => ({ ...it, mult: it.mult || 1, base: it.base || { grams: it.grams, kcal: it.kcal, protein_g: it.protein_g, carbs_g: it.carbs_g, fat_g: it.fat_g, mult: it.mult || 1 } })) };
+  renderEditor(notes);
+}
+function scaled(it) {
+  // per-100 g known (barcode / label): exact from grams. Else scale the estimate linearly.
+  if (it.per100 && it.grams) { const k = it.grams / 100; return { kcal: Math.round(it.per100.kcal * k), protein_g: it.per100.protein_g * k, carbs_g: it.per100.carbs_g * k, fat_g: it.per100.fat_g * k }; }
+  const b = it.base, k = b.grams && it.grams ? it.grams / b.grams : it.mult / (b.mult || 1);
+  return { kcal: Math.round(b.kcal * k), protein_g: b.protein_g * k, carbs_g: b.carbs_g * k, fat_g: b.fat_g * k };
+}
+function renderEditor(notes) {
+  const rows = ED.items.map((it, i) => { const s = scaled(it); return '<div class="item" data-i="' + i + '"><div class="nm"><span>' + esc(it.name) + ' <small>' + esc(it.portion || '') + '</small></span><span>' + s.kcal + ' kcal</span></div>'
+    + '<div class="macros">P ' + s.protein_g.toFixed(0) + ' g · C ' + s.carbs_g.toFixed(0) + ' g · F ' + s.fat_g.toFixed(0) + ' g' + (it.confidence != null && it.confidence < 0.6 ? ' · <span style="color:var(--c)">not sure</span>' : '') + '</div>'
+    + '<div class="mults">' + [0.5, 1, 1.5, 2].map((m) => '<button data-m="' + m + '" class="' + (Math.abs((it.grams && it.base.grams ? it.grams / it.base.grams : it.mult) - m) < 0.01 ? 'on' : '') + '">' + ({ 0.5: '½×', 1: '1×', 1.5: '1½×', 2: '2×' }[m]) + '</button>').join('')
+    + '<div class="g" title="Grams">⚖️<input type="number" inputmode="decimal" value="' + (it.grams ? Math.round(it.grams) : '') + '" data-g="1" placeholder="g"><span>g</span></div>'
+    + '<button data-rm="1" class="ghost" style="flex:.5">✕</button></div></div>'; }).join('');
+  const tot = ED.items.reduce((a, it) => { const s = scaled(it); a.kcal += s.kcal; a.p += s.protein_g; a.c += s.carbs_g; a.f += s.fat_g; return a; }, { kcal: 0, p: 0, c: 0, f: 0 });
+  sheet('<div class="row" style="justify-content:space-between"><h2 style="margin:0">' + (ED.fresh ? 'Here’s what I see' : 'Edit meal') + '</h2>' + (ED.meal.thumb ? '<img src="' + ED.meal.thumb + '" style="width:44px;height:44px;border-radius:10px;object-fit:cover;flex:none">' : '') + '</div>'
+    + (notes ? '<p class="muted small">' + esc(notes) + '</p>' : '') + rows
+    + '<div class="total"><span>Total</span><span>' + tot.kcal + ' kcal · P ' + tot.p.toFixed(0) + ' · C ' + tot.c.toFixed(0) + ' · F ' + tot.f.toFixed(0) + '</span></div>'
+    + '<div class="row"><input id="fix" placeholder="Wrong food? e.g. “that’s chicken, not pork”"><button id="fixbtn" style="flex:0 0 auto">Fix</button></div>'
+    + '<p class="muted small">' + esc(CFG.honesty || '') + '</p>'
+    + '<div class="row" style="margin-top:10px"><button class="ghost danger" id="discard">' + (ED.fresh ? 'Discard' : 'Delete') + '</button><button class="primary" id="savemeal" style="flex:2">Save</button></div>');
+  $('sheetbody').querySelectorAll('.item').forEach((el) => {
+    const it = ED.items[+el.dataset.i];
+    el.querySelectorAll('[data-m]').forEach((b) => b.onclick = () => { it.mult = +b.dataset.m; it.grams = it.base.grams ? Math.round(it.base.grams * it.mult) : 0; renderEditor(); });
+    const g = el.querySelector('[data-g]'); g.onchange = () => { it.grams = Math.max(0, +g.value || 0); if (it.base.grams) it.mult = it.grams / it.base.grams; renderEditor(); };
+    el.querySelector('[data-rm]').onclick = () => { ED.items.splice(+el.dataset.i, 1); renderEditor(); };
+  });
+  $('fixbtn').onclick = async () => {
+    const correction = $('fix').value.trim(); if (!correction) return;
+    sheet('<div class="thinking"><i></i> Looking again…</div>');
+    let r;
+    if (ED.meal.source === 'photo' && lastPhoto) { const fd = new FormData(); fd.append('photo', lastPhoto.photo, 'photo.jpg'); fd.append('thumb', lastPhoto.thumb, 'thumb.jpg'); fd.append('kind', 'food'); fd.append('correction', correction); fd.append('mealId', ED.meal.id); r = await api('photo', { body: fd }); }
+    else r = await api('text', { json: { text: ED.items.map((i) => i.name).join(', ') || correction, correction, mealId: ED.meal.id } });
+    if (!r.ok) { toast(r.reason || 'Couldn’t re-estimate.'); return renderEditor(); }
+    openEditor(r.meal, { fresh: ED.fresh, notes: r.notes });
+  };
+  $('discard').onclick = async () => { await api('meal/' + ED.meal.id, { method: 'DELETE' }); closeSheet(); refresh(); };
+  $('savemeal').onclick = async () => {
+    const items = ED.items.map((it) => { const s = scaled(it); return { ...it, ...s, base: undefined }; });
+    if (!items.length) return $('discard').onclick();
+    const r = await api('meal/' + ED.meal.id, { method: 'PATCH', json: { items } });
+    if (!r.ok) return toast(r.reason || 'Couldn’t save.');
+    closeSheet(); toast('Logged'); refresh();
+  };
+}
+
+// ---------- just type it ----------
+function openText() {
+  sheet('<h2 style="margin-top:0">What did you eat?</h2><textarea id="tt" rows="3" placeholder="2 eggs and toast with butter"></textarea><button class="primary" id="ttgo" style="width:100%;margin-top:10px">Estimate</button>');
+  $('tt').focus();
+  $('ttgo').onclick = async () => { const text = $('tt').value.trim(); if (!text) return; sheet('<div class="thinking"><i></i> Working it out…</div>'); const r = await api('text', { json: { text, date: day } }); if (!r.ok) { closeSheet(); return toast(r.reason || 'Try naming the foods plainly.'); } openEditor(r.meal, { fresh: true, notes: r.notes }); };
+}
+
+// ---------- a product (barcode or label): how much did you have? ----------
+function openProduct(p, previous) {
+  const per = p.per100 ? 'per 100 g: ' + p.per100.kcal + ' kcal · P ' + p.per100.protein_g + ' · C ' + p.per100.carbs_g + ' · F ' + p.per100.fat_g : p.per_serving ? 'per serving: ' + p.per_serving.kcal + ' kcal · P ' + p.per_serving.protein_g + ' · C ' + p.per_serving.carbs_g + ' · F ' + p.per_serving.fat_g : '';
+  sheet('<h2 style="margin-top:0">' + esc(p.name) + (p.brand ? ' <small class="muted">' + esc(p.brand) + '</small>' : '') + '</h2><p class="muted small">' + esc(per) + '</p>'
+    + (previous ? '<p class="small">You’ve logged this label before (' + esc(String(previous.when).slice(0, 10)) + '). <a href="#" id="uselast">Use last time’s numbers</a></p>' : '')
+    + '<label>How much did you have?</label><div class="row">'
+    + (p.serving_g || p.per_serving ? '<button data-how="serving">1 serving' + (p.serving_g ? ' (' + p.serving_g + ' g)' : '') + '</button>' : '')
+    + (p.pack_g ? '<button data-how="pack">Whole pack (' + p.pack_g + ' g)</button>' : '') + '</div>'
+    + '<div class="row" style="margin-top:8px"><div class="row" style="flex:1"><input id="pg" type="number" inputmode="decimal" placeholder="grams"><span class="muted">g</span></div><div class="row" style="flex:1"><input id="ps" type="number" inputmode="decimal" placeholder="servings" step="0.5"><span class="muted">×</span></div></div>'
+    + '<button class="primary" id="padd" style="width:100%;margin-top:12px">Add to ' + (day === localDate() ? 'today' : day) + '</button>');
+  const mk = (grams, servings) => {
+    let n; if (p.per100 && grams) { const k = grams / 100; n = { kcal: Math.round(p.per100.kcal * k), protein_g: p.per100.protein_g * k, carbs_g: p.per100.carbs_g * k, fat_g: p.per100.fat_g * k }; }
+    else if (p.per_serving) { const k = servings || 1; n = { kcal: Math.round(p.per_serving.kcal * k), protein_g: p.per_serving.protein_g * k, carbs_g: p.per_serving.carbs_g * k, fat_g: p.per_serving.fat_g * k }; grams = grams || (p.serving_g ? p.serving_g * k : 0); }
+    else return null;
+    return { name: p.name, portion: servings ? servings + ' serving' + (servings === 1 ? '' : 's') : grams + ' g', grams: grams || 0, ...n, confidence: 1, source: p.source, per100: p.per100 || undefined, product_code: p.code };
+  };
+  const add = async (item) => { if (!item) return toast('Type grams or servings.'); const r = await api('meal', { json: { date: day, items: [item], source: p.source } }); if (!r.ok) return toast(r.reason || 'Couldn’t save.'); closeSheet(); toast('Logged'); refresh(); };
+  $('sheetbody').querySelectorAll('[data-how]').forEach((b) => b.onclick = () => add(b.dataset.how === 'pack' ? mk(p.pack_g, 0) : mk(p.serving_g, 1)));
+  $('padd').onclick = () => { const g = +$('pg').value, s = +$('ps').value; add(g ? mk(g, 0) : mk(0, s || 1)); };
+  if (previous) $('uselast').onclick = (e) => { e.preventDefault(); openProduct(previous.product); };
+}
+
+// ---------- weigh in ----------
+function openWeigh() {
+  const unit = (S.targets && S.targets.unit) || 'kg';
+  sheet('<h2 style="margin-top:0">Weigh in</h2><div class="row"><input id="wv" type="number" inputmode="decimal" placeholder="' + (unit === 'lb' ? '165' : '75') + '" step="0.1"><select id="wu" style="flex:.5"><option value="kg"' + (unit === 'kg' ? ' selected' : '') + '>kg</option><option value="lb"' + (unit === 'lb' ? ' selected' : '') + '>lb</option></select></div><button class="primary" id="wgo" style="width:100%;margin-top:12px">Save for ' + (day === localDate() ? 'today' : day) + '</button>');
+  $('wv').focus();
+  $('wgo').onclick = async () => { const r = await api('weight', { json: { date: day, value: +$('wv').value, unit: $('wu').value } }); if (!r.ok) return toast(r.reason || 'Couldn’t save.'); if (S.targets) { S.targets.unit = r.unit; save(); } closeSheet(); toast('Weight saved'); refresh(); };
+}
+
+// ---------- receipts ----------
+async function openReceipts() {
+  show('receipts');
+  const r = await api('receipts');
+  const cur = r.currency ? r.currency + ' ' : '';
+  $('rtotals').innerHTML = '<div class="row"><div><div class="muted small">This week</div><b>' + cur + (r.totals?.week ?? 0).toFixed(2) + '</b></div><div><div class="muted small">This month</div><b>' + cur + (r.totals?.month ?? 0).toFixed(2) + '</b></div><div><div class="muted small">All</div><b>' + cur + (r.totals?.all ?? 0).toFixed(2) + '</b></div></div>';
+  $('rlist').innerHTML = (r.receipts || []).length ? r.receipts.map((x) => '<div class="receipt"><div class="h"><span>' + esc(x.store) + ' <small class="muted">' + esc(x.date || '') + (x.shared ? ' · ' + esc(x.byName || 'household') : '') + '</small></span><span>' + esc(x.currency) + ' ' + Number(x.total).toFixed(2) + '</span></div>'
+    + x.items.map((it) => '<div class="it"><span>' + esc(it.name) + (it.qty > 1 ? ' ×' + it.qty : '') + '</span><span class="muted">' + Number(it.price).toFixed(2) + '</span><button data-add="' + esc(it.name) + '">+ today</button></div>').join('')
+    + '<div class="it" style="justify-content:flex-end"><button class="ghost danger" data-rdel="' + x.id + '">Delete</button></div></div>').join('') : '<p class="muted center">No receipts yet. Tap 🧾 Receipt on the day screen.</p>';
+  $('rlist').querySelectorAll('[data-add]').forEach((b) => b.onclick = async () => { b.disabled = true; const t = await api('text', { json: { text: b.dataset.add, date: localDate() } }); b.disabled = false; if (!t.ok) return toast(t.reason || 'Couldn’t estimate that.'); day = localDate(); openEditor(t.meal, { fresh: true, notes: t.notes }); });
+  $('rlist').querySelectorAll('[data-rdel]').forEach((b) => b.onclick = async () => { if (!confirm('Delete this receipt?')) return; await api('receipt/' + b.dataset.rdel, { method: 'DELETE' }); openReceipts(); });
+}
+
+// ---------- household ----------
+async function openSettings() {
+  show('settings');
+  const r = await api('household'); const h = r.household;
+  const unit = (S.targets && S.targets.unit) || 'kg';
+  if (!h) $('hh').innerHTML = '<div class="card"><p style="margin-top:0">Share with your spouse or family: see each other’s days, one receipts list, both weight trends. Everyone keeps their own targets and meals.</p><button class="primary" id="hcreate" style="width:100%">Create a household</button><div class="row" style="margin-top:10px"><input id="hcode" placeholder="Invite code" style="text-transform:uppercase" maxlength="6"><button id="hjoin" style="flex:0 0 auto">Join</button></div></div>';
+  else $('hh').innerHTML = '<div class="card"><div class="row" style="justify-content:space-between"><b>' + esc(h.name) + '</b><span class="muted small">invite code <b style="letter-spacing:.15em">' + esc(h.code) + '</b></span></div>'
+    + h.members.map((m) => '<div class="member" ' + (m.me ? '' : 'data-view="' + m.id + '" data-name="' + esc(m.name) + '" style="cursor:pointer"') + '><div class="av">' + esc((m.name || '?')[0].toUpperCase()) + '</div><div style="flex:1"><b>' + esc(m.name) + (m.me ? ' (you)' : '') + '</b><div class="muted small">' + (m.weights?.latest ? fmtW(m.weights.latest, unit) + (m.weights.change != null && m.weights.points.length > 1 ? ' · ' + (m.weights.change > 0 ? '+' : '') + fmtW(m.weights.change, unit) + ' / 30 d' : '') : 'no weigh-ins') + '</div></div>' + (m.me ? '' : '<span class="muted">›</span>') + '</div>').join('')
+    + '<button class="ghost danger" id="hleave" style="width:100%;margin-top:8px">Leave household</button></div>';
+  const nm = () => (S.targets && S.targets.name) || '';
+  const hc = $('hcreate'); if (hc) hc.onclick = async () => { const name = prompt('Name it (e.g. “The Smiths”)', 'Our household'); if (name === null) return; const x = await api('household', { json: { name, memberName: nm() } }); if (!x.ok) return toast(x.reason); openSettings(); };
+  const hj = $('hjoin'); if (hj) hj.onclick = async () => { const x = await api('household/join', { json: { code: $('hcode').value, memberName: nm() } }); if (!x.ok) return toast(x.reason); toast('Joined'); openSettings(); };
+  const hl = $('hleave'); if (hl) hl.onclick = async () => { if (!confirm('Leave the household?')) return; await api('household/leave', { json: {} }); openSettings(); };
+  $('hh').querySelectorAll('[data-view]').forEach((el) => el.onclick = () => { viewUser = { id: el.dataset.view, name: el.dataset.name }; day = localDate(); show('home'); refresh(); });
+  $('whoami').textContent = S.email;
+}
+</script>
+</body>
+</html>

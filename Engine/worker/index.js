@@ -11,6 +11,7 @@ import { normaliseHandoffActions, stripIntakeMarker, handoffEvent, runHandoffAct
 import { listLeads, getLead, summariseLead, sendLead, maybeAutoLead, leadsConfig, cleanVisitor } from "./leads.js";
 import { listGaps, getGap, setGapState, draftGap } from "./gaps.js";
 import { normaliseBooking, bookingLive, bookingStep, bookingView } from "./booking.js";
+import { handleTrack } from "./track.js";
 import { isHandoffId, createHandoff, readHandoff, addHandoffMessage, closeHandoff, listHandoffs, getHandoff, notifyHumanRequested, PERSON_LIMITS } from "./person.js";
 
 // ============================================================================
@@ -73,6 +74,9 @@ export default {
       const given = await accessToken({ ACCESS_PASSPHRASE: String(b.passphrase || "") }, "bot-you-own/admin/v1");
       return safeEqual(given, adminToken) ? json({ token: adminToken }) : json({ error: "wrong admin code" }, 401);
     }
+
+    // The food log (Engine/worker/track.js): /track, /api/track/*, /api/admin/track/*. Off = 404.
+    if (url.pathname === "/track" || url.pathname.startsWith("/track/") || url.pathname.startsWith("/api/track/") || url.pathname.startsWith("/api/admin/track/")) return handleTrack(request, env, url, { isAdmin, adminEnabled, allowed });
 
     if (url.pathname.startsWith("/api/admin/") || url.pathname.startsWith("/engine/")) {
       if (!isAdmin) return json({ error: "admin only" }, adminEnabled ? 401 : 404);
