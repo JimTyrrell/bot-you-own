@@ -43,10 +43,10 @@
 // ============================================================================
 
 import { CONFIG } from "../../YourBots/config.js";
-import { foodLogConfig, json, sha256hex, nowIso, pickDate, addDays, todayUtc, randomCode, randomId, clamp, round1, cleanEmail, readJson, toBase64, DEV_PEPPER } from "./food-common.js";
-import { runVision, PROMPTS, extractJson, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize } from "./food-vision.js";
-import { verifyIdToken } from "./food-signin.js";
-import { lookupBarcode, rememberLabel, saveReceipt, listReceipts, deleteReceipt, setWeight, listWeights, householdOf, createHousehold, joinHousehold, leaveHousehold, canView } from "./food-extras.js";
+import { foodLogConfig, json, sha256hex, nowIso, pickDate, addDays, todayUtc, randomCode, randomId, clamp, round1, cleanEmail, readJson, toBase64, DEV_PEPPER } from "./track-common.js";
+import { runVision, PROMPTS, extractJson, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize } from "./track-vision.js";
+import { verifyIdToken } from "./track-signin.js";
+import { lookupBarcode, rememberLabel, saveReceipt, listReceipts, deleteReceipt, setWeight, listWeights, householdOf, createHousehold, joinHousehold, leaveHousehold, canView } from "./track-extras.js";
 
 const DEVICE_KEY_RE = /^[0-9a-f]{64}$/;
 const THUMB_MAX_PX = 256, THUMB_MAX_BYTES = 48 * 1024;

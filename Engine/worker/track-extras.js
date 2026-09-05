@@ -4,8 +4,8 @@
 //  device key). Nothing here sends email or keeps a photo.
 // ============================================================================
 
-import { nowIso, randomCode, randomId, clamp, round1, pickDate, addDays, todayUtc } from "./food-common.js";
-import { validBarcode } from "./food-vision.js";
+import { nowIso, randomCode, randomId, clamp, round1, pickDate, addDays, todayUtc } from "./track-common.js";
+import { validBarcode } from "./track-vision.js";
 
 // Open Food Facts asks for a descriptive User-Agent (their terms). Free, no key.
 const OFF_UA = "bot-you-own-food-log/1.0 (https://github.com/JimTyrrell/bot-you-own; food log for a coach's clients)";

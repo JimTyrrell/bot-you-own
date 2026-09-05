@@ -15,7 +15,7 @@
 //  Vision takes it too. The old byte-array shape (llava) is not used.
 // ============================================================================
 
-import { toBase64, round1, clamp } from "./food-common.js";
+import { toBase64, round1, clamp } from "./track-common.js";
 
 const NO_THINK = { chat_template_kwargs: { enable_thinking: false } };
 
