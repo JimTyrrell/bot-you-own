@@ -23,6 +23,7 @@
 // ============================================================================
 
 import { sendWebhook } from "./handoff.js";
+import { languageName, languageSettings } from "./language.js";
 
 const FALLBACK_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const NOT_A_LEAD = new Set(["", "admin"]);
@@ -85,7 +86,10 @@ export async function summariseLead(env, config, visitor, { refresh = false } = 
   const model = config.provider === "workers-ai" && config.model ? config.model : FALLBACK_MODEL;
   const transcript = lead.turns.map((t, i) => `${i + 1}. [${t.project}] Visitor: ${t.asked}\n   Bot: ${t.answered}${t.refused ? "  (the bot could not answer this)" : ""}`).join("\n");
   const owner = config.owner || "the business";
-  const system = `You read a chat log between a visitor and ${owner}'s website assistant, and write a short brief for the person who will follow up. Be concrete and honest. Do not invent facts that are not in the log. If the log is thin, say so and keep the score low.
+  // The brief is for the OWNER, so it's in the owner's language (config.languages.owner)
+  // whatever the visitor wrote in. The log itself stays as the visitor typed it.
+  const briefLanguage = languageName(languageSettings(config).owner);
+  const system = `You read a chat log between a visitor and ${owner}'s website assistant, and write a short brief for the person who will follow up. Be concrete and honest. Do not invent facts that are not in the log. If the log is thin, say so and keep the score low. Write the brief in ${briefLanguage}, whatever language the visitor wrote in; quote the visitor's own words as they are.
 Answer ONLY with a JSON object, no prose, no code fence, with exactly these keys:
 {
   "asked": ["3-6 short bullets: what they asked about, most important first"],

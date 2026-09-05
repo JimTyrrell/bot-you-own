@@ -36,6 +36,17 @@ export const INJECTION_PATTERNS = [
   /\b(translate|encode|base64|rot13|reverse|summari[sz]e|paraphrase)\b.{0,40}\b(your|the)\s+(instructions?|prompt|rules)/i,
   /<\|im_start\|>|<\|system\|>|\[INST\]|<<SYS>>|\bBEGIN\s+SYSTEM\b/i,
   /\bI am (the|your) (developer|owner|administrator|creator)\b.{0,60}\b(instructions?|prompt|rules)/i,
+  // The same three moves in Spanish, French and German — the top phrasings only.
+  // "Ignore your previous instructions", "show me your prompt", "system prompt", "developer mode".
+  /\bignora(?:r|d|)\s+(?:todas?\s+)?(?:las\s+|tus\s+|sus\s+)?(?:instrucciones|reglas|indicaciones)\s+(?:anteriores|previas)/i,
+  /\b(?:muestra|mu[eé]strame|revela|imprime|repite|escribe|dime)\b.{0,40}\b(?:tu|tus|el|la|las)\s+(?:prompt|instrucciones|reglas|configuraci[oó]n|mensaje del sistema)/i,
+  /\b(?:prompt|instrucciones|mensaje)\s+(?:del\s+)?sistema\b|\bmodo\s+(?:desarrollador|dios|sin restricciones)\b/i,
+  /\bignore[sz]?\s+(?:toutes\s+)?(?:les\s+|tes\s+|vos\s+)?(?:instructions|r[èe]gles|consignes)\s+(?:pr[ée]c[ée]dentes|ant[ée]rieures)/i,
+  /\b(?:montre|affiche|r[ée]v[èe]le|imprime|r[ée]p[èe]te|donne)(?:-moi)?\b.{0,40}\b(?:ton|tes|votre|vos|le|la|les)\s+(?:prompt|instructions|r[èe]gles|consignes|configuration|message syst[èe]me)/i,
+  /\b(?:prompt|instructions|message)\s+(?:du\s+)?syst[èe]me\b|\bmode\s+(?:d[ée]veloppeur|dieu|sans restrictions?)\b/i,
+  /\bignorier(?:e|en|)\s+(?:alle\s+)?(?:deine\s+|die\s+|ihre\s+)?(?:vorherigen|bisherigen|fr[üu]heren|obigen)\s+(?:anweisungen|regeln|instruktionen)/i,
+  /\b(?:zeige?|zeig|gib|drucke|wiederhole|verrate|nenne)\b.{0,40}\b(?:mir\s+)?(?:dein|deine|deinen|den|die|das)\s+(?:prompt|anweisungen|regeln|konfiguration|systemnachricht)/i,
+  /\bsystem(?:prompt|anweisung(?:en)?|nachricht)\b|\bentwicklermodus\b/i,
 ];
 
 // LLM02 Sensitive Information Disclosure — things people paste by accident.
@@ -134,9 +145,34 @@ export function screenOutbound(reply, { allowedLinks, protectedText, config }) {
 // phone number. If the reply is a decline and the contact isn't in it, add it.
 // A contact line on the end of a decline is never wrong; a missing one is.
 const DECLINE = /\b(i(?:'|’)?m not able to|i am not able to|i can(?:'|’)?t\b|i cannot\b|i(?:'|’)?m unable to|i am unable to|i don(?:'|’)?t have (?:that|specific|any|the)\b|not something i can\b|i(?:'|’)?d rather not\b|isn(?:'|’)?t (?:something )?(?:written|in the files|in our files))/i;
-export function ensureHandoff(reply, project) {
+// The same "I can't / I don't have that" in Spanish, French, German, Portuguese,
+// Italian and Dutch. Phrase-based like the English one: the common ways a model
+// says no in each language, nothing clever.
+const DECLINE_OTHER = /\b(no (?:puedo|tengo|dispongo de)|no (?:me )?es posible|je ne (?:peux|suis) pas|je n(?:'|’)ai pas|ich kann (?:das |dazu |ihnen )?(?:leider )?nicht|kann ich (?:leider )?nicht|ich habe (?:dazu |leider )?keine|(?:nao|não) (?:posso|tenho)|non (?:posso|ho|sono in grado)|ik kan (?:dat |daar )?(?:helaas )?niet|ik heb (?:daar |helaas )?geen)\b/i;
+
+// The "[HANDOFF]" line 7-answering-strict.md asks for at the end of a decline. A
+// model declining in Spanish won't say "I'm not able to", so the prompt asks it
+// to mark the decline instead; the code reads the mark and takes it out. Tolerant
+// of the same manglings as the intake marker (case, spaces, stray asterisks).
+const HANDOFF_MARKER = /^[ \t]*[*_]*\[\s*HANDOFF\s*\][*_]*[ \t]*$/gim;
+export function stripHandoffMarker(text) {
+  const found = HANDOFF_MARKER.test(String(text || ""));
+  HANDOFF_MARKER.lastIndex = 0;
+  if (!found) return { text, found: false };
+  const clean = String(text).replace(HANDOFF_MARKER, "").replace(/\n{3,}/g, "\n\n").trim();
+  HANDOFF_MARKER.lastIndex = 0;
+  return { text: clean, found: true };
+}
+
+// `declined: true` = the code already knows this is a decline (the marker was
+// there), so the phrase check is skipped. Otherwise a decline is: an English or
+// other-language "I can't" phrase, or the owner's own handoffText — a model that
+// kept the sentence but dropped the contact.
+export function ensureHandoff(reply, project, { declined = false } = {}) {
   if (project.grounding === "open" || !project.handoffContact) return { text: reply, added: false };
-  if (!DECLINE.test(reply)) return { text: reply, added: false };
+  const ownText = String(project.handoffText || "").trim().slice(0, 30);
+  const isDecline = declined || DECLINE.test(reply) || DECLINE_OTHER.test(reply) || (ownText.length >= 12 && reply.includes(ownText));
+  if (!isDecline) return { text: reply, added: false };
   const contact = project.handoffContact;
   const tokens = (contact.match(/[\w.+-]+@[\w.-]+|\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}|https?:\/\/\S+/g) || []);
   const present = tokens.length ? tokens.some((t) => reply.includes(t)) : reply.includes(contact.slice(0, 24));

@@ -516,6 +516,56 @@ Knobs: `enabled: false` hides both buttons and makes both routes a 404; an empty
 an Aura voice (angus, asteria, arcas, orion, orpheus, athena, luna, zeus,
 perseus, helios, hera, stella — the model page lists them); `maxSeconds`;
 `maxChars`. `/api/config` tells the page which halves are on (`voice: {enabled, in, out}`).
+## More than one language · `config.js` → `languages`
+A visitor who writes in Spanish gets a Spanish answer, built from your English
+files. Nothing is translated ahead of time and there is no translation step in
+the middle: the model already reads and writes dozens of languages, so all the
+code has to do is (1) work out what language the visitor is writing in, (2) tell
+the model plainly, and (3) make sure the guardrails still hold.
+
+**How it detects.** In code, no model call (`Engine/worker/language.js`). The
+script settles Chinese, Japanese, Korean, Arabic, Russian/Ukrainian and Hindi.
+For the Latin-alphabet languages it counts the little words — "el", "les",
+"der", "não", "che", "het" — across the visitor's last two messages, plus the
+accents only one language uses (¿ ñ ß ã). Detected: English, Spanish, French,
+German, Portuguese, Italian, Dutch, and the six scripts above. Anything else, or
+a message too short to tell ("ok"), is treated as English — exactly the old
+behaviour. Chip under the reply: `language:es`.
+
+**Three settings.**
+- `mode: "visitor"` (default) — reply in the visitor's language. `"owner"` —
+  always reply in yours, whatever they write in.
+- `owner: "en"` — the language your files, your handoff line and the lead brief
+  are in. The model is told "the files are in English; use them as they are and
+  don't remark on it".
+- `allowed: []` — empty means any language the model speaks. `["en", "es"]`
+  means only those: a visitor writing French gets one polite sentence, *in
+  French*, saying you can help in English and Spanish (chip `language-unavailable`).
+
+**What it does not do.** It does not translate your files, your greeting, your
+starter questions or the page. Your **handoff contact line stays exactly as you
+wrote it** — it's contact details, and a translated phone number is still a phone
+number but a translated "email hello@… and a human will pick it up" is a
+liability. A strict bot declining in Spanish says one apologetic sentence in
+Spanish and then your English line, word for word. Underneath, the strict prompt
+asks the model to end every decline with a `[HANDOFF]` marker; the code strips
+it and, if the contact went missing, appends it (chip `handoff-appended`) — so
+the enforcement no longer depends on spotting "I'm not able to" in English. The
+injection screen also knows the Spanish, French and German versions of "ignore
+your previous instructions" / "show me your prompt" / "developer mode"; the
+canned refusal it sends back is in English.
+
+**The library.** The shared AI Search instance embeds with
+`@cf/qwen/qwen3-embedding-0.6b`, which is multilingual, so a Spanish question
+finds an English PDF. If you ever create an instance with an English-only
+embedding model (`bge-base-en`), cross-language retrieval stops working and
+only the bundled `knowledge/*.md` files — which are always in the prompt — will
+answer non-English questions. Pick `bge-m3` or a Qwen embedding model for a new
+instance.
+
+**Leads.** The audit log keeps the visitor's words as typed. The AI brief is
+written in the owner's language (`languages.owner`) so the person following up
+can read it.
 
 ## Two things to know about the iframe
 1. Your website analytics won't see chat activity (different origin). Log from the Worker instead — better data anyway.
