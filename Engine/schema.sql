@@ -230,6 +230,42 @@ CREATE TABLE IF NOT EXISTS track_receipts (
 );
 CREATE INDEX IF NOT EXISTS idx_track_receipts_h ON track_receipts(household_id, date);
 CREATE TABLE IF NOT EXISTS track_weights (user_id TEXT NOT NULL, date TEXT NOT NULL, kg REAL NOT NULL, PRIMARY KEY (user_id, date));   -- always kg; the unit is the person's choice on the page
+-- v3.10 — the day as a conversation (Engine/worker/track-day.js; docs/FOOD-LOG.md).
+CREATE TABLE IF NOT EXISTS track_day_chat (       -- the words of a day; meals themselves stay in track_meals and are merged by time
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id    TEXT NOT NULL,
+  date       TEXT NOT NULL,
+  role       TEXT NOT NULL,        -- user | assistant
+  kind       TEXT NOT NULL,        -- reaction (code-written, points at a meal) | question | answer
+  text       TEXT NOT NULL,
+  meal_id    TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_track_day_chat ON track_day_chat(user_id, date, id);
+CREATE TABLE IF NOT EXISTS track_summaries (      -- the written day / week, cached under a hash of what it summarised
+  user_id    TEXT NOT NULL,
+  date       TEXT NOT NULL,        -- the day, or the week's last day
+  kind       TEXT NOT NULL,        -- day | week
+  json       TEXT NOT NULL,
+  hash       TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (user_id, date, kind)
+);
+CREATE TABLE IF NOT EXISTS track_favourites (     -- every distinct meal a person has logged, and the name they gave it
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL,
+  key        TEXT NOT NULL,        -- the sorted food names
+  name       TEXT,                 -- "work lunch"
+  items_json TEXT NOT NULL,
+  kcal REAL, protein_g REAL, carbs_g REAL, fat_g REAL,
+  thumb      TEXT,
+  hours      TEXT,                 -- local hours it was logged at (last 20), for "your morning staples"
+  times_used INTEGER DEFAULT 1,
+  last_used  TEXT,
+  name_asked INTEGER DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_track_fav_key ON track_favourites(user_id, key);
 CREATE TABLE IF NOT EXISTS track_households (id TEXT PRIMARY KEY, name TEXT, code TEXT UNIQUE, created_at TEXT NOT NULL);   -- code = the 6-character invite
 CREATE TABLE IF NOT EXISTS track_members (household_id TEXT NOT NULL, user_id TEXT PRIMARY KEY, name TEXT, joined_at TEXT NOT NULL);   -- one household per person
 CREATE INDEX IF NOT EXISTS idx_track_members_h ON track_members(household_id);

@@ -44,9 +44,38 @@ food log) like any bot; Export / Commit to GitHub write `project.json`.
   cut = −500, build = +300; protein 2.0 g/kg (cut) or 1.8 g/kg (in the range the
   Morton 2018 meta-analysis found useful, 1.6–2.2 g/kg); fat 25% of calories;
   carbs the remainder. It's a starting point; the coach adjusts.
-- **The day:** a calorie ring, three macro bars, a 7-day strip of small rings,
-  streak, the meals with thumbnails (tap to edit, ✕ to delete), yesterday/tomorrow
-  arrows, the weight trend when there are weigh-ins.
+- **Three tabs, one date (v3.10):** **Chat · Day · Week**, with the yesterday /
+  tomorrow arrows under all three. The tab is the lens; the date is the subject.
+- **Chat — the day is a conversation.** A small ring and the three numbers pinned
+  at the top; below it, every meal as a card (tap to edit, ✕ to delete) with a
+  one-line reaction written by code, never the model: *Logged. 640 kcal · 1,360
+  left today · protein 45 of 150.* You can also **talk to the day**: "was lunch
+  too much?", "what should dinner be to hit protein?" — the coach bot answers from
+  the day's own numbers (it is handed the totals as facts and may not invent any;
+  no medical advice; pain, fainting or an eating disorder get "one for your coach").
+  On a new day the first thing you see is **yesterday's summary**, one line, tap for
+  the rest.
+- **Day — the numbers and the words.** The big ring, the three bars, the meals, and
+  a written review: what you ate, where it landed against the targets, one thing
+  that went well, one thing for tomorrow (or "the rest of today"). One small model
+  call, **cached under a hash of the meals**, so it is only rewritten when the food
+  changed. A day with nothing logged says so; nothing is made up. ↻ writes it again.
+- **Week — the patterns.** The 7-day strip, a row per day, the weight trend, and a
+  seven-day look-back that reads the days rather than the meals: average against
+  target across logged days, which days were off and what they had in common,
+  how many days hit protein, the weight trend, one change for next week.
+- **Repeats — because people eat the same things.** Every saved meal becomes a
+  **favourite** (keyed on its foods): a chip above the composer, the ones you eat at
+  this time of day first, tap to log it again at once. **⟲ Same as yesterday** (and
+  *same as last Tuesday* when there was one) copies a whole day, then you delete
+  the one that differs. Typing or saying **"chicken rice again"** or **"log my work
+  lunch"** matches a favourite *before* any model runs — "Logging your chicken, rice
+  and broccoli from Tuesday, about 640 kcal. Right?" with Yes / ½× / Adjust first /
+  No, estimate fresh. After the third time the coach asks once for a name; every
+  fifth repeat opens the editor with "still about this much?" so a staple never
+  quietly drifts. ★ Staples lists them all: log, half, rename, forget.
+- **One composer.** *Say what you ate, or ask…* takes both. The mic uses the
+  browser's own speech recognition where there is one (Chrome, Safari).
 - **Snap a plate:** the big green button opens the camera. The photo is shrunk in
   the browser to ≤ 1024 px before upload (a 12 MP photo never goes over the wire).
   Back comes the list of foods; **½× 1× 1½× 2×** buttons, a grams field (⚖️),
@@ -186,14 +215,24 @@ is the ceiling.
 - It doesn't count micronutrients, water, or exercise.
 - It doesn't send email. Ever. (Owner's rule for this whole repo.)
 - It doesn't sync between browsers by itself — that's the point of the identity
-  model; linking is the coach's tap or a sign-in.
+  model; linking is the coach's tap, a sign-in, or the return window
+  (`docs/IDENTITY.md`).
+- The coach bot in the chat answers from your log; it never estimates a food
+  itself (the photo/text estimate does that) and never gives medical advice.
 
 ## Under the hood
 
 `Engine/worker/track.js` (routes, meals, day/week, coach) · `track-vision.js`
 (the model, prompts, JSON checks, barcode check digit, image header sizes) ·
 `track-extras.js` (barcodes, labels, receipts, weights, households) ·
-`track-common.js`. Who a person is: `Engine/identity/` (`docs/IDENTITY.md`).
+`track-day.js` (v3.10: the day's chat, the code-written reactions, favourites and
+the matcher, repeats, the two summaries and their cache, "say") · `track-common.js`.
+Routes for v3.10: `chat`, `say`, `favourites`, `repeat`, `favourite/name`,
+`favourite/<id>`, `summary`; coach `client/<id>/summary`. Tables `track_day_chat`,
+`track_summaries`, `track_favourites`. Summaries and answers go through
+`Engine/worker/gateway.js` with the deployment's chat model (gpt-oss needs a
+token budget of ~1,400 for a summary: it thinks before it writes). Proof:
+`node Engine/tests/plate-day.mjs --url … --admin …` (34 checks, ~150 neurons). Who a person is: `Engine/identity/` (`docs/IDENTITY.md`).
 The bot's settings are normalised by `Engine/worker/projects.js` → `normaliseFood`.
 Tables are in `Engine/schema.sql` (`id_*`, `track_*`), created on first use.
 Upgrading from v3.6: people re-join once (ids now include the bot id; the old

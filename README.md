@@ -79,7 +79,11 @@ jobs? Make two projects; the sidebar shows both.
 **Bonus, for coaches: a photo food log.** `YourBots/plate/` is a bot of kind
 `food`: a camera-first food log your clients use on their phones at `/apps/plate` —
 snap the plate, fix the portion, see the day as a ring and three bars; barcodes,
-labels, receipts, weigh-ins, a shared household. You see every client at
+labels, receipts, weigh-ins, a shared household. The day is a conversation: every
+meal is a turn with a one-line reaction, you can ask the coach bot "what should
+dinner be to hit protein?", and Day / Week tabs carry a written review and a
+seven-day look-back. The things you eat every day are one-tap chips ("same as
+yesterday", "log my work lunch"). You see every client at
 `/apps/plate/coach`. Sign-in is passkeys, Google/Microsoft/Apple, an authenticator
 code or email + device — never an email sent (`docs/IDENTITY.md`). Copy the folder
 for a second, separate log. `docs/FOOD-LOG.md` has the whole thing.

@@ -32,7 +32,10 @@
 //   GET/POST household, POST household/join, POST household/leave
 //   GET  receipts · DELETE receipt/<id>
 //  Admin (x-admin-token): GET /api/admin/apps/<id>/clients · GET client/<uid> ·
-//   GET export.csv · POST link {email, deviceCode}
+//   GET export.csv · POST link {email, deviceCode} · GET client/<id>/summary?kind=week&end=
+//   The day as a conversation, summaries, favourites (v3.10 — Engine/worker/track-day.js):
+//   GET chat?date= · POST say {date,text,hour,tz} · GET favourites?hour=&date= · POST repeat {favouriteId|fromDate,date,mult}
+//   POST favourite/name {id,name} · DELETE favourite/<id> · GET summary?date=&kind=day|week
 //  Pages: /apps/<id> (the app) · /apps/<id>/coach (the coach view). Both are the
 //  static files in Engine/public/food/, served through here per bot.
 // ============================================================================
@@ -42,6 +45,7 @@ import { identify, signInMethods, verifyIdToken } from "../identity/index.js";
 import { join as idJoin, userIdFor, userById as idUserById, bindDevice, linkByCode, deviceCount, listDevices, pendingByEmail, touch as idTouch, DEV_PEPPER, pepperOf } from "../identity/devices.js";
 import { runVision, PROMPTS, extractJson, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize } from "./track-vision.js";
 import { lookupBarcode, rememberLabel, saveReceipt, listReceipts, deleteReceipt, setWeight, listWeights, householdOf, createHousehold, joinHousehold, leaveHousehold, canView } from "./track-extras.js";
+import { ensureDaySchema, dayChat, addWords, afterMeal, editedMeal, removedMeal, listFavourites, nameFavourite, forgetFavourite, matchFavourite, repeatMeals, askDay, summaryFor, classifySay, looksLikeFood } from "./track-day.js";
 
 const THUMB_MAX_PX = 256, THUMB_MAX_BYTES = 48 * 1024;
 let HONESTY = "Photo estimates are typically within about 30%. Fix the portion when it's off.";   // per bot: project.json → food.honesty
@@ -64,6 +68,7 @@ export async function ensureTrackSchema(env) {
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS track_members (household_id TEXT NOT NULL, user_id TEXT PRIMARY KEY, name TEXT, joined_at TEXT NOT NULL)`),
     env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_track_members_h ON track_members(household_id)`),
   ]);
+  await ensureDaySchema(env);
   TRACK_SCHEMA_OK = true;
 }
 
@@ -143,13 +148,15 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
     const row = await env.DB.prepare(`SELECT id, user_id FROM track_meals WHERE id = ?`).bind(id).first();
     if (!row) return json({ error: "no such meal" }, 404);
     if (row.user_id !== me.id) return json({ error: "not yours", reason: "You can look at a household member's day, but only they can change it." }, 403);
-    if (request.method === "DELETE") { await env.DB.prepare(`DELETE FROM track_meals WHERE id = ?`).bind(id).run(); return json({ ok: true }); }
+    if (request.method === "DELETE") { await removedMeal(env, me, id); await env.DB.prepare(`DELETE FROM track_meals WHERE id = ?`).bind(id).run(); return json({ ok: true }); }
     if (request.method === "PATCH") {
       const items = sanitiseItems(body.items);
       if (!items.length) return json({ error: "no items", reason: "A meal needs at least one food. Delete it instead." }, 400);
       const t = totalsOf(items);
       await env.DB.prepare(`UPDATE track_meals SET items_json = ?, kcal = ?, protein_g = ?, carbs_g = ?, fat_g = ? WHERE id = ?`).bind(JSON.stringify(items), t.kcal, t.protein_g, t.carbs_g, t.fat_g, id).run();
-      return json({ ok: true, meal: await readMeal(env, id) });
+      const meal = await readMeal(env, id);
+      const after = await editedMeal(env, me, meal, { tzOffsetMin: body.tz });
+      return json({ ok: true, meal, totals: after.totals, favourite: after.favourite });
     }
     return json({ error: "PATCH or DELETE" }, 405);
   }
@@ -159,6 +166,43 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
     const who = target === me.id ? me : await userById(env, me.bot, target);
     if (!who) return json({ error: "no such user" }, 404);
     return json(sub === "day" ? await dayView(env, who, pickDate(url.searchParams.get("date")), { readOnly: target !== me.id }) : await weekView(env, who, pickDate(url.searchParams.get("end"))));
+  }
+  // --- The day as a conversation (Engine/worker/track-day.js). ---------------------------
+  if (sub === "chat") {
+    const target = String(url.searchParams.get("user") || me.id);
+    if (target !== me.id && !(await canView(env, me.id, target))) return json({ error: "not allowed" }, 403);
+    const who = target === me.id ? me : await userById(env, me.bot, target);
+    if (!who) return json({ error: "no such user" }, 404);
+    return json({ ...(await dayChat(env, who, pickDate(url.searchParams.get("date")))), readOnly: target !== me.id });
+  }
+  if (sub === "say") {
+    if (request.method !== "POST") return json({ error: "POST only" }, 405);
+    if (!(await allowed(env, request))) return json({ error: "rate-limited", reason: "Give me a moment and try again." }, 429);
+    return say(env, cfg, me, body);
+  }
+  if (sub === "favourites") return json(await listFavourites(env, me, { hour: url.searchParams.get("hour"), date: pickDate(url.searchParams.get("date")) }));
+  if (sub === "repeat") {
+    if (request.method !== "POST") return json({ error: "POST only" }, 405);
+    const date = pickDate(body.date);
+    const r = await repeatMeals(env, me, { favouriteId: body.favouriteId, fromDate: body.fromDate, date, mult: body.mult, insertMeal: (m) => insertMeal(env, me, m) });
+    if (!r.ok) return json(r, r.status || 400);
+    let totals = null;
+    for (const m of r.meals) totals = (await afterMeal(env, me, m, { repeat: true, favouriteName: r.favourite?.name || "", tzOffsetMin: body.tz })).totals;
+    return json({ ...r, totals });
+  }
+  if (sub === "favourite/name") {
+    if (request.method !== "POST") return json({ error: "POST only" }, 405);
+    const r = await nameFavourite(env, me, body.id, body.name); return json(r, r.ok ? 200 : r.status || 400);
+  }
+  if (sub.startsWith("favourite/") && request.method === "DELETE") return json(await forgetFavourite(env, me, sub.slice(10)));
+  if (sub === "summary") {
+    const target = String(url.searchParams.get("user") || me.id);
+    if (target !== me.id && !(await canView(env, me.id, target))) return json({ error: "not allowed" }, 403);
+    const who = target === me.id ? me : await userById(env, me.bot, target);
+    if (!who) return json({ error: "no such user" }, 404);
+    const kind = url.searchParams.get("kind") === "week" ? "week" : "day";
+    if (!(await allowed(env, request))) return json({ error: "rate-limited" }, 429);
+    return json(await summaryFor(env, who, { date: pickDate(url.searchParams.get("date")), kind, coachName: cfg.coachName, force: url.searchParams.get("refresh") === "1" }));
   }
   if (sub === "barcode") {
     if (request.method !== "POST") return json({ error: "POST only" }, 405);
@@ -256,7 +300,8 @@ async function photo(request, env, cfg, me) {
     if (!items.length) return json({ error: "no food", reason: parsed?.notes ? `I couldn't find food in that: ${String(parsed.notes).slice(0, 140)}` : "I couldn't make out any food in that photo. Try closer, with more light — or type it.", raw: out.text.slice(0, 300) }, 422);
     const meal = mealId ? await updateMealItems(env, me, mealId, items) : await insertMeal(env, me, { date, items, source: "photo", thumb });
     if (!meal) return json({ error: "no such meal" }, 404);
-    return json({ ok: true, meal, notes: String(parsed?.notes || "").slice(0, 200), honesty: HONESTY });
+    const after = mealId ? await editedMeal(env, me, meal, { tzOffsetMin: form.get("tz") }) : await afterMeal(env, me, meal, { tzOffsetMin: form.get("tz") });
+    return json({ ok: true, meal, notes: String(parsed?.notes || "").slice(0, 200), honesty: HONESTY, totals: after.totals });
   }
   if (kind === "barcode") {
     const digits = String(parsed?.digits || "").replace(/\D/g, "");
@@ -302,14 +347,47 @@ async function textMeal(env, cfg, me, body) {
   const mealId = String(body.mealId || "").trim();
   const meal = mealId ? await updateMealItems(env, me, mealId, items) : await insertMeal(env, me, { date: pickDate(body.date), items, source: "text", thumb: null });
   if (!meal) return json({ error: "no such meal" }, 404);
-  return json({ ok: true, meal, notes: String(parsed?.notes || "").slice(0, 200), honesty: HONESTY });
+  const after = mealId ? await editedMeal(env, me, meal, { tzOffsetMin: body.tz }) : await afterMeal(env, me, meal, { tzOffsetMin: body.tz });
+  return json({ ok: true, meal, notes: String(parsed?.notes || "").slice(0, 200), honesty: HONESTY, totals: after.totals });
+}
+
+// --- SAY: one box for everything. A question goes to the coach; "chicken rice again" matches a
+//     favourite before any model runs; anything else that reads like food is estimated. ---------
+async function say(env, cfg, me, body) {
+  const text = String(body.text || "").trim().slice(0, 600);
+  const date = pickDate(body.date);
+  if (!text) return json({ error: "empty", reason: "Say what you ate, or ask something." }, 400);
+  const kind = classifySay(text);
+  if (kind === "log") {
+    const m = await matchFavourite(env, me, text);
+    if (m) {
+      const f = m.favourite;
+      const when = f.lastUsed ? new Date(f.lastUsed).toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" }) : "before";
+      return json({ ok: true, kind: "repeat", favourite: f, question: `Logging your ${f.label} from ${when}, about ${Math.round(f.kcal)} kcal. Right?` });
+    }
+    if (looksLikeFood(text)) {
+      const r = await textMeal(env, cfg, me, { text, date, tz: body.tz });
+      const d = await r.json();
+      if (r.ok) return json({ ok: true, kind: "meal", ...d });
+      if (d.error !== "no food") return json(d, r.status);
+      // Not food after all: let the coach answer it.
+    }
+  }
+  const u = await addWords(env, me, date, "user", "question", text);
+  let a;
+  try { a = await askDay(env, me, { date, text, coachName: cfg.coachName }); }
+  catch (err) { console.error("foodlog ask failed", err?.message || err); return json({ error: "model", reason: "The coach isn't answering just now. Try again in a minute." }, 502); }
+  const w = await addWords(env, me, date, "assistant", "answer", a.reply);
+  return json({ ok: true, kind: "answer", turns: [u, w] });
 }
 
 // --- A meal saved by hand (barcode / label / receipt items come through here). ----
 async function saveMeal(env, me, body) {
   const items = sanitiseItems(body.items, { source: ["barcode", "label", "text", "photo", "receipt"].includes(body.source) ? body.source : "text" });
   if (!items.length) return json({ error: "no items", reason: "Nothing to save." }, 400);
-  return json({ ok: true, meal: await insertMeal(env, me, { date: pickDate(body.date), items, source: items[0].source, thumb: null }) });
+  const meal = await insertMeal(env, me, { date: pickDate(body.date), items, source: items[0].source, thumb: null });
+  const after = await afterMeal(env, me, meal, { tzOffsetMin: body.tz });
+  return json({ ok: true, meal, totals: after.totals });
 }
 
 async function insertMeal(env, me, { date, items, source, thumb }) {
@@ -399,6 +477,12 @@ function cleanTargets(t) {
 // --- THE COACH (admin token). One bot's clients only. ------------------------------------
 async function handleCoach(request, env, url, cfg, sub) {
   if (sub === "clients") return json({ clients: await clientRows(env, cfg.id), coachName: cfg.coachName, name: cfg.name, id: cfg.id });
+  if (sub.startsWith("client/") && sub.endsWith("/summary")) {
+    const who = await userById(env, cfg.id, sub.slice(7, -8));
+    if (!who) return json({ error: "no such client" }, 404);
+    const kind = url.searchParams.get("kind") === "day" ? "day" : "week";
+    return json(await summaryFor(env, who, { date: pickDate(url.searchParams.get("end") || url.searchParams.get("date")), kind, coachName: cfg.coachName, force: url.searchParams.get("refresh") === "1" }));
+  }
   if (sub.startsWith("client/")) {
     const who = await userById(env, cfg.id, sub.slice(7));
     if (!who) return json({ error: "no such client" }, 404);
