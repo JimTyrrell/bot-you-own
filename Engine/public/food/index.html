@@ -701,17 +701,39 @@ $('sayform').onsubmit = async (e) => {
     $('rp-no').onclick = async () => { sheet('<div class="thinking"><i></i> Working it out…</div>'); const x = await api('text', { json: { text, date: day } }); if (!x.ok) { closeSheet(); return toast(x.reason || 'Try naming the foods plainly.'); } openEditor(x.meal, { fresh: true, notes: x.notes }); };
   }
 };
-// The mic: the browser's own speech recognition when it has one (Chrome, Safari). Words land in the box; you press send.
+// The mic: press, talk, press again (or 30 s). The browser records the clip (MediaRecorder) and it goes to
+// Whisper on Workers AI through this app's own route — never to Google's or Apple's speech service. The words
+// are sent as if typed, so "eggs and toast again" out loud is the whole log.
 (function () {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SR) return;
-  const b = $('micbtn'); b.hidden = false; let rec = null;
-  b.onclick = () => {
-    if (rec) { rec.stop(); return; }
-    rec = new SR(); rec.lang = navigator.language || 'en-US'; rec.interimResults = true; b.classList.add('on');
-    rec.onresult = (e) => { $('say').value = [...e.results].map((r) => r[0].transcript).join(' '); };
-    rec.onend = () => { b.classList.remove('on'); rec = null; $('say').focus(); };
-    rec.onerror = () => { b.classList.remove('on'); rec = null; toast('Couldn’t hear that. Type it instead.'); };
-    try { rec.start(); } catch { rec = null; b.classList.remove('on'); }
+  const b = $('micbtn'), box = $('say');
+  const supported = () => typeof MediaRecorder !== 'undefined' && !!navigator.mediaDevices?.getUserMedia;
+  b.hidden = !supported();
+  let rec = null, chunks = [], timer = null;
+  const idle = () => { b.classList.remove('on'); b.textContent = '🎤'; b.disabled = false; box.placeholder = 'Say what you ate, or ask…'; };
+  const stop = () => { clearTimeout(timer); try { if (rec && rec.state !== 'inactive') rec.stop(); } catch {} };
+  b.onclick = async () => {
+    if (rec) return stop();
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch { b.hidden = true; return toast('The microphone was refused. Typing works as usual.'); }
+    const pick = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'].find((t) => MediaRecorder.isTypeSupported?.(t));
+    try { rec = new MediaRecorder(stream, pick ? { mimeType: pick } : undefined); } catch { stream.getTracks().forEach((t) => t.stop()); b.hidden = true; return toast('The recorder wouldn’t start here. Typing works as usual.'); }
+    chunks = [];
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop());
+      const blob = new Blob(chunks, { type: rec.mimeType || pick || 'audio/webm' }); rec = null;
+      b.textContent = '…'; b.disabled = true; box.placeholder = 'Turning it into words…';
+      if (blob.size < 100) { idle(); return toast('I didn’t catch anything. Try again.'); }
+      const fd = new FormData(); fd.append('audio', blob, 'clip.' + ((blob.type.split('/')[1] || 'webm').split(';')[0]));
+      const r = await api('transcribe', { body: fd });
+      idle();
+      if (!r.text) return toast(r.reason || 'I couldn’t make that out. Try again, or type it.', 4000);
+      box.value = r.text; $('sayform').requestSubmit();
+    };
+    rec.start();
+    b.classList.add('on'); b.textContent = '■'; box.placeholder = 'Listening… press ■ when you’re done';
+    timer = setTimeout(stop, 30000);
   };
 })();
 

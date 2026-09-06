@@ -36,11 +36,13 @@
 //   The day as a conversation, summaries, favourites (v3.10 — Engine/worker/track-day.js):
 //   GET chat?date= · POST say {date,text,hour,tz} · GET favourites?hour=&date= · POST repeat {favouriteId|fromDate,date,mult}
 //   POST favourite/name {id,name} · DELETE favourite/<id> · GET summary?date=&kind=day|week
+//   POST transcribe (multipart "audio") → { text }   the mic: Whisper on Workers AI, never the browser's own
 //  Pages: /apps/<id> (the app) · /apps/<id>/coach (the coach view). Both are the
 //  static files in Engine/public/food/, served through here per bot.
 // ============================================================================
 
 import { json, nowIso, pickDate, addDays, todayUtc, clamp, round1, cleanEmail, readJson, toBase64, randomId } from "./track-common.js";
+import { CONFIG } from "../../YourBots/config.js";
 import { identify, signInMethods, verifyIdToken } from "../identity/index.js";
 import { join as idJoin, userIdFor, userById as idUserById, bindDevice, linkByCode, deviceCount, listDevices, pendingByEmail, touch as idTouch, DEV_PEPPER, pepperOf } from "../identity/devices.js";
 import { runVision, PROMPTS, extractJson, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize } from "./track-vision.js";
@@ -181,6 +183,11 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
     return say(env, cfg, me, body);
   }
   if (sub === "favourites") return json(await listFavourites(env, me, { hour: url.searchParams.get("hour"), date: pickDate(url.searchParams.get("date")) }));
+  if (sub === "transcribe") {
+    if (request.method !== "POST") return json({ error: "POST only" }, 405);
+    if (!(await allowed(env, request))) return json({ error: "rate-limited", reason: "Give me a moment and try again." }, 429);
+    return transcribe(request, env);
+  }
   if (sub === "repeat") {
     if (request.method !== "POST") return json({ error: "POST only" }, 405);
     const date = pickDate(body.date);
@@ -349,6 +356,28 @@ async function textMeal(env, cfg, me, body) {
   if (!meal) return json({ error: "no such meal" }, 404);
   const after = mealId ? await editedMeal(env, me, meal, { tzOffsetMin: body.tz }) : await afterMeal(env, me, meal, { tzOffsetMin: body.tz });
   return json({ ok: true, meal, notes: String(parsed?.notes || "").slice(0, 200), honesty: HONESTY, totals: after.totals });
+}
+
+// --- THE MIC: the clip goes to Whisper on Workers AI (the same model the chat page uses,
+//     YourBots/config.js → voice.sttModel), never to the browser's own speech service. ------
+const STT_DEFAULT = "@cf/openai/whisper-large-v3-turbo";
+async function transcribe(request, env) {
+  if (!env.AI) return json({ error: "no-model", reason: "Voice needs Workers AI (wrangler.jsonc → ai binding)." }, 503);
+  let form;
+  try { form = await request.formData(); } catch { return json({ error: "bad request", reason: "Send the clip as multipart/form-data in an 'audio' field." }, 400); }
+  const clip = form.get("audio");
+  if (!clip || typeof clip.arrayBuffer !== "function") return json({ error: "bad request", reason: "No audio in the request." }, 400);
+  if (clip.size > 4 * 1024 * 1024) return json({ error: "too-long", reason: "That clip is too big. Keep it under 30 seconds." }, 413);
+  if (clip.size < 100) return json({ error: "empty", reason: "I didn't get any audio. Try again." }, 400);
+  const model = String(CONFIG.voice?.sttModel || "").trim() || STT_DEFAULT;
+  const t0 = Date.now();
+  let out;
+  try { out = await env.AI.run(model, { audio: toBase64(await clip.arrayBuffer()) }); }
+  catch (err) { console.error("foodlog transcribe failed", err?.message || err); return json({ error: "model-error", reason: "I couldn't make out that clip. Try again, or type it." }, 502); }
+  const text = String(out?.text || "").trim();
+  console.log(JSON.stringify({ event: "foodlog-transcribe", bytes: clip.size, chars: text.length, ms: Date.now() - t0 }));
+  if (!text) return json({ error: "empty", reason: "I couldn't hear any words in that. Try again a little closer to the mic." }, 422);
+  return json({ text });
 }
 
 // --- SAY: one box for everything. A question goes to the coach; "chicken rice again" matches a

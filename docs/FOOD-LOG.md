@@ -74,8 +74,13 @@ food log) like any bot; Export / Commit to GitHub write `project.json`.
   No, estimate fresh. After the third time the coach asks once for a name; every
   fifth repeat opens the editor with "still about this much?" so a staple never
   quietly drifts. ★ Staples lists them all: log, half, rename, forget.
-- **One composer.** *Say what you ate, or ask…* takes both. The mic uses the
-  browser's own speech recognition where there is one (Chrome, Safari).
+- **One composer.** *Say what you ate, or ask…* takes both. The mic records a clip
+  (press, talk, press again, 30 s at most) and sends it to **Whisper on Workers AI**
+  through the app's own `transcribe` route — never the browser's speech service, so
+  nothing goes to Google or Apple. The words are sent as if typed, so "eggs and toast
+  again" out loud is the whole log. The matcher forgives one letter in words of five
+  or more ("launch" for "lunch"). Model: `YourBots/config.js → voice.sttModel`, else
+  `@cf/openai/whisper-large-v3-turbo` (about $0.0005 a minute of audio).
 - **Snap a plate:** the big green button opens the camera. The photo is shrunk in
   the browser to ≤ 1024 px before upload (a 12 MP photo never goes over the wire).
   Back comes the list of foods; **½× 1× 1½× 2×** buttons, a grams field (⚖️),

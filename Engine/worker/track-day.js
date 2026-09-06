@@ -181,13 +181,25 @@ export async function forgetFavourite(env, who, id) {
   await env.DB.prepare(`DELETE FROM track_favourites WHERE id = ? AND user_id = ?`).bind(String(id), who.id).run();
   return { ok: true };
 }
+// One insertion, deletion or substitution apart? (Only used for words of five letters or more.)
+function oneOff(a, b) {
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0, j = 0, edits = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i++; j++; continue; }
+    if (++edits > 1) return false;
+    if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; }
+  }
+  return edits + (a.length - i) + (b.length - j) <= 1;
+}
 // Match typed words against the person's own favourites. Name first, then item overlap.
 export async function matchFavourite(env, who, text) {
   await ensureDaySchema(env);
   const w = words(text);
   if (!w.length) return null;
   const rows = ((await env.DB.prepare(`SELECT * FROM track_favourites WHERE user_id = ? ORDER BY times_used DESC LIMIT 200`).bind(who.id).all()).results || []).map(favOut);
-  const same = (x, y) => x === y || (x.length > 4 && y.length > 4 && (x.startsWith(y.slice(0, 5)) || y.startsWith(x.slice(0, 5))));
+  // The same word, a shared 5-letter start, or one letter out (the mic hears "launch" for "lunch").
+  const same = (x, y) => x === y || (x.length > 4 && y.length > 4 && (x.startsWith(y.slice(0, 5)) || y.startsWith(x.slice(0, 5)) || oneOff(x, y)));
   let best = null, bestScore = 0;
   for (const f of rows) {
     const nameWords = words(f.name || "");
