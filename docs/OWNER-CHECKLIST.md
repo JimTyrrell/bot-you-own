@@ -20,21 +20,71 @@ prompt. The value is never printed back and never enters git.
 
 ## 1. The AI Gateway (the dollar ceiling)
 
-Why: every model call already tries to route through a Cloudflare AI Gateway
-named `bot-you-own`. Until the gateway exists the call goes straight to the model
-(the chip under a reply says "gateway not created yet; went direct"). Creating it
-gives you logs, caching, a rate limit, and a hard spend cap, with no code change.
+**How you know it's not done yet:** under every reply on the live bot there's a
+chip that says **"☁ Cloudflare setup to do: create the AI Gateway (spend cap +
+logs) — how ↗"**. Clicking it opens this section. The bot works fine without the
+gateway; what you're missing is a hard cap on what the model can cost you, plus
+logs, caching and a rate limit. Ten minutes, no code, no terminal.
 
-1. Cloudflare dashboard → **AI → AI Gateway → Create Gateway**.
-2. Name it exactly `bot-you-own`. Create.
-3. Open it → **Settings → Spend limit** → set a dollar ceiling (start low, say
-   $5/month; you can raise it any time).
+Why: every model call already *tries* to route through a Cloudflare AI Gateway
+named `bot-you-own` (it's set in `YourBots/config.js` → `gateway: { id: "bot-you-own" }`).
+Until a gateway with that exact name exists, Cloudflare answers "2001: please
+configure AI Gateway" and the Worker falls back to calling the model directly.
+Create it and the very next call goes through it.
 
-Check: send any message on the live demo, open **Under the hood → Gateway &
-model**. `lastCall` should read "via gateway", not "direct (gateway missing)".
+### Step 1 — Open AI Gateway
 
-You do not touch the code: `YourBots/config.js` already has
-`gateway: { id: "bot-you-own" }`.
+1. Log in at <https://dash.cloudflare.com>.
+2. In the left sidebar click **AI**, then **AI Gateway**.
+   (On a narrow window the sidebar is behind the ☰ menu, top left.)
+
+![Cloudflare sidebar: AI → AI Gateway](images/ai-gateway-1-sidebar.png)
+
+### Step 2 — Create the gateway
+
+1. Click **Create Gateway** (top right on a fresh account; the button reads
+   **+ Create** if you already have one).
+2. **Gateway name:** type `bot-you-own` — all lower-case, hyphens, no spaces.
+   The name has to match the config exactly or the Worker won't find it.
+3. Leave everything else at its default. Click **Create**.
+
+![Create Gateway dialog with the name bot-you-own](images/ai-gateway-2-create.png)
+
+### Step 3 — Set the spend limit
+
+1. Open the new gateway (click its name in the list).
+2. Click the **Settings** tab.
+3. Find **Spend limit** (it may be under "Rate limiting & budgets" depending on
+   the dashboard version). Switch it **on**.
+4. Put in a monthly dollar figure. **$5** is plenty to start; raise it any time.
+   When the cap is hit the gateway refuses further calls and the bot shows its
+   handoff message instead of an answer, so nobody can run up your bill.
+5. **Save.**
+
+![Settings tab: spend limit switched on, $5 per month](images/ai-gateway-3-spend-limit.png)
+
+Optional, same tab: **Rate limiting** (e.g. 100 requests per minute) and
+**Cache** (repeat questions answered from cache, free). Both are safe defaults.
+
+### Step 4 — Check it worked
+
+1. Send any message on the live bot.
+2. The chip under the reply is gone. That's the whole check.
+3. For the long version: open **Under the hood → Gateway & model**. `lastCall`
+   reads **"via gateway"**, not "direct (gateway missing)".
+4. Back in the dashboard, **AI Gateway → bot-you-own → Logs** now shows one row
+   per model call: the model, the tokens, the cost, how long it took.
+
+![Gateway Logs tab showing the first calls](images/ai-gateway-4-logs.png)
+
+**If the chip is still there** after a minute: the name doesn't match. Check for
+a capital letter, a space, or a trailing character in the gateway name, then
+compare it to `gateway.id` in `YourBots/config.js`. If you'd rather rename in
+the config than in the dashboard, edit that one line and commit.
+
+You never touch the Worker for any of this. Screenshots are in `docs/images/`;
+if the dashboard has moved a button since they were taken, the labels above are
+what to search for.
 
 ---
 

@@ -100,6 +100,8 @@
   .flags { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0 0 40px; width:100%; }
   .flag { font-size:11px; padding:2px 8px; border-radius:999px; background:var(--chip); color:var(--chipText); }
   .flag.hard { background:#fee2e2; color:#991b1b; }
+  a.flag.link { text-decoration:underline; text-decoration-style:dotted; text-underline-offset:2px; cursor:pointer; }
+  a.flag.link:hover { opacity:.8; }
   .flag.source { max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   /* "Talk to a person": the chip under a refusal, and the bubble a person's reply lands in */
   .flag.talk { background:var(--text); color:var(--bg); border:0; cursor:pointer; font:inherit; font-size:11px; padding:2px 10px; }
@@ -149,6 +151,8 @@
   /* ---- the door ---- */
   .lockwrap { position:fixed; inset:0; background:var(--bg); z-index:50; display:none; align-items:center; justify-content:center; padding:20px; }
   #adminlock { background:rgba(0,0,0,.35); z-index:60; }
+  /* Hint under a field. Unlike a placeholder this wraps instead of clipping. */
+  .lockhint { margin:6px 2px 0; font-size:12.5px; color:var(--muted); line-height:1.45; }
   .lockwrap.show { display:flex; }
   .lockwrap form { width:min(380px,100%); border:1px solid var(--edge); border-radius:16px; padding:24px; background:var(--side); display:flex; flex-direction:column; gap:12px; box-shadow:0 2px 12px rgba(0,0,0,.06); }
   .lockwrap h2 { margin:0; font-size:18px; } .lockwrap p { margin:0; color:var(--muted); font-size:13px; }
@@ -236,13 +240,57 @@
     header h1 { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .iconbtn { white-space:nowrap; }
   }
+  /* Show/hide on every passphrase field. The wrapper follows its input's own
+     hidden state with :has(), so a field the page keeps hidden doesn't leave a
+     stray eye behind — no JS has to keep the two in step. */
+  .pw { position: relative; display: block; }
+  .pw:has(> input[hidden]) { display: none; }
+  .pw > input { width: 100%; padding-right: 44px; }
+  .pw > .eye {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    width: 32px; height: 32px; padding: 0; margin: 0; border: 0; border-radius: 8px;
+    background: transparent; color: var(--muted); cursor: pointer; font-size: 15px;
+    line-height: 1; display: flex; align-items: center; justify-content: center;
+  }
+  .pw > .eye:hover { color: var(--text); background: var(--panel); }
+  .pw > .eye:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 </style>
 </head>
 <body>
+<script>
+// Every type="password" on the page gets a show/hide eye, now and for any added later.
+// Wrapping happens before the app script runs, so element ids and event wiring are untouched.
+document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('input[type="password"]').forEach(function (input) {
+    if (input.parentElement && input.parentElement.classList.contains('pw')) return;
+    var wrap = document.createElement('span');
+    wrap.className = 'pw';
+    // The field carries its own margin in places; move it to the wrapper so spacing holds.
+    if (input.style.marginTop) { wrap.style.marginTop = input.style.marginTop; input.style.marginTop = ''; }
+    input.parentNode.insertBefore(wrap, input);
+    wrap.appendChild(input);
+    var eye = document.createElement('button');
+    eye.type = 'button';
+    eye.className = 'eye';
+    eye.textContent = '👁';
+    eye.title = 'Show the passphrase';
+    eye.setAttribute('aria-label', 'Show the passphrase');
+    eye.addEventListener('click', function () {
+      var shown = input.type === 'text';
+      input.type = shown ? 'password' : 'text';
+      eye.textContent = shown ? '👁' : '🙈';
+      eye.title = shown ? 'Show the passphrase' : 'Hide the passphrase';
+      eye.setAttribute('aria-label', eye.title);
+      input.focus();
+    });
+    wrap.appendChild(eye);
+  });
+});
+</script>
 <div id="adminlock" class="lockwrap"><form id="adminform">
   <h2>Admin code</h2>
-  <p>Opens "Under the hood": the prompt, the files, the firewall rules and the source for this project.</p>
-  <input id="adminpass" type="password" placeholder="Admin code" autocomplete="off" /><input id="admincode" inputmode="numeric" placeholder="Authenticator code (only if the owner set one up)" autocomplete="one-time-code" style="margin-top:6px" />
+  <p>The <b>second</b> passphrase &mdash; the owner's, not the one that opened the page. It shows "Under the hood": the prompt, the files, the firewall rules and the source for this project.</p>
+  <input id="adminpass" type="password" placeholder="Admin code" autocomplete="off" /><input id="admincode" inputmode="numeric" placeholder="Authenticator code" autocomplete="one-time-code" style="margin-top:6px" hidden /><p id="admincodehint" class="lockhint" hidden>The six digits from the owner's authenticator app.</p>
   <div style="display:flex;gap:8px"><button type="submit" style="flex:1">Open</button><button type="button" id="admincancel" style="flex:1;background:var(--panel);color:var(--text)">Cancel</button></div>
   <div id="adminmsg" class="lockmsg"></div>
 </form></div>
@@ -250,7 +298,7 @@
   <h2 id="locktitle">Before we start</h2>
   <p id="lockhint">Enter the passphrase to continue.</p>
   <input id="pass" type="password" placeholder="Passphrase" autocomplete="current-password" />
-  <input id="adminkey" type="password" placeholder="Admin code" autocomplete="off" hidden /><input id="adminkeycode" inputmode="numeric" placeholder="Authenticator code (only if the owner set one up)" autocomplete="one-time-code" hidden />
+  <input id="adminkey" type="password" placeholder="Admin code" autocomplete="off" hidden /><input id="adminkeycode" inputmode="numeric" placeholder="Authenticator code" autocomplete="one-time-code" hidden />
   <input id="email" type="email" placeholder="Your email address" autocomplete="email" />
   <div style="display:flex;gap:8px"><button type="submit" id="lockgo" style="flex:1">Continue</button><button type="button" id="lockback" style="flex:1;background:var(--panel);color:var(--text)" hidden>Back</button></div>
   <button type="button" id="lockcfg" hidden>✎ Configure this bot</button>
@@ -316,6 +364,9 @@
       <div id="log"></div>
     </div>
     <div class="composer">
+      <!-- The visitor's own access window: a countdown, or "your access ended".
+           Filled from /api/config → identity.access (Engine/worker/expiry.js). -->
+      <div id="accessnote" hidden></div>
       <div class="attachrow" id="attachrow" hidden></div>
       <form id="form" autocomplete="off">
         <textarea id="input" rows="1" placeholder="Message…"></textarea>
@@ -326,6 +377,11 @@
         <button class="send" id="send" type="submit" title="Send">↑</button>
       </form>
       <audio id="tts" hidden></audio>
+    <style>
+      #accessnote { margin: 0 0 8px; padding: 8px 12px; border-radius: 10px; font-size: 12.8px; border: 1px solid var(--edge); background: var(--panel); color: var(--muted); }
+      #accessnote.warn { border-color: #b45309; color: #b45309; background: rgba(180,83,9,.08); }
+      #accessnote.over { border-color: var(--danger); color: var(--danger); background: rgba(220,38,38,.07); }
+    </style>
       <div class="disclaimer" id="disclaimer">Can make mistakes. Check important information.</div>
     </div>
   </main>
@@ -427,6 +483,10 @@ function dropToken(pid) { if (pid && TOKENS[pid]) delete TOKENS[pid]; else TOKEN
 // What the lock screen is asking for, and for which bot.
 let lock = { project: '', name: '', mode: 'open', key: false, email: false, admin: false, draft: false, list: false };
 let needKey = false, needEmail = false, needAdmin = false;
+// Does this deployment HAVE an admin code? /api/config says so even in its locked
+// answer, which is exactly when we need it: a wrong front-door passphrase is very
+// often the admin code typed one screen too early.
+let ADMIN_ENABLED = false;
 const checked = {};                                   // bot id → its door was checked this page-load
 function showLock(msg, l) {
   if (l) lock = { ...lock, list: false, ...l };
@@ -478,7 +538,14 @@ $('lockform').addEventListener('submit', async (e) => {
     if (needKey) {
       const res = await fetch('/api/unlock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ passphrase: $('pass').value, project: lock.project }) });
       const data = await res.json().catch(() => ({}));
-      if (!(res.ok && data.token)) { $('lockmsg').textContent = res.status === 429 ? 'Too many attempts. Wait a minute.' : 'Wrong passphrase.'; return; }
+      if (!(res.ok && data.token)) {
+        // The commonest mistake by a mile: the owner types the ADMIN code here.
+        // They are two different passphrases and this is the only place to say so.
+        $('lockmsg').textContent = res.status === 429 ? 'Too many attempts. Wait a minute.'
+          : ADMIN_ENABLED ? 'Wrong passphrase. If that was your admin code, it goes in ⚙ Under the hood — get through this screen first.'
+          : 'Wrong passphrase.';
+        return;
+      }
       if (data.shared) TOKEN = data.token; else TOKENS[lock.project] = data.token;
       saveTokens(); $('pass').value = '';
     }
@@ -520,6 +587,7 @@ const configHeaders = (pid) => ({ ...authHeaders(pid), ...(ADMIN ? { 'x-admin-to
 function boot(pid) {
   const want = pid || new URLSearchParams(location.search).get('project') || '';
   fetch('/api/config' + (want ? '?project=' + encodeURIComponent(want) : ''), { headers: configHeaders(want) }).then((r) => r.json()).then((cfg) => {
+    ADMIN_ENABLED = Boolean(cfg.adminEnabled);
   $('brand').textContent = cfg.siteName || 'The Bot You Own';
   const a = cfg.access || {};
   const l = { project: cfg.current || cfg.project || want, name: cfg.projectName || '', mode: a.mode, key: !!a.key, email: !!a.email, admin: !!a.admin, draft: !!a.draft };
@@ -537,7 +605,8 @@ function boot(pid) {
     else { VISITOR = ''; showLock(idn && idn.reason ? idn.reason : '', { ...l, key: false }); if (idn && idn.pending) showPending(idn.pending.code, idn.pending.email); return; }
     // allow mode: identified, but not on the list. Nothing to type — the owner adds them, or they use another email.
     if (idn.allowed === false) return showLock(idn.reason || (VISITOR + ' isn\'t on the list for this bot.'), { ...l, key: false, email: true, list: true });
-  }
+    applyAccessWindow(idn);
+  } else applyAccessWindow(null);
   checked[l.project] = true;
   const gated = a.key || a.email || ADMIN || TOKEN || Object.keys(TOKENS).length;
   $('signout').hidden = !gated; $('whoami').textContent = VISITOR ? VISITOR : (ADMIN ? 'admin' : '');
@@ -629,6 +698,7 @@ async function checkDoor(p) {
   try {
     const r = await fetch('/api/config?project=' + encodeURIComponent(p.id), { headers: configHeaders(p.id) });
     const cfg = await r.json();
+    ADMIN_ENABLED = Boolean(cfg.adminEnabled);
     if (state.project?.id !== p.id) return;                          // they moved on meanwhile
     const a = cfg.access || {};
     const l = { project: p.id, name: p.name, mode: a.mode, key: !!a.key, email: !!a.email, admin: !!a.admin, draft: !!a.draft };
@@ -638,11 +708,29 @@ async function checkDoor(p) {
       if (idn && idn.linked) { VISITOR = idn.email || ''; identified[p.id] = true; }
       else { VISITOR = ''; showLock(idn && idn.reason ? idn.reason : '', { ...l, key: false }); if (idn && idn.pending) showPending(idn.pending.code, idn.pending.email); return; }
       if (idn.allowed === false) return showLock(idn.reason || '', { ...l, key: false, email: true, list: true });
-    }
+      applyAccessWindow(idn);
+    } else applyAccessWindow(null);
     checked[p.id] = true;
     sync.pull(p.id);
   } catch {}
 }
+
+// The visitor's own window (Engine/worker/expiry.js). They are told about THEIR
+// date and nothing else — never the policy, never anyone else's. "readonly" means
+// the door let them in to read: the composer is switched off, the history is not.
+function applyAccessWindow(idn) {
+  const note = $('accessnote'); if (!note) return;
+  const a = (idn && idn.access) || null;
+  READONLY = Boolean(a && a.readOnly);
+  const msg = a ? (a.readOnly ? (a.notice || 'Your access has ended. You can still read everything you have already asked.') : (a.notice || '')) : '';
+  note.hidden = !msg;
+  note.textContent = msg;
+  note.className = a && a.readOnly ? 'over' : a && (a.state === 'warn' || a.state === 'grace') ? 'warn' : '';
+  const inp = $('input'), send = $('send');
+  if (inp) { inp.disabled = READONLY; inp.placeholder = READONLY ? 'Your access has ended — you can still read your history.' : 'Message…'; }
+  if (send) send.disabled = READONLY;
+}
+let READONLY = false;
 
 // What the badge next to a bot's name says (admin sees drafts and unlisted bots; visitors don't).
 function accessBadge(p) {
@@ -905,7 +993,7 @@ async function sendClip(blob) {
 const FLAG_LABELS = {
   'injection-blocked': '🛡 blocked before the model', 'link-stripped': '🔗 link removed', 'leak-blocked': '🛡 answer withheld: it quoted the rules',
   'rate-limited': '⏱ rate limited', 'model-error': '⚠ model error', 'gateway-blocked': '🛡 blocked at the gateway',
-  'gateway-direct': '↪ gateway not created yet; went direct', 'small-model': '🪶 small talk, small model',
+  'gateway-direct': '☁ Cloudflare setup to do: create the AI Gateway (spend cap + logs) — how ↗', 'small-model': '🪶 small talk, small model',
   'invisible-text-stripped': '👁 hidden characters removed', 'handoff-appended': '📇 contact added by the firewall', 'secret-detected': '🔑 looks like a secret was pasted',
   'library-used': '📚 answered with the document library', 'degenerate-reply': '🛡 the model glitched twice; handed off instead', 'degenerate-retried': '🔁 the model glitched; asked again',
   'attachment-used': '📎 read your attached file', 'attachment-injection-blocked': '🛡 attachment refused: it contained instructions for the bot', 'attachment-secret-blocked': '🔑 attachment refused: looks like a card number or a key',
@@ -917,13 +1005,20 @@ const FLAG_LABELS = {
   'booking-provider-failed': '📅 calendar unreachable; sent the link', 'booking-no-slots': '📅 nothing free this week', 'booking-incomplete': '📅 asked for the missing detail',
   'website-used': '🌐 answered from the website', 'human-requested': '🙋 a person was asked for',
 };
+// Chips that are also a link. Owner to-dos point at the step-by-step in the
+// repo (public), and open in a new tab so the chat stays where it is.
+const FLAG_LINKS = {
+  'gateway-direct': 'https://github.com/JimTyrrell/bot-you-own/blob/main/docs/OWNER-CHECKLIST.md#1-the-ai-gateway-the-dollar-ceiling',
+};
 // The small chips under an answer. Two kinds share the row: firewall flags
 // (what the engine did to this turn) and citations — the documents the answer
 // drew on, as "📄 name". Names only, never a link: the files are admin-only.
 function flagRow(flags, sources) {
   const row = document.createElement('div'); row.className = 'flags';
   (flags || []).forEach((f) => {
-    const c = document.createElement('span'); c.className = 'flag' + (/blocked|error/.test(f) ? ' hard' : '');
+    const link = FLAG_LINKS[f];
+    const c = document.createElement(link ? 'a' : 'span'); c.className = 'flag' + (/blocked|error/.test(f) ? ' hard' : '') + (link ? ' link' : '');
+    if (link) { c.href = link; c.target = '_blank'; c.rel = 'noopener'; c.title = 'Opens the step-by-step in a new tab'; }
     c.textContent = FLAG_LABELS[f] || f; row.appendChild(c);
   });
   (sources || []).forEach((s) => {
@@ -1091,7 +1186,17 @@ function handoffClosed(text) {
 // ---- under the hood (admin) ----
 // ADMIN (the admin token) is declared up by TOKEN, next to the other keys the page holds.
 let hoodData = null, hoodTab = 'prompt';
-$('hoodbtn').onclick = () => { if (ADMIN) return openHood(); $('adminlock').classList.add('show'); $('adminmsg').textContent = ''; $('adminpass').value = ''; $('adminpass').focus(); };
+// Show the authenticator box only if ADMIN_TOTP_SECRET is set. Asking everyone for
+// six digits that don't exist is the kind of thing that makes a right code look wrong.
+async function showAdminCodeIfNeeded() {
+  try {
+    const r = await fetch('/api/admin/unlock/needs');
+    const d = await r.json();
+    $('admincode').hidden = !d.needsCode;
+    $('admincodehint').hidden = !d.needsCode;
+  } catch { $('admincode').hidden = true; $('admincodehint').hidden = true; }
+}
+$('hoodbtn').onclick = () => { if (ADMIN) return openHood(); $('adminlock').classList.add('show'); $('adminmsg').textContent = ''; $('adminpass').value = ''; $('adminpass').focus(); showAdminCodeIfNeeded(); };
 $('admincancel').onclick = () => $('adminlock').classList.remove('show');
 $('adminform').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -1099,7 +1204,11 @@ $('adminform').addEventListener('submit', async (e) => {
   try {
     const r = await fetch('/api/admin/unlock', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ passphrase: $('adminpass').value, code: $('admincode').value }) });
     const d = await r.json().catch(() => ({}));
-    if (!r.ok || !d.token) { $('adminmsg').textContent = r.status === 429 ? 'Too many attempts. Wait a minute.' : d.needsCode && d.error !== 'wrong admin code' ? 'This deployment also asks for the six digits from the owner\'s authenticator app.' : 'Wrong admin code.'; return; }
+    if (!r.ok || !d.token) {
+      if (d.needsCode) { $('admincode').hidden = false; $('admincodehint').hidden = false; }
+      $('adminmsg').textContent = r.status === 429 ? 'Too many attempts. Wait a minute.' : d.needsCode && d.error !== 'wrong admin code' ? 'This deployment also asks for the six digits from the owner\'s authenticator app.' : 'Wrong admin code.';
+      return;
+    }
     ADMIN = d.token; try { localStorage.setItem('byo:admin', ADMIN); if (d.breakGlass) localStorage.setItem('byo:breakglass', '1'); } catch {}
     $('signout').hidden = false; if (!VISITOR) $('whoami').textContent = 'admin';
     // In with the break-glass key: straight to Settings, where the second factor gets re-set.
@@ -1151,7 +1260,7 @@ function renderHood() {
 
 // ---- Configure: the ChatGPT-builder screen. Form on the left, live preview on the right. ----
 let draft = null, cfgMeta = null, previewMsgs = [];
-$('cfgbtn').onclick = () => { if (!ADMIN) { $('adminlock').classList.add('show'); $('adminpass').focus(); pendingAfterAdmin = openConfigure; return; } openConfigure(); };
+$('cfgbtn').onclick = () => { if (!ADMIN) { $('adminlock').classList.add('show'); $('adminpass').focus(); showAdminCodeIfNeeded(); pendingAfterAdmin = openConfigure; return; } openConfigure(); };
 let pendingAfterAdmin = null;
 $('cfgback').onclick = () => { $('cfg').classList.remove('show'); boot(); };
 async function openConfigure(id) {
@@ -1477,8 +1586,12 @@ async function renderSettings() {
       + '<h4>The return window</h4><p style="color:var(--muted);font-size:12.5px;margin:0 0 6px">A visitor in email / allow mode who types their email on a <b>new</b> computer within this many minutes of their last activity is trusted at once and their chats follow them (docs/IDENTITY.md). After it, the new computer waits for you to link it (Leads). <b>The trade-off:</b> inside the window, anyone who knows the email can pick up that person\'s recent conversation from their own computer. 0 = off. A bot can set its own in Configure. Now from: ' + esc(d.identity?.source || 'built-in') + '.</p><div class="row2"><input type="number" id="s_grace" min="0" max="10080" step="1" value="' + esc(String(d.identity?.graceMinutes ?? 60)) + '" style="max-width:160px" /><span style="color:var(--muted);font-size:12.5px;align-self:center">minutes</span></div>'
       + '<h4>The badge under the chat</h4><div class="caps"><label><input type="checkbox" id="s_badge_show"' + (d.createYourOwn.show ? ' checked' : '') + ' /> Show "create your own" (now from: ' + esc(d.createYourOwn.source) + ')</label></div><div class="row2" style="margin-top:6px"><input type="text" id="s_badge_text" value="' + esc(d.createYourOwn.text) + '" placeholder="Create your own bot" /><input type="url" id="s_badge_url" value="' + esc(d.createYourOwn.url) + '" placeholder="https://…" /></div>'
       + '<h4>The allowlist — access mode "allow": in the list → able to do things</h4><div id="allowbox"><p class="thinking"><span>Reading the list</span></p></div>'
+      + '<h4>When access runs out</h4><div id="expbox"><p class="thinking"><span>Reading the windows</span></p></div>'
+      + '<h4>Access over time — one person\'s whole history</h4><div id="timelinebox"></div>'
       + '<h4>Every bot, every kind, and what it actually requires</h4><div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">' + d.bots.map((b) => '<tr style="border-top:1px solid var(--edge);vertical-align:top"><td style="padding:6px 8px 6px 0;white-space:nowrap"><b>' + (b.kind && b.kind !== 'chat' ? '📷 ' : '') + esc(b.name) + '</b><br><span style="color:var(--muted)">' + esc(b.id) + ' · ' + esc(b.kind || 'chat') + (b.listed ? '' : ' · unlisted') + ' · ' + esc(b.source) + '</span></td><td style="padding:6px 8px;white-space:nowrap"><b>' + esc(b.effective) + '</b></td><td style="padding:6px 0;color:var(--muted)">' + esc(b.reason) + (b.ownKey ? '<br>own key: ' + esc(b.ownKey) : '') + (b.signIn ? '<br>sign-in: ' + esc(b.signIn) : '') + (b.graceMinutes !== undefined && b.graceMinutes !== null ? '<br>return window: ' + esc(String(b.graceMinutes)) + ' min (its own)' : '') + (b.effective === 'allow' ? '<br>allowlist: ' + (b.allowlisted || 0) + ' on its own list' + (d.allowlist?.global ? ', ' + d.allowlist.global + ' on the list for every bot' : '') : '') + '</td></tr>').join('') + '</table></div>';
     renderAllowlist(d);
+    renderExpiry(d);
+    renderTimeline();
     if ($('s_bgok')) $('s_bgok').onclick = () => { try { localStorage.removeItem('byo:breakglass'); } catch {} renderSettings(); };
     $('s_default').onchange = () => { $('s_default_line').textContent = line($('s_default').value); };
     $('s_floor').onchange = () => { $('s_floor_line').textContent = $('s_floor').value === 'open' ? 'No floor: each bot decides for itself.' : line($('s_floor').value); };
@@ -1511,15 +1624,16 @@ async function renderAllowlist(d) {
     const a = await r.json(); if (!r.ok) throw new Error(a.error || r.status);
     const tab = (id, label) => '<button class="iconbtn" data-scope="' + id + '"' + (allowScope === id ? ' style="background:var(--panel)"' : '') + '>' + label + '</button>';
     box.innerHTML = '<p style="color:var(--muted);font-size:12.5px;margin:0 0 8px">A bot in <b>allow</b> mode lets a visitor in only if the email they joined with is on its own list <i>or</i> on the list for every bot. Stored encrypted: a keyed hash to check one address without decrypting the list, and the address itself under AES so you can read it here. ' + (a.keySet ? 'ALLOWLIST_KEY is set.' : '<b style="color:var(--danger)">ALLOWLIST_KEY is NOT set</b> — allow mode refuses everyone until it is (docs/DEPLOY.md → B2c).') + ' Nothing is emailed.</p>'
-      + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px" id="allowtabs">' + tab('this', 'this bot (' + esc(state.project.name) + ')') + tab('all', 'every bot') + '<span class="spacer"></span><input type="email" id="al_email" placeholder="email to add" style="flex:1;min-width:180px;padding:6px 8px;border:1px solid var(--edge);border-radius:8px;background:var(--bg);color:var(--text);font:inherit" /><button class="iconbtn" id="al_add"' + (a.keySet ? '' : ' disabled') + '>Add</button><span id="al_msg" style="color:var(--muted);font-size:12.5px"></span></div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px" id="allowtabs">' + tab('this', 'this bot (' + esc(state.project.name) + ')') + tab('all', 'every bot') + '<span class="spacer"></span><input type="email" id="al_email" placeholder="email to add" style="flex:1;min-width:160px;padding:6px 8px;border:1px solid var(--edge);border-radius:8px;background:var(--bg);color:var(--text);font:inherit" /><input type="date" id="al_until" title="Optional: the invitation runs out at the end of this day. Leave empty for unlimited." style="padding:6px 8px;border:1px solid var(--edge);border-radius:8px;background:var(--bg);color:var(--text);font:inherit" /><button class="iconbtn" id="al_add"' + (a.keySet ? '' : ' disabled') + '>Add</button><span id="al_msg" style="color:var(--muted);font-size:12.5px"></span></div>'
       + (!a.rows.length ? '<p style="color:var(--muted)">Nobody on ' + (scope === '*' ? 'the list for every bot' : 'this bot\'s list') + ' yet.</p>'
-        : '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">' + a.rows.map((row) => '<tr style="border-top:1px solid var(--edge)"><td style="padding:6px 8px 6px 0;word-break:break-all"><b>' + esc(row.email) + '</b></td><td style="padding:6px 8px;white-space:nowrap;color:var(--muted)">added ' + esc(whenAt(row.added_at)) + '</td><td style="padding:6px 0;text-align:right"><button class="iconbtn" data-remove="' + esc(row.email) + '">Remove</button></td></tr>').join('') + '</table></div>');
+        : '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">' + a.rows.map((row) => '<tr style="border-top:1px solid var(--edge)"><td style="padding:6px 8px 6px 0;word-break:break-all"><b>' + esc(row.email) + '</b></td><td style="padding:6px 8px;white-space:nowrap;color:var(--muted)">added ' + esc(whenAt(row.added_at)) + '</td><td style="padding:6px 8px;white-space:nowrap">' + untilChip(row.expires_at) + '</td><td style="padding:6px 0;text-align:right"><button class="iconbtn" data-remove="' + esc(row.email) + '">Remove</button></td></tr>').join('') + '</table></div>');
     $('allowtabs').onclick = async (e) => {
       const b = e.target.closest('button'); if (!b) return;
       if (b.dataset.scope) { allowScope = b.dataset.scope; renderAllowlist(d); return; }
       if (b.id === 'al_add') {
         const email = $('al_email').value.trim(); if (!email) return; $('al_msg').textContent = 'Adding…';
-        const r2 = await fetch('/api/admin/allowlist', { method: 'POST', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ scope, email }) });
+        const until = ($('al_until') || {}).value || '';
+        const r2 = await fetch('/api/admin/allowlist', { method: 'POST', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ scope, email, until }) });
         const j = await r2.json(); if (!r2.ok) { $('al_msg').textContent = j.reason || j.error || 'Not added.'; return; }
         renderAllowlist(d); renderAdminEvents();
       }
@@ -1530,6 +1644,99 @@ async function renderAllowlist(d) {
       renderAllowlist(d); renderAdminEvents();
     }; });
   } catch (err) { box.innerHTML = '<p style="color:var(--danger)">Could not read the allowlist (' + esc(err.message) + ').</p>'; }
+}
+// ---- When access runs out (Engine/worker/expiry.js) --------------------------
+// Three things can carry an end date and this draws all three: the policy, the
+// people who have one, and the passphrases. NULL everywhere = unlimited, which is
+// what a deployment that never opens this screen has.
+function untilChip(iso, state) {
+  if (!iso) return '<span style="color:var(--muted)">unlimited</span>';
+  const day = String(iso).slice(0, 10);
+  const st = state || (Date.parse(iso) < Date.now() ? 'lapsed' : 'active');
+  const colour = st === 'lapsed' ? 'var(--danger)' : st === 'grace' ? '#b45309' : st === 'warn' ? '#b45309' : 'var(--muted)';
+  const word = st === 'lapsed' ? 'ended' : st === 'grace' ? 'in grace until' : 'until';
+  return '<span style="color:' + colour + ';white-space:nowrap">' + word + ' ' + esc(day) + '</span>';
+}
+async function renderExpiry(d) {
+  const box = $('expbox'); if (!box) return;
+  const e = d.expiry || {};
+  const modeLine = (id) => ((d.expiryModes || []).find((m) => m.id === id) || {}).line || '';
+  const opts = (d.expiryModes || []).map((m) => '<option value="' + esc(m.id) + '"' + (m.id === e.onLapse ? ' selected' : '') + '>' + esc(m.id) + '</option>').join('');
+  const numField = (id, label, val, hint) => '<div><label style="margin-top:0">' + label + '<small>' + hint + '</small></label><input type="number" min="0" id="' + id + '" value="' + esc(String(val ?? 0)) + '" style="margin:0;width:100%;padding:6px 8px;border:1px solid var(--edge);border-radius:8px;background:var(--bg);color:var(--text);font:inherit" /></div>';
+
+  box.innerHTML = '<p style="color:var(--muted);font-size:12.5px;margin:0 0 10px">Nothing expires unless you say so — every window below is <b>unlimited</b> until it has a date. Three things can carry one: the <b>person</b> (works in email, allow, key+email and Plate), the <b>invitation</b> (the allowlist above, allow mode only) and the <b>passphrase</b>. When more than one applies the <b>earliest wins</b>, and the row says which. Every change is in the record, and in the timeline below.</p>'
+    + '<div class="row2"><div><label style="margin-top:0">When someone\'s window closes<small>Now from: ' + esc((e.source || {}).onLapse || 'built-in') + '. A bot can override this in its project.json.</small></label><select id="x_lapse" style="margin:0">' + opts + '</select><div id="x_lapse_line" style="color:var(--muted);font-size:12px;margin-top:4px">' + esc(modeLine(e.onLapse)) + '</div></div>'
+    + numField('x_grace', 'Grace, in days', e.graceDays, 'Days past the end date before it bites. 0 = the moment it passes.') + '</div>'
+    + '<div class="row2" style="margin-top:8px">'
+    + numField('x_warn', 'Countdown, in days', e.warnDays, 'How long the visitor sees "your access ends in N days" first. 0 = no warning.')
+    + numField('x_default', 'New people get, in days', e.defaultDays, '0 = unlimited. 84 = a twelve-week block from the day they join, with no date to type.') + '</div>'
+    + '<div class="btnrow"><button class="btn primary" id="x_save"' + (d.canSave ? '' : ' disabled') + '>Save</button><span id="x_msg" style="color:var(--muted);font-size:13px"></span></div>'
+
+    + '<h5 style="margin:16px 0 6px">People with an end date</h5>'
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px"><input type="email" id="x_email" placeholder="email" style="flex:1;min-width:160px;padding:6px 8px;border:1px solid var(--edge);border-radius:8px;background:var(--bg);color:var(--text);font:inherit" /><input type="date" id="x_until" title="Leave empty to make it unlimited" style="padding:6px 8px;border:1px solid var(--edge);border-radius:8px;background:var(--bg);color:var(--text);font:inherit" /><button class="iconbtn" id="x_set">Set for ' + esc(state.project.name) + '</button><span id="x_setmsg" style="color:var(--muted);font-size:12.5px"></span></div>'
+    + (!(d.dated || []).length ? '<p style="color:var(--muted);font-size:12.5px">Nobody has a date of their own. ' + (e.defaultDays ? 'Everyone gets ' + e.defaultDays + ' days from the day they join (the setting above).' : 'Everyone is unlimited.') + '</p>'
+      : '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">' + d.dated.map((r) => '<tr style="border-top:1px solid var(--edge)"><td style="padding:6px 8px 6px 0;word-break:break-all"><b>' + esc(r.email) + '</b><br><span style="color:var(--muted)">' + esc(r.bot) + '</span></td><td style="padding:6px 8px">' + untilChip(r.access_until, r.state) + '</td><td style="padding:6px 8px;color:var(--muted);white-space:nowrap">' + (r.days === null || r.days === undefined ? '' : r.days >= 0 ? r.days + ' day(s) left' : Math.abs(r.days) + ' day(s) ago') + '</td><td style="padding:6px 0;text-align:right;white-space:nowrap"><button class="iconbtn" data-tl="' + esc(r.email) + '">History</button> <button class="iconbtn" data-ext="' + esc(r.email) + '" data-bot="' + esc(r.bot) + '">Extend</button></td></tr>').join('') + '</table></div>')
+
+    + '<h5 style="margin:16px 0 6px">Passphrases</h5>'
+    + (!(d.keys || []).length ? '<p style="color:var(--muted);font-size:12.5px">No ACCESS_PASSPHRASE secret is set, so there is no key to date.</p>'
+      : '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">' + d.keys.map((k) => '<tr style="border-top:1px solid var(--edge)"><td style="padding:6px 8px 6px 0;word-break:break-all"><code>' + esc(k.name) + '</code>' + (k.secretSet ? '' : '<br><span style="color:var(--danger)">the secret is NOT set — this row governs nothing</span>') + (k.note ? '<br><span style="color:var(--muted)">' + esc(k.note) + '</span>' : '') + '</td><td style="padding:6px 8px">' + untilChip(k.expires_at, k.state) + '</td><td style="padding:6px 0;text-align:right;white-space:nowrap"><input type="date" data-keydate="' + esc(k.name) + '" value="' + esc(k.expires_at ? String(k.expires_at).slice(0, 10) : '') + '" style="padding:5px 7px;border:1px solid var(--edge);border-radius:8px;background:var(--bg);color:var(--text);font:inherit" /></td></tr>').join('') + '</table></div>')
+    + '<p style="color:var(--muted);font-size:12px;margin:8px 0 0">A date on a passphrase stops it opening anything after that day. It does not delete the secret — remove that with <code>npx wrangler secret delete</code>.</p>';
+
+  const sel = $('x_lapse');
+  if (sel) sel.onchange = () => { $('x_lapse_line').textContent = modeLine(sel.value); };
+  const save = $('x_save');
+  if (save) save.onclick = async () => {
+    $('x_msg').textContent = 'Saving…';
+    const body = { access: d.access, createYourOwn: d.createYourOwn, identity: { graceMinutes: d.identity.graceMinutes }, expiry: { onLapse: sel.value, graceDays: $('x_grace').value, warnDays: $('x_warn').value, defaultDays: $('x_default').value } };
+    const r = await fetch('/api/admin/settings', { method: 'PUT', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify(body) });
+    const j = await r.json();
+    $('x_msg').textContent = r.ok ? 'Saved — live within seconds.' : (j.error || 'Not saved.');
+    if (r.ok) { renderExpiry(j); renderAdminEvents(); }
+  };
+  const setOne = async (email, bot, until) => {
+    const r = await fetch('/api/admin/access', { method: 'PUT', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ bot, email, until }) });
+    const j = await r.json();
+    if (!r.ok) { $('x_setmsg').textContent = j.error || 'Not set.'; return false; }
+    $('x_setmsg').textContent = j.action === 'access-unlimited' ? 'Now unlimited.' : 'Set.';
+    renderSettings();
+    return true;
+  };
+  const setBtn = $('x_set');
+  if (setBtn) setBtn.onclick = async () => {
+    const email = $('x_email').value.trim(); if (!email) return;
+    $('x_setmsg').textContent = 'Setting…';
+    await setOne(email, state.project.id, $('x_until').value || '');
+  };
+  box.querySelectorAll('button[data-ext]').forEach((b) => { b.onclick = () => {
+    $('x_email').value = b.dataset.ext;
+    $('x_until').focus();
+    $('x_setmsg').textContent = 'Pick a new date, then "Set for ' + state.project.name + '". Clear the date for unlimited.';
+  }; });
+  box.querySelectorAll('button[data-tl]').forEach((b) => { b.onclick = () => renderTimeline(b.dataset.tl); });
+  box.querySelectorAll('input[data-keydate]').forEach((i) => { i.onchange = async () => {
+    const r = await fetch('/api/admin/access/key', { method: 'PUT', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ name: i.dataset.keydate, until: i.value || '' }) });
+    if (r.ok) { renderSettings(); }
+  }; });
+}
+
+// One person's whole access history, newest first. Reads admin_events by `subject`,
+// which is why this is one indexed query and not a scan.
+async function renderTimeline(email) {
+  const box = $('timelinebox'); if (!box) return;
+  if (!email) {
+    box.innerHTML = '<p style="color:var(--muted);font-size:12.5px;margin:0 0 8px">Every grant, extension and removal for one person, in order — what happened to them over time.</p><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><input type="email" id="tl_email" placeholder="email" style="flex:1;min-width:180px;padding:6px 8px;border:1px solid var(--edge);border-radius:8px;background:var(--bg);color:var(--text);font:inherit" /><button class="iconbtn" id="tl_go">Show history</button></div>';
+    $('tl_go').onclick = () => { const v = $('tl_email').value.trim(); if (v) renderTimeline(v); };
+    return;
+  }
+  box.innerHTML = '<p class="thinking"><span>Reading ' + esc(email) + '’s history</span></p>';
+  try {
+    const r = await fetch('/api/admin/access/timeline?email=' + encodeURIComponent(email), { headers: adminHeaders() });
+    const d = await r.json(); if (!r.ok) throw new Error(d.error || r.status);
+    box.innerHTML = '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><b style="word-break:break-all">' + esc(email) + '</b><span class="spacer"></span><button class="iconbtn" id="tl_back">Someone else</button></div>'
+      + (!d.events.length ? '<p style="color:var(--muted);font-size:12.5px">Nothing recorded for this address. Either nobody has changed their access, or they joined before v3.11.</p>'
+        : '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">' + d.events.map((ev) => '<tr style="border-top:1px solid var(--edge);vertical-align:top"><td style="padding:6px 8px 6px 0;white-space:nowrap;color:var(--muted)">' + esc(whenAt(ev.created_at)) + '</td><td style="padding:6px 8px;white-space:nowrap"><b>' + esc(ev.action) + '</b></td><td style="padding:6px 8px;color:var(--muted)">' + esc(ev.target || '') + '</td><td style="padding:6px 0">' + esc(ev.detail || '') + '</td></tr>').join('') + '</table></div>');
+    $('tl_back').onclick = () => renderTimeline();
+  } catch (err) { box.innerHTML = '<p style="color:var(--danger)">Could not read the history (' + esc(err.message) + ').</p>'; }
 }
 async function renderAdminEvents() {
   const box = $('evbody'); if (!box) return;

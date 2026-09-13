@@ -40,7 +40,7 @@ export function gatewayStatus(config) {
     lastCall: lastGatewayStatus,
     cacheTtl: Number(config?.gateway?.cacheTtl || 0),
     note: !id ? "gateway.id is empty — calls go straight to the model"
-      : lastGatewayStatus === "direct (gateway missing)" ? `no gateway named "${id}" on this account yet — create it (docs/DEPLOY.md §D); calls go direct until then`
+      : lastGatewayStatus === "direct (gateway missing)" ? `no gateway named "${id}" on this account yet — create it (docs/OWNER-CHECKLIST.md §1, or DEPLOY.md §D for the API route); calls go direct until then`
       : lastGatewayStatus === "via gateway" ? "logs, rate limit and spend limit live in the dashboard: AI → AI Gateway → " + id
       : "no call has gone through the gateway yet in this isolate",
   };

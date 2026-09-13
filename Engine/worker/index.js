@@ -4,7 +4,8 @@ import { getSettings, saveSettings, settingsFileContent, cleanBadge, SETTINGS_FI
 import { handleIdentity, identify, linkByCode, signInMethods, adminNeedsCode, adminCodeOk, graceMinutesFor } from "../identity/index.js";
 import { ensureIdentitySchema, userByEmail as idUserByEmail } from "../identity/devices.js";
 import { listThreads, putThread, renameThread, deleteThread, usersWithHistory, ensureChatSchema } from "./chats.js";
-import { addToList, removeFromList, listFor as allowlistFor, listCounts as allowlistCounts, hasKey as allowlistKeySet, isAllowed, GLOBAL_SCOPE } from "./allowlist.js";
+import { addToList, removeFromList, listFor as allowlistFor, listCounts as allowlistCounts, hasKey as allowlistKeySet, isAllowed, blindFor, GLOBAL_SCOPE } from "./allowlist.js";
+import { ensureExpirySchema, cleanUntil, asDateInput, setPersonUntil, setKeyUntil, keyRows, timelineFor, datedPeople, resolve as resolveExpiry, expiryFor, stateOf, noticeFor, LAPSE_MODES, LAPSE_LINES, cleanExpiryConfig, EXPIRY_BUILT_IN } from "./expiry.js";
 import { buildSystemPrompt, PROMPT_FILES, ROOT_PROMPT_FILES } from "./prompt.js";
 import { complete, gatewayStatus } from "./gateway.js";
 import { classifyTurn, recordRoute, routingStats } from "./router.js";
@@ -18,7 +19,7 @@ import { listGaps, getGap, setGapState, draftGap } from "./gaps.js";
 import { normaliseBooking, bookingLive, bookingStep, bookingView } from "./booking.js";
 import { handleTrack } from "./track.js";
 import { isHandoffId, createHandoff, readHandoff, addHandoffMessage, closeHandoff, listHandoffs, getHandoff, notifyHumanRequested, PERSON_LIMITS } from "./person.js";
-import { gate as accessGate, effectiveAccess, accessSettings, accessToken, safeEqual, tokenFor, accessView, cleanMode, cleanKeyName, cleanEmail, ACCESS_MODES, MODE_LINES } from "./access.js";
+import { gate as accessGate, effectiveAccess, accessSettings, accessToken, safeEqual, tokenFor, keyFor, accessView, cleanMode, cleanKeyName, cleanEmail, ACCESS_MODES, MODE_LINES } from "./access.js";
 
 // ============================================================================
 //  THE WORKER. Four routes and a static folder.
@@ -132,7 +133,7 @@ export default {
       const bot = await resolveProject(env, id);
       if (bot.id !== id || bot.kind === "chat") return url.pathname.startsWith("/api/") ? json({ error: "not found" }, 404) : new Response("Not found", { status: 404 });
       const paths = app.alias ? { page: "/food", api: "/api/food/", admin: "/api/admin/food/" } : { page: `/apps/${id}`, api: `/api/apps/${id}/`, admin: `/api/admin/apps/${id}/` };
-      if (bot.kind === "food") return handleTrack(request, env, url, { bot, ...paths, isAdmin, adminEnabled, allowed, graceMinutes: graceMinutesFor(bot, settings.identity?.graceMinutes) });
+      if (bot.kind === "food") return handleTrack(request, env, url, { bot, ...paths, isAdmin, adminEnabled, allowed, graceMinutes: graceMinutesFor(bot, settings.identity?.graceMinutes), expiry: expiryFor(bot, settings) });
       return json({ error: "not found" }, 404);
     }
     // --- IDENTITY, shared by every kind: passkeys and authenticator codes (Engine/identity/index.js).
@@ -169,12 +170,51 @@ export default {
         if (request.method === "GET") { const r = await allowlistFor(env, url.searchParams.get("scope") || GLOBAL_SCOPE); return json({ ...r, counts: await allowlistCounts(env), keySet: allowlistKeySet(env) }, r.ok ? 200 : r.status || 400); }
         if (request.method !== "POST" && request.method !== "DELETE") return json({ error: "method" }, 405);
         const { body: b, error } = await readJson(request, { max: 8 * 1024 }); if (error) return error;
-        const r = request.method === "POST" ? await addToList(env, b.scope, b.email) : await removeFromList(env, b.scope, b.email);
-        if (r.ok) await logAdminEvent(env, request, request.method === "POST" ? "allowlist-add" : "allowlist-remove", r.scope === GLOBAL_SCOPE ? "every bot" : r.scope, `${r.email}${request.method === "DELETE" && !r.removed ? " (wasn't on it)" : ""}`);
+        const r = request.method === "POST" ? await addToList(env, b.scope, b.email, "admin", cleanUntil(b.until)) : await removeFromList(env, b.scope, b.email);
+        if (r.ok) await logAdminEvent(env, request, request.method === "POST" ? (r.existed ? "access-extend" : "allowlist-add") : "allowlist-remove", r.scope === GLOBAL_SCOPE ? "every bot" : r.scope, `${r.email}${request.method === "POST" ? ` · invitation ${r.was ? String(r.was).slice(0, 10) : "unlimited"} → ${r.until ? String(r.until).slice(0, 10) : "unlimited"}` : ""}${request.method === "DELETE" && !r.removed ? " (wasn't on it)" : ""}`, r.email);
         return json(r, r.ok ? 200 : r.status || 400);
       }
       // See what a visitor sees — READ ONLY. Their threads and turns, exactly as their page has them
       // (Engine/worker/chats.js). No writes here: the admin can look, never send as them.
+      // --- WHEN ACCESS RUNS OUT (Engine/worker/expiry.js). Three things can carry a
+      //     date and this is where all three are set. Every write is audited with the
+      //     person's address in `subject`, which is what the timeline reads.
+      //       GET    /api/admin/access?bot=<id>     everyone with a date, plus the keys
+      //       PUT    /api/admin/access              {bot, email, until}  (until:"" = unlimited)
+      //       PUT    /api/admin/access/key          {name, until, note}
+      //       GET    /api/admin/access/timeline?email=…   one person, newest first
+      if (url.pathname === "/api/admin/access") {
+        if (!env.DB) return json({ error: "Access dates need the D1 database (wrangler.jsonc → d1_databases)." }, 503);
+        if (request.method === "GET") {
+          const bot = String(url.searchParams.get("bot") || "").trim();
+          return json({ people: await datedPeople(env, bot), keys: await keyRows(env), expiry: settings.expiry, modes: LAPSE_MODES.map((id) => ({ id, line: LAPSE_LINES[id] })) });
+        }
+        if (request.method !== "PUT") return json({ error: "method" }, 405);
+        const { body: b, error } = await readJson(request); if (error) return error;
+        const email = cleanEmail(b?.email);
+        const bot = String(b?.bot || "").trim();
+        if (!email || !bot) return json({ error: "bot and a valid email are required" }, 400);
+        if (b?.until && !cleanUntil(b.until)) return json({ error: "until must be a date like 2026-12-31, or empty for unlimited" }, 400);
+        const r = await setPersonUntil(env, { bot, email, until: b.until, log: logAdminEvent, request });
+        return json(r, r.ok ? 200 : r.status || 400);
+      }
+      if (url.pathname === "/api/admin/access/key") {
+        if (!env.DB) return json({ error: "Access dates need the D1 database (wrangler.jsonc → d1_databases)." }, 503);
+        if (request.method !== "PUT") return json({ error: "PUT only" }, 405);
+        const { body: b, error } = await readJson(request); if (error) return error;
+        const name = String(b?.name || "").trim();
+        // Only a real ACCESS_PASSPHRASE* name, so a date can never be hung on GITHUB_TOKEN.
+        if (!(name === "ACCESS_PASSPHRASE" || /^ACCESS_PASSPHRASE_[A-Z0-9_]+$/.test(name))) return json({ error: "name must be ACCESS_PASSPHRASE or ACCESS_PASSPHRASE_<SOMETHING>" }, 400);
+        if (b?.until && !cleanUntil(b.until)) return json({ error: "until must be a date like 2026-12-31, or empty for unlimited" }, 400);
+        const r = await setKeyUntil(env, { name, until: b.until, note: b.note, log: logAdminEvent, request });
+        return json(r, r.ok ? 200 : r.status || 400);
+      }
+      if (url.pathname === "/api/admin/access/timeline") {
+        if (!env.DB) return json({ error: "The timeline needs the D1 database (wrangler.jsonc → d1_databases)." }, 503);
+        const email = cleanEmail(url.searchParams.get("email"));
+        if (!email) return json({ error: "a valid email is required" }, 400);
+        return json(await timelineFor(env, email, url.searchParams.get("limit")));
+      }
       if (url.pathname === "/api/admin/chats" || url.pathname === "/api/admin/chats/users") {
         if (request.method !== "GET") return json({ error: "read only" }, 405);
         if (!env.DB) return json({ error: "History needs the D1 database (wrangler.jsonc → d1_databases)." }, 503);
@@ -229,8 +269,10 @@ export default {
         const badge = cleanBadge(b?.createYourOwn);
         const ident = b?.identity && typeof b.identity === "object" && b.identity.graceMinutes !== undefined ? { graceMinutes: b.identity.graceMinutes } : null;
         if (ident && !(Number.isFinite(Number(ident.graceMinutes)) && Number(ident.graceMinutes) >= 0)) return json({ error: "identity.graceMinutes must be a number of minutes, 0 or more" }, 400);
-        await saveSettings(env, { access: next, createYourOwn: badge, identity: ident });
-        await logAdminEvent(env, request, "settings-save", "access", `default ${settings.default} → ${next.default} · floor ${settings.floor} → ${next.floor}${badge ? ` · badge ${badge.show ? `"${badge.text}"` : "hidden"}` : ""}${ident ? ` · return window ${settings.identity?.graceMinutes} → ${Math.round(Number(ident.graceMinutes))} min` : ""}`);
+        const exp = cleanExpiryConfig(b?.expiry);
+        if (b?.expiry && !exp) return json({ error: `expiry.onLapse must be one of: ${LAPSE_MODES.join(", ")}, and the day counts must be numbers` }, 400);
+        await saveSettings(env, { access: next, createYourOwn: badge, identity: ident, expiry: exp });
+        await logAdminEvent(env, request, "settings-save", "access", `default ${settings.default} → ${next.default} · floor ${settings.floor} → ${next.floor}${badge ? ` · badge ${badge.show ? `"${badge.text}"` : "hidden"}` : ""}${ident ? ` · return window ${settings.identity?.graceMinutes} → ${Math.round(Number(ident.graceMinutes))} min` : ""}${exp ? ` · when access lapses ${settings.expiry?.onLapse} → ${exp.onLapse ?? settings.expiry?.onLapse}${exp.graceDays !== undefined ? `, grace ${exp.graceDays}d` : ""}` : ""}`);
         return json(await settingsView(env, await getSettings(env)));
       }
       if (url.pathname === "/api/admin/settings/sync") {
@@ -295,6 +337,21 @@ export default {
           identity = who.user ? { linked: true, email: who.user.email } : { linked: false, pending: who.pending ? { code: who.pending.code, email: who.pending.email } : null };
           // allow mode: say now whether they're on the list, so the page shows the right screen before the first message.
           if (who.user && view.list) { const r = await isAllowed(env, curId, who.user.email); identity.allowed = r.ok; if (!r.ok) identity.reason = r.reason; }
+          // Their own window, in their own words: "your access ends in 5 days".
+          // The person is told about THEIR date and nothing else — never the policy,
+          // never anyone else's. docs/CUSTOMIZE.md → "When access runs out".
+          if (who.user) {
+            const cfg = expiryFor(current, settings);
+            // The same three sources the gate uses, so the countdown warns about
+            // whichever one is actually going to bite — not just the person's own date.
+            const exp = await resolveExpiry(env, {
+              bot: curId,
+              email: who.user.email,
+              emailHmac: view.list ? await blindFor(env, who.user.email) : "",
+              keyName: view.key ? keyFor(env, current).name : "",
+            }, cfg);
+            identity.access = { until: exp.until, state: exp.state, days: exp.days, notice: noticeFor(exp), readOnly: exp.state === "lapsed" && cfg.onLapse === "readonly" };
+          }
         }
         catch (err) { console.error("identity lookup failed on /api/config", err?.message || err); identity = { linked: false, pending: null }; }
       }
@@ -437,7 +494,11 @@ async function handleChat(request, env, ctx, { isAdmin = false, guard, visitorOf
   if (project.kind && project.kind !== "chat") return json({ error: "not a chat bot", reply: `${project.name} is an app, not a chat bot. Open /apps/${project.id}.`, href: `/apps/${project.id}` }, 404);
   // --- THE GATE. This bot's door: key, email, admin code, or draft. Engine/worker/access.js.
   const g = await guard(project, { draftPreview, email: await visitorOf(project) });   // body.visitor is ignored: identity says who
-  if (!g.ok) return json({ error: g.error, reply: g.reply, access: g.mode }, g.status);
+  if (!g.ok) return json({ error: g.error, reply: g.reply, access: g.mode, expiry: g.expiry || null }, g.status);
+  // "readonly" (YourBots/config.js → expiry.onLapse): their window closed, they may
+  // still READ their own history — /api/chats keeps working — but nothing new is sent
+  // to the model. Refused here rather than in the gate so the reason is a proper reply.
+  if (g.readOnly) return json({ error: "expired", reply: g.notice, access: g.mode, readOnly: true, expiry: g.expiry || null }, 403);
   const who = g.who;                                                          // the email they typed, "admin", or ""
   const stream = body.stream !== false;
   const fw = CONFIG.firewall || {};
@@ -866,6 +927,10 @@ async function handleChats(request, env, url, { isAdmin, guard, settings }) {
   if (!who.user) return json({ error: "email", reply: "Please enter your email address to start." }, 401);
   const g = await guard(project, { email: who.user.email });
   if (!g.ok) return json({ error: g.error, reply: g.reply, access: g.mode }, g.status);
+  // "readonly" after a window closes (YourBots/config.js → expiry.onLapse): reading
+  // their own history is the whole point, so GET stays open and everything that
+  // CHANGES it is refused. Under "tell" and "silent" the gate above already said no.
+  if (g.readOnly && request.method !== "GET") return json({ error: "expired", reply: g.notice, access: g.mode, readOnly: true }, 403);
   try {
     if (request.method === "GET" && !id) return json({ bot: pid, email: who.user.email, threads: await listThreads(env, pid, who.user.id) });
     if (!id) return json({ error: "which thread? /api/chats/<id>" }, 400);
@@ -1250,11 +1315,12 @@ async function ensureSchema(env) {
     // Settings: one row per key. "access" holds { default, floor } from the Settings screen. See loadSettings.
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT)`),
     // Admin events: every write the admin makes, with a hash of the IP (never the IP). See logAdminEvent.
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS admin_events (id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT NOT NULL, target TEXT, detail TEXT, who TEXT, ip_hash TEXT, created_at TEXT NOT NULL)`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS admin_events (id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT NOT NULL, target TEXT, detail TEXT, who TEXT, ip_hash TEXT, created_at TEXT NOT NULL, subject TEXT)`),
     env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_adminev_created ON admin_events(id)`),
   ]);
   // History on any computer (Engine/worker/chats.js) and the allowlist (Engine/worker/allowlist.js) make their own.
   await ensureChatSchema(env);
+  await ensureExpirySchema(env);   // the ALTERs for id_users / allowlist / admin_events, once the tables above exist
   SCHEMA_OK = true;
 }
 
@@ -1268,13 +1334,19 @@ async function settingsView(env, settings) {
     const a = effectiveAccess(full, settings);
     const m = signInMethods(full, env);
     const signIn = full.kind === "chat" ? (a.wantEmail ? `email + device key${a.wantList ? " · on the allowlist" : ""}` : "") : ["email + device key", m.passkeys ? "passkeys" : "", ...m.providers.map((x) => `sign in with ${x.provider}`), m.totp ? "authenticator code" : "", "owner links a device"].filter(Boolean).join(" · ");
-    bots.push({ id: p.id, kind: cleanKind(full.kind), href: hrefFor(full), name: p.name, access: a.botMode, effective: a.mode, reason: a.reason, listed: a.listed, source: p.source, ownKey: a.keyName ? (env[a.keyName] ? `${a.keyName} (set)` : `${a.keyName} (NOT set — the shared key is used)`) : "", signIn, graceMinutes: full.identity?.graceMinutes, allowlisted: counts[p.id] || 0 });
+    bots.push({ id: p.id, kind: cleanKind(full.kind), href: hrefFor(full), name: p.name, access: a.botMode, effective: a.mode, reason: a.reason, listed: a.listed, source: p.source, ownKey: a.keyName ? (env[a.keyName] ? `${a.keyName} (set)` : `${a.keyName} (NOT set — the shared key is used)`) : "", signIn, graceMinutes: full.identity?.graceMinutes, allowlisted: counts[p.id] || 0, expiry: expiryFor(full, settings) });
   }
   return {
     access: { default: settings.default, floor: settings.floor },
     createYourOwn: settings.createYourOwn,
     identity: { graceMinutes: settings.identity?.graceMinutes, source: settings.identity?.source },
     allowlist: { keySet: allowlistKeySet(env), counts, global: counts[GLOBAL_SCOPE] || 0 },
+    // When access runs out: the policy, everyone who currently has an end date, and
+    // the passphrases that have one. Engine/worker/expiry.js.
+    expiry: settings.expiry || EXPIRY_BUILT_IN,
+    expiryModes: LAPSE_MODES.map((id) => ({ id, line: LAPSE_LINES[id] })),
+    dated: env.DB ? await datedPeople(env) : [],
+    keys: env.DB ? await keyRows(env) : [],
     breakGlass: Boolean(breakGlassKey(env)),
     source: settings.source,
     file: SETTINGS_FILE?.access || {},
@@ -1315,14 +1387,19 @@ async function sha256Hex(text) {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(text)));
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
-async function logAdminEvent(env, request, action, target = "", detail = "") {
-  console.log(JSON.stringify({ event: "admin", action, target: String(target).slice(0, 200), detail: String(detail).slice(0, 300) }));
+// `subject` is WHO the event is about (an email address), as opposed to `target`
+// which is what was touched (a bot, a file). Access events fill it in, and that is
+// what makes "show me everything that happened to this person" one indexed read —
+// Under the hood → Settings → Access over time. Everything else leaves it empty.
+async function logAdminEvent(env, request, action, target = "", detail = "", subject = "") {
+  console.log(JSON.stringify({ event: "admin", action, target: String(target).slice(0, 200), detail: String(detail).slice(0, 300), subject: String(subject).slice(0, 254) }));
   if (!env.DB) return;
   try {
     await ensureSchema(env);
-    const ip = request.headers.get("cf-connecting-ip") || "";
-    await env.DB.prepare(`INSERT INTO admin_events (action, target, detail, who, ip_hash, created_at) VALUES (?, ?, ?, 'admin', ?, ?)`)
-      .bind(String(action).slice(0, 60), String(target).slice(0, 200), String(detail).slice(0, 2000), ip ? await sha256Hex(ip) : "", new Date().toISOString()).run();
+    await ensureExpirySchema(env);
+    const ip = request?.headers?.get("cf-connecting-ip") || "";
+    await env.DB.prepare(`INSERT INTO admin_events (action, target, detail, who, ip_hash, created_at, subject) VALUES (?, ?, ?, 'admin', ?, ?, ?)`)
+      .bind(String(action).slice(0, 60), String(target).slice(0, 200), String(detail).slice(0, 2000), ip ? await sha256Hex(ip) : "", new Date().toISOString(), String(subject || "").toLowerCase().slice(0, 254)).run();
   } catch (err) { console.error("admin event log failed (continuing)", err?.message || err); }
 }
 // GET /api/admin/events?limit=100 — newest first.
@@ -1330,7 +1407,8 @@ async function adminEvents(env, limitRaw) {
   if (!env.DB) return { enabled: false, rows: [], reason: "No D1 database is bound (wrangler.jsonc → d1_databases). Admin writes still go to Workers Logs." };
   await ensureSchema(env);
   const limit = Math.min(Math.max(parseInt(limitRaw || "100", 10) || 100, 1), 500);
-  const rows = (await env.DB.prepare(`SELECT id, action, target, detail, who, ip_hash, created_at FROM admin_events ORDER BY id DESC LIMIT ?`).bind(limit).all()).results || [];
+  await ensureExpirySchema(env);
+  const rows = (await env.DB.prepare(`SELECT id, action, target, detail, who, ip_hash, created_at, subject FROM admin_events ORDER BY id DESC LIMIT ?`).bind(limit).all()).results || [];
   return { enabled: true, rows, note: "ip_hash is a SHA-256 of the caller's IP address; the address itself is never stored." };
 }
 
@@ -1509,7 +1587,7 @@ async function engineView(env, projectId) {
         "voice-in": "the visitor spoke this message (the mic → Whisper on Workers AI); the text was screened like any other",
         "guard-blocked:S#": "Llama Guard flagged the user turn (category S1–S14)",
         "gateway-blocked": "AI Gateway Guardrails blocked it at the edge",
-        "gateway-direct": "gateway.id is set but no such gateway exists yet; the call went straight to the model (no logs, no spend limit)",
+        "gateway-direct": "a Cloudflare setup step is still to do: config names an AI Gateway but you haven't created it in the dashboard yet, so the call went straight to the model with no logs and no spend limit. Fix: Cloudflare → AI → AI Gateway → Create, named exactly as gateway.id, then set a spend limit (docs/OWNER-CHECKLIST.md §1)",
         "small-model": "small talk (\"hi\", \"thanks\", \"ok\") answered by routing.smallModel with the same prompt — Engine/worker/router.js",
         "rate-limited": "over the per-visitor limit",
       },
