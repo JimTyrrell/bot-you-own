@@ -6,11 +6,12 @@ each item switches on one more capability, and the code notices it's missing and
 carries on. Do them in any order. Each says exactly what to click and how to
 check it worked.
 
-The account: this Worker is on **your own Cloudflare account**
-(`you@example.com`). Every `wrangler` command below must run with
-`CLOUDFLARE_ACCOUNT_ID=<your-account-id>` in front of it, from the
-repo folder `workshops/ChatGPT/bot-you-own`. The live URL is
-`https://bot-you-own.<your-subdomain>.workers.dev`.
+The account: this Worker is on **your own Cloudflare account**. If that login
+has more than one account, every `wrangler` command below needs
+`CLOUDFLARE_ACCOUNT_ID=<your-account-id>` in front of it (Cloudflare dashboard →
+any site → **Overview**, right-hand column → **Account ID**). Run them from the
+repo folder. Your live URL is `https://bot-you-own.<your-subdomain>.workers.dev`
+until you attach a custom domain (DEPLOY.md §C).
 
 A note on `wrangler secret put`: it reads the value from your terminal. The
 `printf '…' | npx wrangler secret put NAME` form types it in one line without a
