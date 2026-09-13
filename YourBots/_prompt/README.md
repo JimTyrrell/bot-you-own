@@ -32,7 +32,7 @@ handoff text + contact · `{{links}}` the allowed links as a bullet list ·
 Any file in this folder can be copied into `YourBots/<name>/prompt/` with the
 **same name**, and that copy replaces it for that bot only. Nothing to register —
 the build finds it. Example in the repo:
-`YourBots/brightside-dental/prompt/3-personality.md` gives the dental bot a
+`YourBots/tumblebrook-dental/prompt/3-personality.md` gives the dental bot a
 calmer voice while the other bots keep the shared one. Jobs work the same way:
 `YourBots/<name>/prompt/jobs/<mode>.md`.
 

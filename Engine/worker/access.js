@@ -27,7 +27,8 @@
 //  (Engine/worker/allowlist.js); no ALLOWLIST_KEY secret = nobody is on it = closed.
 // ============================================================================
 
-import { isAllowed } from "./allowlist.js";
+import { isAllowed, blindFor } from "./allowlist.js";
+import { resolve as resolveExpiry, expiryFor, lapseReply, noticeFor } from "./expiry.js";
 
 export const ACCESS_MODES = ["open", "email", "allow", "key", "key+email", "admin", "draft"];
 const RANK = { open: 0, email: 1, allow: 2, key: 3, "key+email": 4, admin: 5, draft: 6 };
@@ -171,9 +172,37 @@ export async function gate(request, env, project, settings, { isAdmin = false, d
     }
     // allow: identified, AND on the list. This bot's list or the deployment-wide one ("*").
     // No key, a broken lookup, an address that isn't there: all the same closed door.
+    let hmac = "";
     if (a.wantList && !isAdmin && email !== undefined) {
       const r = await isAllowed(env, project?.id, cleanEmail(email));
       if (!r.ok) return { ok: false, status: 403, error: "allow", reply: r.reason || `${cleanEmail(email)} isn't on the list for ${project?.name || "this bot"}. Ask the owner to add it.`, ...base, list: true };
+      hmac = r.hmac || "";
+    }
+
+    // --- IS IT STILL IN DATE? (Engine/worker/expiry.js) --------------------------
+    // The door has already said yes by this point. This asks the second question:
+    // has the person's window, their invitation, or the key they used run out?
+    // The admin is never time-boxed — the owner locking themselves out of their own
+    // bot would be a bug, not a feature. Everything here fails OPEN: a lookup that
+    // breaks contributes no date, so a database hiccup can't lock out a paying client.
+    if (!isAdmin) {
+      const cfg = expiryFor(project, settings);
+      const who2 = cleanEmail(email);
+      if (!hmac && a.wantList && who2) hmac = await blindFor(env, who2);
+      // The key's date only counts for a bot that actually opens with a key — a date
+      // on the shared ACCESS_PASSPHRASE must not quietly time-box an "open" or plain
+      // "email" bot that never asks for it.
+      const keyName = a.wantKey ? keyFor(env, project).name : "";
+      const exp = await resolveExpiry(env, { bot: project?.id, email: who2, emailHmac: hmac, keyName }, cfg);
+      if (exp.state === "lapsed") {
+        // "readonly" is not a refusal — it is a yes with the composer off. The caller
+        // (handleChat) turns readOnly into "you can read, you can't send"; a route that
+        // ignores the flag simply keeps working, which is the right failure direction.
+        if (exp.onLapse === "readonly") return { ok: true, ...base, who, expiry: exp, readOnly: true, notice: lapseReply(exp, project) };
+        return { ok: false, status: 403, error: "expired", reply: lapseReply(exp, project), ...base, expiry: exp };
+      }
+      if (exp.state === "warn" || exp.state === "grace") return { ok: true, ...base, who, expiry: exp, notice: noticeFor(exp) };
+      return { ok: true, ...base, who, expiry: exp };
     }
     return { ok: true, ...base, who };
   } catch (err) {

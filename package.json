@@ -1,6 +1,6 @@
 {
   "name": "bot-you-own",
-  "version": "3.10.0",
+  "version": "3.11.0",
   "private": true,
   "description": "A ChatGPT-style assistant you own: your prompt, your files, your firewall, on Cloudflare.",
   "type": "module",
@@ -12,6 +12,6 @@
     "test:one": "node Engine/tests/break-it.mjs --project"
   },
   "devDependencies": {
-    "wrangler": "^4"
+    "wrangler": "^4.130.0"
   }
 }

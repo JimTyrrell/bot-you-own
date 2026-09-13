@@ -22,6 +22,11 @@ const NO_THINK = { chat_template_kwargs: { enable_thinking: false } };
 // --- The prompts. Each one asks for JSON and nothing else. --------------------
 const FOOD_SHAPE = `{"items":[{"name":"","portion":"","grams":0,"kcal":0,"protein_g":0,"carbs_g":0,"fat_g":0,"confidence":0.0}],"notes":""}`;
 export const PROMPTS = {
+  // The Fix line: a correction to an estimate the person has ALREADY checked. They may
+  // have fixed other items before — an earlier correction, the portion buttons, typed
+  // grams — so the model sees the whole current list and is told to change only what
+  // this sentence is about. mergeCorrection() below enforces that in code as well.
+  revise: (current, correction, withPhoto) => `You are a careful nutrition estimator correcting an estimate the person has already checked. The current estimate, as JSON: ${JSON.stringify({ items: current })}\nThe person says: "${correction}".\nApply ONLY that correction. Every item the correction does not mention must come back exactly as given: same name, portion, grams and numbers. Change, add or remove only the items it is about, and estimate their numbers${withPhoto ? " (the photo is attached)" : ""}. Keep the person's own amount and unit exactly: "11 chips" means eleven individual chips and the portion is "11 chips", not 11 servings. If they correct a food's name or brand, correct that same item instead of adding a second one. "portion" is a plain-English size; kcal, protein_g, carbs_g and fat_g are for that portion. Answer ONLY with a JSON object, no prose, no code fence, exactly this shape:\n${FOOD_SHAPE}`,
   food: (correction) => `You are a careful nutrition estimator. Look at the meal and answer ONLY with a JSON object, no prose, no code fence, exactly this shape:\n${FOOD_SHAPE}\nOne item per distinct food on the plate. "portion" is a plain-English size ("1 slice", "large bowl"). "grams" is your best guess of the weight of that portion as served. kcal, protein_g, carbs_g and fat_g are for that portion, not per 100 g. confidence is 0-1. If you can't see food, return an empty items list and say why in notes.${correction ? `\nThe person says the estimate needs a correction: "${correction}". Trust them about WHAT the food is; you estimate the numbers.` : ""}`,
   text: (text, correction) => `You are a careful nutrition estimator. The person typed what they ate: "${text}". Answer ONLY with a JSON object, no prose, no code fence, exactly this shape:\n${FOOD_SHAPE}\nOne item per food they named. Use typical serving sizes when they don't give one. kcal, protein_g, carbs_g and fat_g are for that portion. confidence is 0-1.${correction ? `\nCorrection from the person: "${correction}".` : ""}`,
   label: `Read the nutrition facts label in the photo. Answer ONLY with JSON, no prose, no code fence: {"product":"","serving_size":"","servings_per_container":0,"per_serving":{"kcal":0,"protein_g":0,"carbs_g":0,"fat_g":0,"fibre_g":0,"sugar_g":0,"sodium_mg":0}}. Copy the numbers printed on the label for ONE serving. If the label is per 100 g, treat 100 g as the serving. Use null for anything not printed. "product" is the product name if it is visible on the packaging, else null.`,
@@ -59,6 +64,83 @@ export function extractJson(raw) {
 
 // --- Sanity: every item gets clean numbers. Calories that disagree with the
 //     macros by more than 25% are recomputed from the macros (4/4/9).
+// --- THE FIX LINE: change what the person asked about, keep everything else. -----------
+// "30 blueberries" is about the blueberries. The model is told so (PROMPTS.revise), but a
+// model can drift, so the rule is enforced here: an item whose name the sentence does not
+// mention comes back EXACTLY as the person left it — earlier corrections, portion buttons
+// and typed grams included. Only the items it names are replaced or added, and one is
+// removed only when the sentence says so ("that's chicken, not pork", "no rice"). Names match loosely —
+// plurals, "sliced", units and numbers are ignored — because the model rarely repeats a
+// name word for word. When unsure it keeps what the person had: a missed correction costs
+// a retry; a lost one costs their earlier work.
+const MATCH_STOP = new Set(["the", "and", "not", "with", "that", "this", "its", "are", "was", "has", "have", "for", "but", "more", "less", "some", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "half", "quarter", "cup", "slice", "piece", "bowl", "plate", "small", "large", "medium", "big", "gram", "ounce", "tablespoon", "teaspoon", "tbsp", "tsp", "handful", "serving", "portion", "about", "only", "just", "actually", "really", "also", "there", "were", "fresh", "sliced", "chopped", "raw", "cooked", "extra", "whole", "add", "added", "brand", "them", "they", "those", "these", "their"]);
+function stemFood(w) {
+  if (w.length > 4 && w.endsWith("ies")) return w.slice(0, -3) + "y";
+  if (w.length > 4 && w.endsWith("oes")) return w.slice(0, -2);
+  if (w.length > 3 && w.endsWith("s") && !w.endsWith("ss")) return w.slice(0, -1);
+  return w;
+}
+export function foodWords(s) {
+  return new Set(String(s || "").toLowerCase().split(/[^a-z]+/).map(stemFood).filter((w) => w.length > 2 && !MATCH_STOP.has(w)));
+}
+// A food the person just named in a correction isn't a guess any more: they've told us
+// what it is and how much. Whatever confidence the model attached — with the photo it
+// can still score a "¼ cup" it can't see at 0.4, or leave it out (sanitiseItems then
+// fills in 0.5) — it must not come back flagged "not sure"; the page shows that below
+// 0.6. Foods the model guessed on its own keep their score, doubt and all.
+const STATED = 0.9;
+const stated = (f) => ({ ...f, confidence: Math.max(Number(f.confidence) || 0, STATED) });
+const REMOVING = /\b(no|not|remove|removed|without|delete|drop|none|skip|instead|didn'?t|wasn'?t|isn'?t|aren'?t)\b/i;
+export function mergeCorrection(current, fresh, correction) {
+  if (!fresh.length) return current;                                   // the model gave nothing usable: change nothing
+  const said = foodWords(correction);
+  const removing = REMOVING.test(String(correction || ""));
+  const key = (name) => [...foodWords(name)].sort().join(" ");
+  const named = (name) => [...foodWords(name)].some((w) => said.has(w));
+  const same = (a, b) => key(a.name) === key(b.name) && a.portion === b.portion && Number(a.grams) === Number(b.grams) && Number(a.kcal) === Number(b.kcal);
+  const curKeys = new Set(current.map((c) => key(c.name)));
+  const partner = new Map(), taken = new Set();
+  // 1. Same food, same name, new numbers: corrected in place.
+  current.forEach((c, ci) => {
+    if (!named(c.name)) return;
+    const fi = fresh.findIndex((f, i) => !taken.has(i) && key(f.name) === key(c.name));
+    if (fi >= 0 && !same(c, fresh[fi])) { partner.set(ci, fi); taken.add(fi); }
+  });
+  // 2. Same food, NEW name. Models rename what they correct ("whole grain tortilla chips"
+  //    → "Siete chips"), and matching names exactly turned that into a second line. So a
+  //    named food still without a partner takes the renamed answer sharing the most words
+  //    with it. On a tie, a food the model kept an unchanged copy of loses — the model is
+  //    saying that one wasn't the food being corrected.
+  const novel = fresh.map((f, i) => i).filter((i) => !taken.has(i) && !curKeys.has(key(fresh[i].name)));
+  const keptCopy = (c) => fresh.some((f) => same(c, f));
+  const pairs = [];
+  current.forEach((c, ci) => {
+    if (!named(c.name) || partner.has(ci)) return;
+    const cw = foodWords(c.name);
+    for (const fi of novel) {
+      const fw = foodWords(fresh[fi].name);
+      let shared = 0; for (const w of cw) if (fw.has(w)) shared++;
+      if (shared) pairs.push({ ci, fi, shared, jac: shared / new Set([...cw, ...fw]).size, copy: keptCopy(c) ? 1 : 0 });
+    }
+  });
+  pairs.sort((a, b) => b.shared - a.shared || b.jac - a.jac || a.copy - b.copy);
+  for (const p of pairs) if (!partner.has(p.ci) && !taken.has(p.fi)) { partner.set(p.ci, p.fi); taken.add(p.fi); }
+  // 3. Put the meal back together, in the person's order.
+  const out = [];
+  current.forEach((c, ci) => {
+    if (!named(c.name)) out.push(c);                                    // not about this one: exactly as it was
+    else if (partner.has(ci)) out.push(stated(fresh[partner.get(ci)])); // corrected, renamed or not
+    else if (keptCopy(c) || !removing) out.push(c);                     // unchanged by the model, or nobody said drop it
+    // else: named, gone, and the sentence says to drop it ("that's chicken, not pork")
+  });
+  // 4. Foods the correction brought in: a new name, not claimed above, named in the sentence.
+  for (const fi of novel) {
+    if (taken.has(fi) || !named(fresh[fi].name)) continue;
+    if (!out.some((o) => key(o.name) === key(fresh[fi].name))) out.push(stated(fresh[fi]));
+  }
+  return out.length ? out : current;                                    // never turn a meal into nothing
+}
+
 export function sanitiseItems(list, { source = "photo" } = {}) {
   const items = (Array.isArray(list) ? list : []).slice(0, 20).map((it) => {
     const name = String(it?.name || "").trim().slice(0, 80);

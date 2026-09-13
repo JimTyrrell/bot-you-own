@@ -14,14 +14,18 @@
 //    createYourOwn { show, text, url }       the badge under the chat
 //    identity      { graceMinutes }          the return window (Engine/identity/devices.js);
 //                                            a bot's own project.json → identity wins over this
+//    expiry        { onLapse, graceDays,     what an end date DOES when it passes
+//                    warnDays, defaultDays } (Engine/worker/expiry.js); a bot's own
+//                                            project.json → expiry wins over this
 // ============================================================================
 
 import { CONFIG } from "../../YourBots/config.js";
 import SETTINGS_FILE from "../../YourBots/settings.json";
 import { accessSettings } from "./access.js";
 import { cleanGrace, DEFAULT_GRACE_MINUTES } from "../identity/devices.js";
+import { expirySettings, cleanExpiryConfig, EXPIRY_BUILT_IN } from "./expiry.js";
 
-const KEYS = ["access", "createYourOwn", "identity"];
+const KEYS = ["access", "createYourOwn", "identity", "expiry"];
 let CACHE = { at: 0, rows: null };
 
 async function readRows(env) {
@@ -44,7 +48,8 @@ export async function getSettings(env) {
   const access = accessSettings(CONFIG, SETTINGS_FILE, rows.access ? { access: rows.access } : null);
   const badge = mergeBadge(CONFIG.createYourOwn, SETTINGS_FILE?.createYourOwn, rows.createYourOwn);
   const identity = mergeIdentity(CONFIG.identity, SETTINGS_FILE?.identity, rows.identity);
-  return { ...access, createYourOwn: badge, identity };
+  const expiry = expirySettings(CONFIG, SETTINGS_FILE, rows.expiry ? { expiry: rows.expiry } : null);
+  return { ...access, createYourOwn: badge, identity, expiry };
 }
 // identity.graceMinutes: the return window, in minutes. 0 = off. Same three places, later wins.
 const graceOf = (i) => (i && typeof i === "object" && i.graceMinutes !== undefined && i.graceMinutes !== null && i.graceMinutes !== "" && Number.isFinite(Number(i.graceMinutes)) && Number(i.graceMinutes) >= 0 ? cleanGrace(i.graceMinutes) : null);
@@ -65,19 +70,21 @@ function mergeBadge(c, f, s) {
 }
 
 // The Settings screen's Save: one row per key, live within 10 s everywhere.
-export async function saveSettings(env, { access, createYourOwn, identity } = {}) {
+export async function saveSettings(env, { access, createYourOwn, identity, expiry } = {}) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT)`).run();
   const put = (key, obj) => env.DB.prepare(`INSERT INTO settings (key, json, updated_at, updated_by) VALUES (?, ?, ?, 'admin') ON CONFLICT(key) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at, updated_by = excluded.updated_by`).bind(key, JSON.stringify(obj), new Date().toISOString());
   const ops = [];
   if (access) ops.push(put("access", { default: access.default, floor: access.floor }));
   if (createYourOwn) ops.push(put("createYourOwn", cleanBadge(createYourOwn)));
   if (identity && graceOf(identity) !== null) ops.push(put("identity", { graceMinutes: graceOf(identity) }));
+  if (expiry && cleanExpiryConfig(expiry)) ops.push(put("expiry", cleanExpiryConfig(expiry)));
   if (ops.length) await env.DB.batch(ops);
   CACHE = { at: 0, rows: null };
 }
 
 // What Settings → Commit to GitHub writes: the file half of the merge, as JSON.
 export function settingsFileContent(s) {
-  return JSON.stringify({ access: { default: s.default, floor: s.floor }, createYourOwn: { show: s.createYourOwn.show, text: s.createYourOwn.text, url: s.createYourOwn.url }, identity: { graceMinutes: s.identity?.graceMinutes ?? DEFAULT_GRACE_MINUTES } }, null, 2) + "\n";
+  const e = s.expiry || EXPIRY_BUILT_IN;
+  return JSON.stringify({ access: { default: s.default, floor: s.floor }, createYourOwn: { show: s.createYourOwn.show, text: s.createYourOwn.text, url: s.createYourOwn.url }, identity: { graceMinutes: s.identity?.graceMinutes ?? DEFAULT_GRACE_MINUTES }, expiry: { onLapse: e.onLapse, graceDays: e.graceDays, warnDays: e.warnDays, defaultDays: e.defaultDays } }, null, 2) + "\n";
 }
 export const SETTINGS_FILE_VIEW = SETTINGS_FILE;

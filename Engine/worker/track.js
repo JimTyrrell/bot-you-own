@@ -44,8 +44,9 @@
 import { json, nowIso, pickDate, addDays, todayUtc, clamp, round1, cleanEmail, readJson, toBase64, randomId } from "./track-common.js";
 import { CONFIG } from "../../YourBots/config.js";
 import { identify, signInMethods, verifyIdToken } from "../identity/index.js";
+import { resolve as resolveExpiry, lapseReply, noticeFor, EXPIRY_BUILT_IN } from "./expiry.js";
 import { join as idJoin, userIdFor, userById as idUserById, bindDevice, linkByCode, deviceCount, listDevices, pendingByEmail, touch as idTouch, DEV_PEPPER, pepperOf } from "../identity/devices.js";
-import { runVision, PROMPTS, extractJson, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize } from "./track-vision.js";
+import { runVision, PROMPTS, extractJson, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize, mergeCorrection } from "./track-vision.js";
 import { lookupBarcode, rememberLabel, saveReceipt, listReceipts, deleteReceipt, setWeight, listWeights, householdOf, createHousehold, joinHousehold, leaveHousehold, canView } from "./track-extras.js";
 import { ensureDaySchema, dayChat, addWords, afterMeal, editedMeal, removedMeal, listFavourites, nameFavourite, forgetFavourite, matchFavourite, repeatMeals, askDay, summaryFor, classifySay, looksLikeFood } from "./track-day.js";
 
@@ -77,7 +78,7 @@ export async function ensureTrackSchema(env) {
 // --- The router. Called from index.js for one food bot: the app's page, its API, its coach API.
 //     `bot` is the resolved project (kind food); api/page/admin are the path prefixes it answers on
 //     ("/api/apps/plate/", "/apps/plate", "/api/admin/apps/plate/" — or the /food aliases).
-export async function handleTrack(request, env, url, { bot, api, page, admin, isAdmin = false, adminEnabled = false, allowed = async () => true, graceMinutes = 60 } = {}) {
+export async function handleTrack(request, env, url, { bot, api, page, admin, isAdmin = false, adminEnabled = false, allowed = async () => true, graceMinutes = 60, expiry: expCfg = EXPIRY_BUILT_IN } = {}) {
   const cfg = foodConfig(bot, env);
   HONESTY = cfg.honesty;
   const p = url.pathname;
@@ -117,14 +118,40 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
     if (!keyHash) return json({ error: "no device key" }, 400);
     return signIn(env, cfg, await readJson(request), keyHash, me);
   }
+  // --- IS THIS PERSON STILL IN DATE? (Engine/worker/expiry.js) ------------------
+  //     A coaching block ends and the client's log should stop taking new meals.
+  //     What that looks like is the owner's choice, the same three words as a chat
+  //     bot: tell / readonly / silent. "readonly" is the one that matters here —
+  //     a client whose twelve weeks are up can still open their whole history.
+  //     The admin is never time-boxed, and every lookup fails open.
+  const expiry = isAdmin || !me ? null : await resolveExpiry(env, { bot: bot.id, email: me.email || "", emailHmac: "", keyName: "" }, expCfg);
+  const lapsed = Boolean(expiry && expiry.state === "lapsed");
+  const readOnly = lapsed && expCfg.onLapse === "readonly";
+
   if (p === api + "me") {
-    if (me) return json({ linked: true, ...(await profile(env, me)) });
+    if (me) {
+      // A lapsed person must be turned away HERE too, not only on the writes below —
+      // /me is what the page boots from, so letting it through would open the app as
+      // if nothing had happened. "readonly" is the one mode that deliberately says yes:
+      // reading their own log is the whole point of it.
+      if (lapsed && !readOnly) {
+        // Under "silent" we say nothing that confirms the account exists — not even
+        // linked:true — which is the difference between "silent" and "tell".
+        const quiet = expCfg.onLapse === "silent";
+        return json(quiet ? { linked: false, reason: lapseReply(expiry, bot) } : { linked: true, error: "expired", reason: lapseReply(expiry, bot) }, 403);
+      }
+      return json({ linked: true, ...(await profile(env, me)), access: expiry ? { until: expiry.until, state: expiry.state, days: expiry.days, notice: noticeFor(expiry), readOnly } : null });
+    }
     return json(who.pending ? { linked: false, code: who.pending.code, email: who.pending.email, message: PENDING_MESSAGE } : { linked: false }, 401);
   }
   if (!me) return json({ error: "unknown device", reason: "This browser isn't linked to a log. Enter your email to start." }, 401);
+  if (lapsed && !readOnly) return json({ error: "expired", reason: lapseReply(expiry, bot) }, 403);
   touch(env, me);
 
   const sub = p.slice(api.length);
+  // readonly: GET still works, so the day, the week and every photo they ever logged
+  // are all still there. Anything that changes the log is refused with the same line.
+  if (readOnly && request.method !== "GET") return json({ error: "expired", reason: lapseReply(expiry, bot), readOnly: true }, 403);
   const body = request.method === "POST" || request.method === "PATCH" ? await readJson(request.clone()) : {};
 
   if (sub === "targets") {
@@ -271,6 +298,11 @@ async function signIn(env, cfg, body, keyHash, me) {
   return json({ linked: true, ...(await profile(env, await withProfile(env, user))) });
 }
 
+// The Fix line sends the items on screen as `current`. What the model needs to see of each
+// to leave it alone — no ids, no per-100 g table — and a forgiving reader for the field.
+const slim = (items) => items.map(({ name, portion, grams, kcal, protein_g, carbs_g, fat_g }) => ({ name, portion, grams, kcal, protein_g, carbs_g, fat_g }));
+function listFrom(v) { try { const x = typeof v === "string" ? JSON.parse(v) : v; return Array.isArray(x) ? x : []; } catch { return []; } }
+
 // --- PHOTO: one call to the vision model, four kinds of picture. -----------------------
 async function photo(request, env, cfg, me) {
   let form;
@@ -282,6 +314,9 @@ async function photo(request, env, cfg, me) {
   const date = pickDate(form.get("date"));
   const correction = String(form.get("correction") || "").trim().slice(0, 200);
   const mealId = String(form.get("mealId") || "").trim();
+  // A correction arrives with what's on screen now, so it can't undo an earlier one.
+  const current = sanitiseItems(listFrom(form.get("current")), { source: "photo" });
+  const revising = kind === "food" && Boolean(correction) && current.length > 0;
 
   // The daily cap: every vision call counts, whatever kind.
   const used = (await env.DB.prepare(`SELECT photos FROM track_usage WHERE user_id = ? AND date = ?`).bind(me.id, todayUtc()).first())?.photos || 0;
@@ -294,7 +329,7 @@ async function photo(request, env, cfg, me) {
 
   let out;
   try {
-    const prompt = kind === "food" ? PROMPTS.food(correction) : PROMPTS[kind];
+    const prompt = kind === "food" ? (revising ? PROMPTS.revise(slim(current), correction, true) : PROMPTS.food(correction)) : PROMPTS[kind];
     out = await runVision(env, cfg, { image: bytes, mime, prompt, maxTokens: kind === "receipt" ? 1500 : 900 });
   } catch (err) {
     console.error("foodlog vision failed", err?.message || err);
@@ -303,7 +338,9 @@ async function photo(request, env, cfg, me) {
   const parsed = extractJson(out.text);
 
   if (kind === "food") {
-    const items = sanitiseItems(parsed?.items, { source: "photo" });
+    const fresh = sanitiseItems(parsed?.items, { source: "photo" });
+    const items = revising ? mergeCorrection(current, fresh, correction) : fresh;
+    if (revising && !fresh.length) return json({ error: "no food", reason: "I couldn't apply that correction. Try naming the food and the amount, like “8 strawberries”." }, 422);
     if (!items.length) return json({ error: "no food", reason: parsed?.notes ? `I couldn't find food in that: ${String(parsed.notes).slice(0, 140)}` : "I couldn't make out any food in that photo. Try closer, with more light — or type it.", raw: out.text.slice(0, 300) }, 422);
     const meal = mealId ? await updateMealItems(env, me, mealId, items) : await insertMeal(env, me, { date, items, source: "photo", thumb });
     if (!meal) return json({ error: "no such meal" }, 404);
@@ -345,11 +382,17 @@ async function textMeal(env, cfg, me, body) {
   const text = String(body.text || "").trim().slice(0, 300);
   if (!text) return json({ error: "empty", reason: "Type what you ate." }, 400);
   const correction = String(body.correction || "").trim().slice(0, 200);
+  // Same as the photo route: a correction arrives with the items on screen, and only
+  // the ones it names may change.
+  const current = sanitiseItems(listFrom(body.current), { source: "text" });
+  const revising = Boolean(correction) && current.length > 0;
   let out;
-  try { out = await runVision(env, cfg, { prompt: PROMPTS.text(text, correction), maxTokens: 900 }); }
+  try { out = await runVision(env, cfg, { prompt: revising ? PROMPTS.revise(slim(current), correction, false) : PROMPTS.text(text, correction), maxTokens: 900 }); }
   catch (err) { console.error("foodlog text model failed", err?.message || err); return json({ error: "model", reason: "The model isn't answering just now. Try again in a minute." }, 502); }
   const parsed = extractJson(out.text);
-  const items = sanitiseItems(parsed?.items, { source: "text" });
+  const fresh = sanitiseItems(parsed?.items, { source: "text" });
+  const items = revising ? mergeCorrection(current, fresh, correction) : fresh;
+  if (revising && !fresh.length) return json({ error: "no food", reason: "I couldn't apply that correction. Try naming the food and the amount, like “8 strawberries”." }, 422);
   if (!items.length) return json({ error: "no food", reason: "I couldn't turn that into foods. Try naming them plainly: '2 eggs, 1 slice of toast'." }, 422);
   const mealId = String(body.mealId || "").trim();
   const meal = mealId ? await updateMealItems(env, me, mealId, items) : await insertMeal(env, me, { date: pickDate(body.date), items, source: "text", thumb: null });

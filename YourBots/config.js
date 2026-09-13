@@ -105,6 +105,40 @@ export const CONFIG = {
   // Under the hood → Settings edits this without a commit, like access above.
   identity: { graceMinutes: 60 },
 
+  // ---- 5b. WHEN ACCESS RUNS OUT -----------------------------------------------
+  // An email, an invitation or a passphrase can have an END DATE. Nothing does by
+  // default: leave this alone and every window is unlimited, exactly as before.
+  // THREE things can carry a date, because they're three different promises:
+  //   the PERSON      "Amy's twelve weeks end on the 3rd."  Under the hood →
+  //                   Settings → When access runs out. Works wherever the visitor
+  //                   is identified: email, allow, key+email, and Plate.
+  //   the INVITATION  "this cohort is on the list until the course finishes."
+  //                   Set it when you add them to the allowlist. Only bites in "allow".
+  //   the PASSPHRASE  "the demo key dies on Friday." One date per ACCESS_PASSPHRASE*
+  //                   secret. Handy for a client deploy you've been paid for once.
+  // When more than one applies THE EARLIEST WINS, and the owner's screen says which.
+  // Extending is the same screen: type a later date, or clear it for unlimited.
+  // Every change is written to the admin record with the person's address on it, so
+  // Settings → Access over time shows one person's whole history in order.
+  expiry: {
+    // What lapsing DOES. The whole point of it being a setting: a members' bot and a
+    // coaching log want different things.
+    //   "tell"     locked out, told the date it ended and pointed at your handoff contact
+    //   "readonly" they can still READ their own history — the composer is off. Kindest
+    //              when a coaching block ends: their food log doesn't vanish
+    //   "silent"   refused as if they'd never been on the list. Gives nothing away
+    onLapse: "tell",
+    graceDays: 0,      // days past the end date before any of that bites. 3 = a long weekend to renew
+    warnDays: 7,       // the visitor sees a countdown for this many days first. 0 = no warning
+    // Give every NEW person this many days from the day they join. 0 = unlimited,
+    // which is the old behaviour. 84 = a twelve-week block, and you never type a date.
+    // It's a policy, not a stored date: change the number and everyone without a date
+    // of their own moves with it. Giving one person an explicit date always wins.
+    defaultDays: 0,
+  },
+  // A single bot can override any of the four in its project.json → "expiry", the
+  // same way it overrides "access". docs/CUSTOMIZE.md → "When access runs out".
+
   // ---- 6. THE FIREWALL ---------------------------------------------------------
   // All enforced in code (Engine/worker/firewall.js). Each one fails OPEN: if it can't run,
   // the bot still answers. Read the file — you don't have to change it, you have

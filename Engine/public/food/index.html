@@ -791,7 +791,7 @@ async function handlePhoto(file, kind) {
 // ---------- the editor: fix the portion with a tap ----------
 let ED = null;   // { meal, items:[{...item, base:{...}}] }
 function openEditor(meal, { fresh = false, existing = false, notes = '' } = {}) {
-  ED = { meal, fresh, items: meal.items.map((it) => ({ ...it, mult: it.mult || 1, base: it.base || { grams: it.grams, kcal: it.kcal, protein_g: it.protein_g, carbs_g: it.carbs_g, fat_g: it.fat_g, mult: it.mult || 1 } })) };
+  ED = { meal, fresh, items: meal.items.map((it) => ({ ...it, mult: it.mult || 1, base: it.base || { grams: it.grams, kcal: it.kcal, protein_g: it.protein_g, carbs_g: it.carbs_g, fat_g: it.fat_g, mult: it.mult || 1, portion: it.portion } })) };
   renderEditor(notes);
 }
 function scaled(it) {
@@ -800,10 +800,55 @@ function scaled(it) {
   const b = it.base, k = b.grams && it.grams ? it.grams / b.grams : it.mult / (b.mult || 1);
   return { kcal: Math.round(b.kcal * k), protein_g: b.protein_g * k, carbs_g: b.carbs_g * k, fat_g: b.fat_g * k };
 }
+// Which portion button is lit. Decided with the SAME sum the tap uses —
+// round(base grams × m) — rather than working backwards from the rounded grams.
+// Working backwards lost half a gram on odd weights (45 g × 1½ = 67.5 → 68, and
+// 68 ÷ 45 = 1.511, just outside a 0.01 tolerance), so ½× and 1½× never lit on
+// blueberries or strawberries even though the tap had worked. On a tiny weight two
+// buttons can round to the same grams; then the one last tapped (it.mult) wins.
+const PORTIONS = [0.5, 1, 1.5, 2];
+function activeMult(it) {
+  if (it.grams && it.base.grams) {
+    const hits = PORTIONS.filter((m) => Math.round(it.base.grams * m) === Math.round(it.grams));
+    if (!hits.length) return null;
+    return hits.reduce((a, b) => (Math.abs(b - it.mult) < Math.abs(a - it.mult) ? b : a));
+  }
+  return PORTIONS.find((m) => Math.abs(it.mult - m) < 0.01) ?? null;
+}
+// The words under a food's name have to follow its amount. They didn't: a typed weight
+// or a ½× tap changed the numbers while the line still said "½ cup" — and that stale
+// wording is what got saved into the day. A typed weight IS the portion ("200 g"); a
+// weight that matches a button reads as the original words times it ("½ cup × 1½");
+// back at 1× the original words return.
+const TIMES = { 0.5: '½', 1.5: '1½', 2: '2' };
+function amountLabel(it) {
+  const orig = it.base.portion || '';
+  const m = activeMult(it);
+  if (m === 1) return orig || it.portion || '';
+  if (m != null && orig) return orig + ' × ' + (TIMES[m] || m);
+  return it.grams ? Math.round(it.grams) + ' g' : (orig || it.portion || '');
+}
+// What a Fix actually did, worked out by the app from before and after — not the
+// model's account of it. The model's note spoke of "the user" and could say an estimate
+// was "maintained as requested" when the person had asked for a change; and when a Fix
+// changed nothing, the screen gave no sign at all. The merge keeps each food in its
+// slot, so the k-th food that went and the k-th that came are one replacement.
+function fixSummary(before, after) {
+  const same = (a, b) => a.name === b.name && Math.round(a.grams || 0) === Math.round(b.grams || 0) && Math.round(a.kcal || 0) === Math.round(b.kcal || 0);
+  const used = new Set(), came = [];
+  for (const it of after) { const j = before.findIndex((b, k) => !used.has(k) && same(b, it)); if (j >= 0) used.add(j); else came.push(it); }
+  const went = before.filter((b, k) => !used.has(k));
+  const label = (i) => i.name + (i.portion ? ' (' + i.portion + ')' : '');
+  const lines = [], n = Math.min(came.length, went.length);
+  for (let k = 0; k < n; k++) lines.push(went[k].name === came[k].name ? 'Updated ' + label(came[k]) : 'Changed ' + went[k].name + ' to ' + label(came[k]));
+  for (const i of came.slice(n)) lines.push('Added ' + label(i));
+  for (const i of went.slice(n)) lines.push('Removed ' + i.name);
+  return lines.length ? lines.join('. ') + '.' : 'Nothing changed. Name the food the way it’s listed above, and the amount you want.';
+}
 function renderEditor(notes) {
   const rows = ED.items.map((it, i) => { const s = scaled(it); return '<div class="item" data-i="' + i + '"><div class="nm"><span>' + esc(it.name) + ' <small>' + esc(it.portion || '') + '</small></span><span>' + s.kcal + ' kcal</span></div>'
     + '<div class="macros">P ' + s.protein_g.toFixed(0) + ' g · C ' + s.carbs_g.toFixed(0) + ' g · F ' + s.fat_g.toFixed(0) + ' g' + (it.confidence != null && it.confidence < 0.6 ? ' · <span style="color:var(--c)">not sure</span>' : '') + '</div>'
-    + '<div class="mults">' + [0.5, 1, 1.5, 2].map((m) => '<button data-m="' + m + '" class="' + (Math.abs((it.grams && it.base.grams ? it.grams / it.base.grams : it.mult) - m) < 0.01 ? 'on' : '') + '">' + ({ 0.5: '½×', 1: '1×', 1.5: '1½×', 2: '2×' }[m]) + '</button>').join('')
+    + '<div class="mults">' + [0.5, 1, 1.5, 2].map((m) => '<button data-m="' + m + '" class="' + (activeMult(it) === m ? 'on' : '') + '">' + ({ 0.5: '½×', 1: '1×', 1.5: '1½×', 2: '2×' }[m]) + '</button>').join('')
     + '<div class="g" title="Grams">⚖️<input type="number" inputmode="decimal" value="' + (it.grams ? Math.round(it.grams) : '') + '" data-g="1" placeholder="g"><span>g</span></div>'
     + '<button data-rm="1" class="ghost" style="flex:.5">✕</button></div></div>'; }).join('');
   const tot = ED.items.reduce((a, it) => { const s = scaled(it); a.kcal += s.kcal; a.p += s.protein_g; a.c += s.carbs_g; a.f += s.fat_g; return a; }, { kcal: 0, p: 0, c: 0, f: 0 });
@@ -815,18 +860,27 @@ function renderEditor(notes) {
     + '<div class="row" style="margin-top:10px"><button class="ghost danger" id="discard">' + (ED.fresh ? 'Discard' : 'Delete') + '</button><button class="primary" id="savemeal" style="flex:2">Save</button></div>');
   $('sheetbody').querySelectorAll('.item').forEach((el) => {
     const it = ED.items[+el.dataset.i];
-    el.querySelectorAll('[data-m]').forEach((b) => b.onclick = () => { it.mult = +b.dataset.m; it.grams = it.base.grams ? Math.round(it.base.grams * it.mult) : 0; renderEditor(); });
-    const g = el.querySelector('[data-g]'); g.onchange = () => { it.grams = Math.max(0, +g.value || 0); if (it.base.grams) it.mult = it.grams / it.base.grams; renderEditor(); };
+    el.querySelectorAll('[data-m]').forEach((b) => b.onclick = () => { it.mult = +b.dataset.m; it.grams = it.base.grams ? Math.round(it.base.grams * it.mult) : 0; it.portion = amountLabel(it); renderEditor(); });
+    const g = el.querySelector('[data-g]'); g.onchange = () => { it.grams = Math.max(0, +g.value || 0); if (it.base.grams) it.mult = it.grams / it.base.grams; it.portion = amountLabel(it); renderEditor(); };
     el.querySelector('[data-rm]').onclick = () => { ED.items.splice(+el.dataset.i, 1); renderEditor(); };
   });
   $('fixbtn').onclick = async () => {
     const correction = $('fix').value.trim(); if (!correction) return;
     sheet('<div class="thinking"><i></i> Looking again…</div>');
     let r;
-    if (ED.meal.source === 'photo' && lastPhoto) { const fd = new FormData(); fd.append('photo', lastPhoto.photo, 'photo.jpg'); fd.append('thumb', lastPhoto.thumb, 'thumb.jpg'); fd.append('kind', 'food'); fd.append('correction', correction); fd.append('mealId', ED.meal.id); r = await api('photo', { body: fd }); }
-    else r = await api('text', { json: { text: ED.items.map((i) => i.name).join(', ') || correction, correction, mealId: ED.meal.id } });
+    // Send what's on screen NOW — earlier corrections, portion taps, typed grams — so this
+    // correction changes only what it's about. The server enforces it (mergeCorrection).
+    const before = ED.items;
+    const current = before.map((it) => { const s = scaled(it); return { ...it, ...s, base: undefined }; });
+    if (ED.meal.source === 'photo' && lastPhoto) { const fd = new FormData(); fd.append('photo', lastPhoto.photo, 'photo.jpg'); fd.append('thumb', lastPhoto.thumb, 'thumb.jpg'); fd.append('kind', 'food'); fd.append('correction', correction); fd.append('mealId', ED.meal.id); fd.append('current', JSON.stringify(current)); r = await api('photo', { body: fd }); }
+    else r = await api('text', { json: { text: before.map((i) => i.name).join(', ') || correction, correction, mealId: ED.meal.id, current } });
     if (!r.ok) { toast(r.reason || 'Couldn’t re-estimate.'); return renderEditor(); }
-    openEditor(r.meal, { fresh: ED.fresh, notes: r.notes });
+    // An item the correction left alone keeps its portion buttons exactly as they were.
+    for (const it of r.meal.items || []) {
+      const was = before.find((b) => b.name === it.name && Math.round(b.grams || 0) === Math.round(it.grams || 0) && scaled(b).kcal === it.kcal);
+      if (was) { it.base = was.base; it.mult = was.mult; }
+    }
+    openEditor(r.meal, { fresh: ED.fresh, notes: fixSummary(before, r.meal.items || []) });
   };
   $('discard').onclick = async () => { await api('meal/' + ED.meal.id, { method: 'DELETE' }); closeSheet(); refresh(); };
   $('savemeal').onclick = async () => {

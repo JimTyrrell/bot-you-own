@@ -22,7 +22,7 @@
 //   · Nothing here sends email. The list is who the owner typed in, nothing more.
 // ============================================================================
 
-const TABLE = `CREATE TABLE IF NOT EXISTS allowlist (scope TEXT NOT NULL, email_hmac TEXT NOT NULL, email_enc TEXT NOT NULL, added_at TEXT NOT NULL, added_by TEXT, PRIMARY KEY (scope, email_hmac))`;
+const TABLE = `CREATE TABLE IF NOT EXISTS allowlist (scope TEXT NOT NULL, email_hmac TEXT NOT NULL, email_enc TEXT NOT NULL, added_at TEXT NOT NULL, added_by TEXT, expires_at TEXT, PRIMARY KEY (scope, email_hmac))`;
 export const GLOBAL_SCOPE = "*";
 const EMAIL_SHAPE = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
 export const cleanEmail = (e) => { const s = String(e || "").trim().toLowerCase().slice(0, 254); return EMAIL_SHAPE.test(s) ? s : ""; };
@@ -70,7 +70,31 @@ async function unseal(k, blob) {
 }
 
 let SCHEMA_OK = false;
-async function ensure(env) { if (SCHEMA_OK) return; await env.DB.prepare(TABLE).run(); SCHEMA_OK = true; }
+// A list made before v3.11 has no expires_at column, and SQLite has no ADD COLUMN
+// IF NOT EXISTS — so look, then add. Kept here rather than imported from expiry.js
+// on purpose: expiry.js reads this file's blind index, and one of the two has to
+// not depend on the other.
+async function ensure(env) {
+  if (SCHEMA_OK) return;
+  await env.DB.prepare(TABLE).run();
+  try {
+    const info = (await env.DB.prepare(`PRAGMA table_info(allowlist)`).all()).results || [];
+    if (info.length && !info.some((c) => c.name === "expires_at")) await env.DB.prepare(`ALTER TABLE allowlist ADD COLUMN expires_at TEXT`).run();
+  } catch (err) { console.warn("could not add allowlist.expires_at — invitations stay unlimited", err?.message || err); }
+  SCHEMA_OK = true;
+}
+
+// The blind index for one address, for callers outside this file. Engine/worker/expiry.js
+// needs it to find a person's list row WITHOUT ever handling their email in the clear —
+// the whole point of the blind index. Returns "" when the key isn't set.
+export async function blindFor(env, email) {
+  try {
+    email = cleanEmail(email);
+    if (!email) return "";
+    const k = await keys(env);
+    return k ? await blind(k, email) : "";
+  } catch { return ""; }
+}
 
 // --- THE CHECK. { ok, reason?, scope? }. Fails closed: no key, no DB, an error → not allowed.
 export async function isAllowed(env, bot, email) {
@@ -87,8 +111,11 @@ export async function isAllowed(env, bot, email) {
     const h = await blind(k, email);
     const scope = cleanScope(bot);
     const row = await env.DB.prepare(`SELECT scope FROM allowlist WHERE email_hmac = ? AND scope IN (?, ?) LIMIT 1`).bind(h, scope || "-", GLOBAL_SCOPE).first();
-    if (!row) return { ok: false, reason: `${email} isn't on the list for this bot. Ask the owner to add it.` };
-    return { ok: true, scope: row.scope };
+    if (!row) return { ok: false, reason: `${email} isn't on the list for this bot. Ask the owner to add it.`, hmac: h };
+    // Being ON the list and being IN DATE are two different questions. This one only
+    // answers the first; Engine/worker/expiry.js reads expires_at and decides what a
+    // lapsed invitation does, because that is configurable (tell / readonly / silent).
+    return { ok: true, scope: row.scope, hmac: h };
   } catch (err) {
     console.error("allowlist check failed — refusing", err?.message || err);
     return { ok: false, reason: "The list couldn't be checked. Nothing was opened." };
@@ -96,14 +123,22 @@ export async function isAllowed(env, bot, email) {
 }
 
 // --- THE OWNER'S SIDE (admin routes in index.js). ---------------------------------
-export async function addToList(env, scope, email, who = "admin") {
+// `until` is an optional end date for the INVITATION (null = unlimited, the default
+// and the old behaviour). Adding someone who is already on the list re-dates them
+// rather than being ignored — "add them again with a new date" is how an owner
+// naturally extends a cohort, so it must not silently do nothing.
+export async function addToList(env, scope, email, who = "admin", until = null) {
   scope = cleanScope(scope); email = cleanEmail(email);
   if (!scope || !email) return { ok: false, status: 400, error: "scope (a bot id or *) and a valid email are required" };
   const k = await keys(env);
   if (!k) return { ok: false, status: 503, error: "ALLOWLIST_KEY is not set", reason: "Set the ALLOWLIST_KEY secret first (docs/DEPLOY.md → B2c). Until then allow mode refuses everyone." };
   await ensure(env);
-  await env.DB.prepare(`INSERT OR IGNORE INTO allowlist (scope, email_hmac, email_enc, added_at, added_by) VALUES (?, ?, ?, ?, ?)`).bind(scope, await blind(k, email), await seal(k, email), new Date().toISOString(), String(who).slice(0, 60)).run();
-  return { ok: true, scope, email };
+  const h = await blind(k, email);
+  const before = await env.DB.prepare(`SELECT expires_at FROM allowlist WHERE scope = ? AND email_hmac = ?`).bind(scope, h).first();
+  await env.DB.prepare(`INSERT INTO allowlist (scope, email_hmac, email_enc, added_at, added_by, expires_at) VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(scope, email_hmac) DO UPDATE SET expires_at = excluded.expires_at, added_by = excluded.added_by`)
+    .bind(scope, h, await seal(k, email), new Date().toISOString(), String(who).slice(0, 60), until).run();
+  return { ok: true, scope, email, until, was: before?.expires_at || null, existed: Boolean(before) };
 }
 export async function removeFromList(env, scope, email) {
   scope = cleanScope(scope); email = cleanEmail(email);
@@ -121,9 +156,9 @@ export async function listFor(env, scope) {
   const k = await keys(env);
   if (!k) return { ok: true, scope, keySet: false, rows: [], reason: "ALLOWLIST_KEY is not set: the list is empty and allow mode refuses everyone." };
   await ensure(env);
-  const rows = (await env.DB.prepare(`SELECT email_enc, added_at, added_by FROM allowlist WHERE scope = ? ORDER BY added_at`).bind(scope).all()).results || [];
+  const rows = (await env.DB.prepare(`SELECT email_enc, added_at, added_by, expires_at FROM allowlist WHERE scope = ? ORDER BY added_at`).bind(scope).all()).results || [];
   const out = [];
-  for (const r of rows) { let email = "(unreadable — the key changed)"; try { email = await unseal(k, r.email_enc); } catch {} out.push({ email, added_at: r.added_at, added_by: r.added_by }); }
+  for (const r of rows) { let email = "(unreadable — the key changed)"; try { email = await unseal(k, r.email_enc); } catch {} out.push({ email, added_at: r.added_at, added_by: r.added_by, expires_at: r.expires_at || null }); }
   return { ok: true, scope, keySet: true, rows: out };
 }
 // How many are on each list — for the Settings table.

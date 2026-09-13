@@ -64,7 +64,7 @@ bot's folder wins. Jobs cascade the same way: `YourBots/my-shop/prompt/jobs/answ
 |---|---|---|---|
 | `general` | a ChatGPT-style general assistant | `open` | the "clone": tone, formatting, honesty about no tools |
 | `example-co` | answer bot for a machine-servicing firm | `strict` | the workshop's Hire #1. Handoff instead of guessing |
-| `brightside-dental` | intake bot for a dental practice | `strict` | one question at a time, emergency routing, no invented prices |
+| `tumblebrook-dental` | intake bot for a dental practice | `strict` | one question at a time, emergency routing, no invented prices |
 | `ledgerly-support` | concierge for a bookkeeping SaaS | `strict` | refund/discount traps, answer-before-pitch, link allowlist |
 
 Delete the sample folders you don't need before you go live (or leave them and

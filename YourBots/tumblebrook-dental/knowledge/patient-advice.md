@@ -14,12 +14,12 @@ gently for a week or two and it usually settles. If bleeding continues past two
 weeks, book a check-up.
 
 ## I have a toothache. What do I do?
-Call us on (970) 555-0142 during opening hours and say it's a toothache; we keep
+Call us on (303) 555-0142 during opening hours and say it's a toothache; we keep
 same-day slots for pain. In the meantime: rinse with warm salt water, avoid very
 hot, cold or sweet food on that side, and you can take an over-the-counter pain
 reliever following the directions on the packet. Don't put aspirin directly on
 the tooth or gum. If there is facial swelling, fever, or pain that keeps you from
-sleeping, use the on-call line (970) 555-0199 outside hours.
+sleeping, use the on-call line (303) 555-0199 outside hours.
 
 ## My tooth is sensitive to cold
 Try a sensitivity toothpaste for two to three weeks. If it doesn't improve, or

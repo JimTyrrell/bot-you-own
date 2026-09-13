@@ -100,13 +100,18 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE TABLE IF NOT EXISTS admin_events (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   action     TEXT NOT NULL,      -- project-save | project-delete | project-commit | settings-save | settings-commit | gap-accept | library-upload | library-delete | library-rescan | handoff-reply | handoff-close | lead-send
+                                 -- …and the access ones (v3.11): access-grant | access-extend | access-shorten | access-unlimited | access-key-date | allowlist-add | allowlist-remove | device-link | view-as
   target     TEXT,               -- the bot id, the file, the conversation id…
-  detail     TEXT,               -- one line of what happened
+  detail     TEXT,               -- one line of what happened, e.g. "2026-03-01 → 2026-06-01"
   who        TEXT,               -- 'admin'
   ip_hash    TEXT,               -- SHA-256 hex of the IP address
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  subject    TEXT                -- WHO it was about (an email), when the event is about a person.
+                                 -- This is what makes the per-person timeline one indexed read:
+                                 -- Under the hood → Settings → Access over time.
 );
 CREATE INDEX IF NOT EXISTS idx_adminev_created ON admin_events(id);
+CREATE INDEX IF NOT EXISTS idx_adminev_subject ON admin_events(subject, id);
 
 -- The allowlist (Engine/worker/allowlist.js; access mode "allow"). Encrypted at rest: a keyed
 -- hash (HMAC-SHA256, the blind index) to check one address, and the address under AES-256-GCM
@@ -118,6 +123,7 @@ CREATE TABLE IF NOT EXISTS allowlist (
   email_enc  TEXT NOT NULL,        -- base64(iv).base64(ciphertext)
   added_at   TEXT NOT NULL,
   added_by   TEXT,                 -- 'admin'
+  expires_at TEXT,                 -- when the INVITATION runs out. NULL = unlimited (Engine/worker/expiry.js)
   PRIMARY KEY (scope, email_hmac)
 );
 
@@ -153,7 +159,10 @@ CREATE TABLE IF NOT EXISTS id_users (
   bot        TEXT NOT NULL,
   email      TEXT NOT NULL,        -- the only personal thing stored
   created_at TEXT NOT NULL,
-  last_seen  TEXT                  -- bumped on every identified request; the return window measures from here
+  last_seen  TEXT,                 -- bumped on every identified request; the return window measures from here
+  access_until TEXT                -- when THIS PERSON's access runs out. NULL = unlimited.
+                                   -- Engine/worker/expiry.js; set from Under the hood → Settings.
+                                   -- expiry.defaultDays gives a window without writing a date here.
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_id_users_bot_email ON id_users(bot, email);
 CREATE TABLE IF NOT EXISTS id_devices (
@@ -269,3 +278,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_track_fav_key ON track_favourites(user_id,
 CREATE TABLE IF NOT EXISTS track_households (id TEXT PRIMARY KEY, name TEXT, code TEXT UNIQUE, created_at TEXT NOT NULL);   -- code = the 6-character invite
 CREATE TABLE IF NOT EXISTS track_members (household_id TEXT NOT NULL, user_id TEXT PRIMARY KEY, name TEXT, joined_at TEXT NOT NULL);   -- one household per person
 CREATE INDEX IF NOT EXISTS idx_track_members_h ON track_members(household_id);
+
+-- An end date on a PASSPHRASE (Engine/worker/expiry.js). One row per ACCESS_PASSPHRASE*
+-- secret you want to time-box — the shared one, or a per-bot one like ACCESS_PASSPHRASE_CLIENTX.
+-- The row governs nothing on its own: the secret does the letting in, this says until when.
+-- A row whose secret is no longer set is shown as an orphan in Settings rather than hidden.
+CREATE TABLE IF NOT EXISTS access_keys (
+  name       TEXT PRIMARY KEY,   -- ACCESS_PASSPHRASE, or ACCESS_PASSPHRASE_<SOMETHING>
+  expires_at TEXT,               -- NULL = unlimited
+  note       TEXT,               -- "Acme demo, paid to March"
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  updated_by TEXT                -- 'admin'
+);

@@ -44,7 +44,7 @@ let SCHEMA_OK = false;
 export async function ensureIdentitySchema(env) {
   if (SCHEMA_OK || !env.DB) return;
   await env.DB.batch([
-    env.DB.prepare(`CREATE TABLE IF NOT EXISTS id_users (id TEXT PRIMARY KEY, bot TEXT NOT NULL, email TEXT NOT NULL, created_at TEXT NOT NULL, last_seen TEXT)`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS id_users (id TEXT PRIMARY KEY, bot TEXT NOT NULL, email TEXT NOT NULL, created_at TEXT NOT NULL, last_seen TEXT, access_until TEXT)`),
     env.DB.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_id_users_bot_email ON id_users(bot, email)`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS id_devices (key_hash TEXT NOT NULL, bot TEXT NOT NULL, user_id TEXT NOT NULL, label TEXT, created_at TEXT NOT NULL, PRIMARY KEY (key_hash, bot))`),
     env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_id_devices_user ON id_devices(user_id)`),
