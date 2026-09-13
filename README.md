@@ -38,12 +38,19 @@ file inside a bot's own `prompt/` folder is that bot's, and wins.
 
 ## Deploy it (three minutes, no card)
 
-<!-- TODO Jim: replace USER/REPO once the GitHub repo exists, then check the button renders. -->
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/USER/REPO)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/JimTyrrell/bot-you-own)
 
 Click it. You need two free accounts — **GitHub** (where your copy of this code
 lives) and **Cloudflare** (where it runs). Cloudflare copies this project into
 your GitHub, builds it, and puts it on the internet.
+
+You will also want **a domain on Cloudflare** before you put a bot in front of
+customers: either register a new one there (Domain Registration → Register, at
+cost price) or transfer one you already own (Domain Registration → Transfer, or
+just point its nameservers at Cloudflare). The workers.dev address works for
+testing, but sign-in passkeys are bound to the hostname, so moving to your own
+domain later means everyone sets their passkey up again. Get the domain first.
+`docs/OWNER-CHECKLIST.md` §0 walks through it.
 
 You'll get a URL like `bot-you-own.your-name.workers.dev`. Open it. You'll see a
 ChatGPT-style page with four projects in the sidebar. Try each one. Then try to

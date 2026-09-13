@@ -117,8 +117,10 @@ export async function setWeight(env, user, { date, value, unit }) {
   return { ok: true, kg, unit: u };
 }
 
+// days: how far back. 0 (or anything not a positive number) means everything ever logged.
 export async function listWeights(env, userId, days = 30) {
-  const from = addDays(todayUtc(), -(days - 1));
+  const n = Number(days);
+  const from = n > 0 ? addDays(todayUtc(), -(Math.min(n, 3660) - 1)) : "0000-00-00";
   const rows = (await env.DB.prepare(`SELECT date, kg FROM track_weights WHERE user_id = ? AND date >= ? ORDER BY date`).bind(userId, from).all()).results || [];
   const last7 = rows.filter((r) => r.date >= addDays(todayUtc(), -6));
   const avg7 = last7.length ? round1(last7.reduce((a, r) => a + r.kg, 0) / last7.length) : null;
@@ -180,3 +182,26 @@ export async function canView(env, viewerId, targetId) {
 function cleanName(s) { return String(s || "").trim().replace(/\s+/g, " ").slice(0, 40); }
 function firstNameOf(email) { const s = String(email || "").split("@")[0].split(/[._-]/)[0]; return s ? s[0].toUpperCase() + s.slice(1, 20) : "Me"; }
 function safeJson(s, dflt) { try { return JSON.parse(s); } catch { return dflt; } }
+
+// Import a batch of weigh-ins — a scale app's CSV (Renpho, Withings…) or an Apple
+// Health export, parsed in the browser into {date, kg} rows. One row per day: the
+// page has already picked the day's reading. An existing weigh-in on the same day
+// is replaced (same rule as a second manual weigh-in). Returns what happened.
+export async function importWeights(env, user, rows) {
+  const clean = new Map();
+  for (const r of Array.isArray(rows) ? rows.slice(0, 20000) : []) {
+    const date = String(r?.date || "").slice(0, 10);
+    const kg = Number(r?.kg);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(kg) || kg < 20 || kg > 400) continue;
+    if (date > todayUtc()) continue;
+    clean.set(date, round1(kg));
+  }
+  if (!clean.size) return { ok: false, reason: "No usable rows: each needs a date and a weight between 20 and 400 kg." };
+  const dates = [...clean.keys()].sort();
+  const existing = (await env.DB.prepare(`SELECT date FROM track_weights WHERE user_id = ? AND date >= ? AND date <= ?`).bind(user.id, dates[0], dates.at(-1)).all()).results || [];
+  const had = new Set(existing.map((x) => x.date));
+  const stmt = env.DB.prepare(`INSERT INTO track_weights (user_id, date, kg) VALUES (?, ?, ?) ON CONFLICT(user_id, date) DO UPDATE SET kg = excluded.kg`);
+  for (let i = 0; i < dates.length; i += 100) await env.DB.batch(dates.slice(i, i + 100).map((d) => stmt.bind(user.id, d, clean.get(d))));
+  const replaced = dates.filter((d) => had.has(d)).length;
+  return { ok: true, imported: dates.length - replaced, replaced, from: dates[0], to: dates.at(-1) };
+}

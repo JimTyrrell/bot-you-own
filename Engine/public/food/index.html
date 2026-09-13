@@ -136,6 +136,24 @@
   .signin button { border:1px solid var(--edge); background:var(--bg); }
   .list { list-style:none; margin:0; padding:0; } .list li { display:flex; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--edge); align-items:center; }
   .wchart { width:100%; height:110px; }
+  /* the weight screen */
+  .ranges { display:flex; gap:6px; margin:0 0 12px; overflow-x:auto; }
+  .ranges button { padding:7px 12px; font-size:13px; border-radius:999px; flex:none; }
+  .ranges button.on { background:var(--text); color:var(--bg); }
+  .tiles { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:0 0 12px; }
+  .tile { background:var(--panel); border-radius:14px; padding:10px 12px; }
+  .tile .l { font-size:12px; color:var(--muted); } .tile .v { font-size:20px; font-weight:700; line-height:1.2; margin-top:2px; } .tile .s { font-size:12px; color:var(--muted); margin-top:2px; }
+  .wchartwrap { position:relative; }
+  #wbig { width:100%; height:auto; display:block; touch-action:pan-y; }
+  #wbig text { font-size:10px; fill:var(--muted); }
+  .wtip { position:absolute; top:8px; background:var(--bg); border:1px solid var(--edge); border-radius:10px; padding:6px 10px; font-size:12px; line-height:1.45; pointer-events:none; box-shadow:0 4px 14px rgba(0,0,0,.12); white-space:nowrap; }
+  .wtip b { font-size:14px; }
+  .wlegend { display:flex; gap:14px; font-size:12px; color:var(--muted); margin:0 0 6px; flex-wrap:wrap; }
+  .wlegend i { display:inline-block; width:16px; height:0; border-top:2px solid var(--accent); vertical-align:middle; margin-right:5px; }
+  .wlegend i.dot { width:6px; height:6px; border:0; border-radius:50%; background:var(--muted); opacity:.6; }
+  .wlegend i.proj { border-top-style:dashed; }
+  .wlegend i.goal { border-top:1px solid var(--text); }
+  .wtable .wrow span:last-child { min-width:70px; text-align:right; }
   .receipt { background:var(--panel); border-radius:16px; padding:12px; margin:10px 0; }
   .receipt .h { display:flex; justify-content:space-between; font-weight:600; }
   .receipt .it { display:flex; justify-content:space-between; gap:8px; font-size:14px; padding:6px 0; border-top:1px solid var(--edge); align-items:center; }
@@ -190,6 +208,7 @@
         <div><label>Weight</label><input id="tweight" type="number" inputmode="decimal" placeholder="75"></div>
         <div style="flex:.6"><label>Unit</label><select id="tunit"><option value="kg">kg</option><option value="lb">lb</option></select></div>
       </div>
+      <div class="row"><div><label>Goal weight <span class="muted">(optional, same unit)</span></label><input id="tgoal" type="number" inputmode="decimal" placeholder="the weight you're heading for"></div></div>
       <label>Goal</label>
       <div class="presets" id="presets">
         <button data-p="cut"><b>Cut</b><small>lose fat</small></button>
@@ -216,7 +235,7 @@
 
     <!-- CHAT: the day as a conversation -->
     <div id="t-chat">
-      <div class="mini"><svg viewBox="0 0 34 34"><circle cx="17" cy="17" r="13" fill="none" stroke="var(--edge)" stroke-width="4"/><circle id="miniring" cx="17" cy="17" r="13" fill="none" stroke="var(--ring)" stroke-width="4" stroke-linecap="round" stroke-dasharray="81.7" stroke-dashoffset="81.7"/></svg><div><div class="k" id="minik">0 <small>kcal</small></div><div class="m" id="minim"></div></div></div>
+      <div class="mini" data-go="targets" title="Tap to change your targets" style="cursor:pointer"><svg viewBox="0 0 34 34"><circle cx="17" cy="17" r="13" fill="none" stroke="var(--edge)" stroke-width="4"/><circle id="miniring" cx="17" cy="17" r="13" fill="none" stroke="var(--ring)" stroke-width="4" stroke-linecap="round" stroke-dasharray="81.7" stroke-dashoffset="81.7"/></svg><div><div class="k" id="minik">0 <small>kcal</small></div><div class="m" id="minim"></div></div></div>
       <div class="ycard" id="ycard" hidden></div>
       <div id="thread"></div>
       <p class="muted small center" id="empty" hidden>Nothing logged yet. Snap a plate, tap a favourite, or say what you ate.</p>
@@ -243,14 +262,28 @@
       <div class="week" id="week"></div>
       <div class="card sum" id="weeksum"><p class="muted small" style="margin:0">The seven-day look-back appears here.</p></div>
       <div id="weekrows"></div>
-      <div id="weightbox" class="card" hidden>
-        <div class="row" style="justify-content:space-between"><b style="flex:none">Weight</b><span class="muted small" id="wsum" style="text-align:right"></span></div>
+      <div id="weightbox" class="card" hidden onclick="openWeight()" style="cursor:pointer" title="Open the weight screen">
+        <div class="row" style="justify-content:space-between"><b style="flex:none">Weight <span class="muted">›</span></b><span class="muted small" id="wsum" style="text-align:right"></span></div>
         <svg class="wchart" id="wchart" viewBox="0 0 320 100" preserveAspectRatio="none"></svg>
       </div>
     </div>
   </section>
 
   <!-- RECEIPTS -->
+  <section class="screen" id="s-weight" hidden>
+    <div class="top"><button class="back" data-go="home">‹ Back</button><h1>Weight</h1><button class="ghost" id="wimportbtn" title="Import weigh-ins from a scale app or Apple Health" style="padding:8px 10px">⬆ Import</button></div>
+    <div class="ranges" id="wranges"><button data-r="14">2 weeks</button><button data-r="30" class="on">Month</button><button data-r="91">3 months</button><button data-r="182">6 months</button><button data-r="365">Year</button><button data-r="0">All</button></div>
+    <div class="tiles" id="wtiles"></div>
+    <div class="card" style="padding:12px 12px 10px">
+      <div class="wlegend" id="wlegend"></div>
+      <div class="wchartwrap"><svg id="wbig" viewBox="0 0 360 210" role="img" aria-label="Weight over time"></svg><div class="wtip" id="wtip" hidden></div></div>
+      <p class="small" id="wproj" style="margin:10px 0 0;line-height:1.5"></p>
+    </div>
+    <div class="row" style="margin-top:12px"><button class="primary" style="flex:1" onclick="openWeigh()">⚖️ Weigh in</button><button style="flex:1" id="wtablebtn">Show table</button></div>
+    <div class="card wtable" id="wtable" hidden style="margin-top:12px"></div>
+    <p class="muted small" id="wempty" hidden>No weigh-ins yet. Tap Weigh in, or Import a file from your scale app or Apple Health.</p>
+  </section>
+
   <section class="screen" id="s-receipts" hidden>
     <div class="top"><button class="back" data-go="home">‹ Back</button><h1>Receipts</h1><span></span></div>
     <div class="card" id="rtotals"></div>
@@ -483,21 +516,22 @@ async function signIn(s) {
 //   3. The macros are added up (protein 4, carbs 4, fat 9 kcal per gram) and compared
 //      with the Calories box, every keystroke. If they don't agree you get one-tap fixes.
 let preset = '';
-const TFIELDS = ['tname', 'tweight', 'tunit', 'tkcal', 'tprot', 'tcarb', 'tfat'];
+const TFIELDS = ['tname', 'tweight', 'tunit', 'tgoal', 'tkcal', 'tprot', 'tcarb', 'tfat'];
 const fmt = (n) => Math.round(n).toLocaleString();
-function readForm() { return { name: $('tname').value, unit: $('tunit').value, weight: $('tweight').value, preset, kcal: $('tkcal').value, prot: $('tprot').value, carb: $('tcarb').value, fat: $('tfat').value }; }
+function readForm() { return { name: $('tname').value, unit: $('tunit').value, weight: $('tweight').value, goal: $('tgoal').value, preset, kcal: $('tkcal').value, prot: $('tprot').value, carb: $('tcarb').value, fat: $('tfat').value }; }
 function draftSave() { S.targetsDraft = { ...readForm(), at: Date.now() }; save(); }
 function setPreset(p) { preset = p; document.querySelectorAll('#presets button').forEach((b) => b.classList.toggle('on', b.dataset.p === preset)); }
 function prefillTargets() {
   const t = S.targets || {};
   const d = S.targetsDraft;                         // a draft beats the saved copy: it's newer, by definition
   if (d) {
-    $('tname').value = d.name || ''; $('tunit').value = d.unit || 'kg'; $('tweight').value = d.weight || '';
+    $('tname').value = d.name || ''; $('tunit').value = d.unit || 'kg'; $('tweight').value = d.weight || ''; $('tgoal').value = d.goal || '';
     $('tkcal').value = d.kcal || ''; $('tprot').value = d.prot || ''; $('tcarb').value = d.carb || ''; $('tfat').value = d.fat || '';
     setPreset(d.preset || '');
   } else {
     $('tname').value = t.name || ''; $('tunit').value = t.unit || 'kg';
     $('tweight').value = t.weight_kg ? (t.unit === 'lb' ? Math.round(t.weight_kg * 2.20462) : t.weight_kg) : '';
+    $('tgoal').value = t.goal_kg ? (t.unit === 'lb' ? Math.round(t.goal_kg * 2.20462 * 10) / 10 : t.goal_kg) : '';
     $('tkcal').value = t.kcal || ''; $('tprot').value = t.protein_g || ''; $('tcarb').value = t.carbs_g || ''; $('tfat').value = t.fat_g || '';
     setPreset(t.preset || '');
   }
@@ -566,7 +600,8 @@ TFIELDS.forEach((id) => $(id).addEventListener('input', () => {
 }));
 $('tunit').addEventListener('change', () => { if (preset) { const n = presetNumbers(preset); if (n) { $('tkcal').value = n.kcal; $('tprot').value = n.prot; $('tfat').value = n.fat; $('tcarb').value = n.carb; } } draftSave(); working(); });
 $('targetssave').onclick = async () => {
-  const t = { name: $('tname').value, unit: $('tunit').value, weight_kg: weightKg() || null, preset, kcal: +$('tkcal').value, protein_g: +$('tprot').value, carbs_g: +$('tcarb').value, fat_g: +$('tfat').value };
+  const g = Number($('tgoal').value) || 0;
+  const t = { name: $('tname').value, unit: $('tunit').value, weight_kg: weightKg() || null, goal_kg: g ? ($('tunit').value === 'lb' ? g / 2.20462 : g) : null, preset, kcal: +$('tkcal').value, protein_g: +$('tprot').value, carbs_g: +$('tcarb').value, fat_g: +$('tfat').value };
   if (!t.kcal) return toast('Calories are needed.');
   const r = await api('targets', { json: t });
   if (!r.ok) return toast(r.reason || 'Couldn’t save.');
@@ -603,7 +638,7 @@ $('menubtn').onclick = () => sheet('<h2 style="margin-top:0">Menu</h2>'
   + '<button style="width:100%;margin:4px 0" onclick="closeSheet();openReceipts()">🧾 Receipts</button>'
   + '<button style="width:100%;margin:4px 0" onclick="closeSheet();openSettings()">👥 Household & settings</button>'
   + '<button style="width:100%;margin:4px 0" onclick="closeSheet();show(\'targets\');prefillTargets()">🎯 Targets</button>'
-  + '<button style="width:100%;margin:4px 0" onclick="closeSheet();openWeigh()">⚖️ Weigh in</button>'
+  + '<button style="width:100%;margin:4px 0" onclick="closeSheet();openWeight()">⚖️ Weight (log, graph, import)</button>'
   + '<button style="width:100%;margin:4px 0" onclick="closeSheet();openStaples()">★ Staples (rename, forget)</button>'
   + (viewUser ? '<button class="primary" style="width:100%;margin:4px 0" onclick="closeSheet();goHome()">← Back to my log</button>' : ''));
 
@@ -999,7 +1034,226 @@ function openWeigh() {
   const unit = (S.targets && S.targets.unit) || 'kg';
   sheet('<h2 style="margin-top:0">Weigh in</h2><div class="row"><input id="wv" type="number" inputmode="decimal" placeholder="' + (unit === 'lb' ? '165' : '75') + '" step="0.1"><select id="wu" style="flex:.5"><option value="kg"' + (unit === 'kg' ? ' selected' : '') + '>kg</option><option value="lb"' + (unit === 'lb' ? ' selected' : '') + '>lb</option></select></div><button class="primary" id="wgo" style="width:100%;margin-top:12px">Save for ' + (day === localDate() ? 'today' : day) + '</button>');
   $('wv').focus();
-  $('wgo').onclick = async () => { const r = await api('weight', { json: { date: day, value: +$('wv').value, unit: $('wu').value } }); if (!r.ok) return toast(r.reason || 'Couldn’t save.'); if (S.targets) { S.targets.unit = r.unit; save(); } closeSheet(); toast('Weight saved'); refresh(); };
+  $('wgo').onclick = async () => { const r = await api('weight', { json: { date: day, value: +$('wv').value, unit: $('wu').value } }); if (!r.ok) return toast(r.reason || 'Couldn’t save.'); if (S.targets) { S.targets.unit = r.unit; save(); } closeSheet(); toast('Weight saved'); refresh(); if (!$('s-weight').hidden) loadWeight(); };
+}
+
+// ---------- the weight screen ----------
+//  Ranges scope everything on the screen: the tiles, the chart and the table all read the
+//  same slice. The chart is one series (your weight) drawn three ways: the readings as
+//  faint dots, a 7-day trailing average as the line (that's the number that means something;
+//  a single morning is noise), and a dashed projection of the last four weeks' pace. A goal
+//  weight, if you set one in Targets, is a thin line with a date it would be reached.
+let WRANGE = 30, WDATA = null;
+const KG = (v, unit) => unit === 'lb' ? v * 2.20462 : v;
+const dayNum = (d) => Math.floor(new Date(d + 'T12:00:00Z').getTime() / 86400000);
+const dayStr = (n) => new Date(n * 86400000).toISOString().slice(0, 10);
+const shortDate = (d, withYear) => new Date(d + 'T12:00:00').toLocaleDateString(undefined, withYear ? { day: 'numeric', month: 'short', year: 'numeric' } : { day: 'numeric', month: 'short' });
+function openWeight() { show('weight'); loadWeight(); }
+async function loadWeight() {
+  const r = await api('weight?days=' + WRANGE);
+  WDATA = r.ok === false ? null : r;
+  renderWeight();
+}
+$('wranges').querySelectorAll('button').forEach((b) => b.onclick = () => { WRANGE = +b.dataset.r; $('wranges').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b)); loadWeight(); });
+$('wimportbtn').onclick = openImport;
+$('wtablebtn').onclick = () => { const t = $('wtable'); t.hidden = !t.hidden; $('wtablebtn').textContent = t.hidden ? 'Show table' : 'Hide table'; };
+
+// 7-day trailing average at each reading: the mean of every reading in the 7 days ending that day.
+function trailing7(pts) {
+  return pts.map((p, i) => { const from = dayNum(p.date) - 6; let sum = 0, n = 0; for (let j = i; j >= 0 && dayNum(pts[j].date) >= from; j--) { sum += pts[j].kg; n++; } return { date: p.date, kg: sum / n }; });
+}
+// Least-squares slope (kg per day) over the readings in the last `window` days. Null if too few.
+function pace(pts, window = 28) {
+  const last = pts.at(-1); if (!last) return null;
+  const from = dayNum(last.date) - window + 1;
+  const w = pts.filter((p) => dayNum(p.date) >= from);
+  if (w.length < 4 || dayNum(w.at(-1).date) - dayNum(w[0].date) < 7) return null;
+  const xs = w.map((p) => dayNum(p.date)), ys = w.map((p) => p.kg);
+  const mx = xs.reduce((a, b) => a + b, 0) / xs.length, my = ys.reduce((a, b) => a + b, 0) / ys.length;
+  let num = 0, den = 0; xs.forEach((x, i) => { num += (x - mx) * (ys[i] - my); den += (x - mx) ** 2; });
+  return den ? { slope: num / den, days: dayNum(w.at(-1).date) - dayNum(w[0].date) + 1, n: w.length } : null;
+}
+function renderWeight() {
+  const unit = (S.targets && S.targets.unit) || 'kg';
+  const pts = (WDATA && WDATA.points) || [];
+  const empty = !pts.length;
+  $('wempty').hidden = !empty; $('wtiles').innerHTML = ''; $('wlegend').innerHTML = ''; $('wbig').innerHTML = ''; $('wproj').textContent = ''; $('wtable').innerHTML = ''; $('wtip').hidden = true;
+  if (empty) return;
+  const f1 = (kg) => KG(kg, unit).toFixed(1), U = unit;
+  const avg = trailing7(pts);
+  const latest = pts.at(-1), first = pts[0];
+  const change = latest.kg - first.kg;
+  const pc = pace(pts);
+  const goal = S.targets && S.targets.goal_kg;
+  const today = dayNum(localDate());
+  // -- projection: from the last 7-day average, at the current pace, to the goal or 8 weeks out
+  let proj = null, eta = null, projText = '';
+  if (pc && Math.abs(pc.slope) >= 0.005) {
+    const start = { day: dayNum(latest.date), kg: avg.at(-1).kg };
+    let end = start.day + 56;
+    if (goal) {
+      const daysTo = (goal - start.kg) / pc.slope;
+      if (daysTo > 0 && daysTo <= 730) { eta = start.day + Math.round(daysTo); end = Math.min(end, eta); }
+    }
+    proj = { from: start, to: { day: end, kg: start.kg + pc.slope * (end - start.day) } };
+    const perWeek = pc.slope * 7;
+    projText = 'Pace over the last ' + pc.days + ' days: ' + (perWeek > 0 ? '+' : '−') + Math.abs(KG(perWeek, U)).toFixed(2) + ' ' + U + ' a week.';
+    if (goal) {
+      if (eta) projText += ' At that pace you reach ' + f1(goal) + ' ' + U + ' around ' + shortDate(dayStr(eta), true) + '.';
+      else if ((goal - start.kg) * pc.slope < 0) projText += ' That is moving away from your goal of ' + f1(goal) + ' ' + U + '.';
+      else projText += ' At that pace the goal of ' + f1(goal) + ' ' + U + ' is more than two years off.';
+    }
+  } else projText = pts.length < 4 ? 'A few more weigh-ins over a week or two and a pace and projection appear here.' : 'Pace: flat over the last four weeks.';
+  // -- tiles
+  const tile = (l, v, s2) => '<div class="tile"><div class="l">' + l + '</div><div class="v">' + v + '</div>' + (s2 ? '<div class="s">' + s2 + '</div>' : '') + '</div>';
+  $('wtiles').innerHTML = tile('Latest', f1(latest.kg) + ' ' + U, shortDate(latest.date))
+    + tile('7-day average', f1(avg.at(-1).kg) + ' ' + U, 'the number to watch')
+    + tile('Change', (change > 0 ? '+' : change < 0 ? '−' : '') + Math.abs(KG(change, U)).toFixed(1) + ' ' + U, 'since ' + shortDate(first.date) + ' · ' + pts.length + ' weigh-ins')
+    + (goal ? tile('To goal', (latest.kg - goal > 0 ? '−' : '+') + Math.abs(KG(latest.kg - goal, U)).toFixed(1) + ' ' + U, 'goal ' + f1(goal) + ' ' + U + (eta ? ' · ~' + shortDate(dayStr(eta), eta - today > 300) : '')) : tile('Pace', pc ? (pc.slope > 0 ? '+' : '−') + Math.abs(KG(pc.slope * 7, U)).toFixed(2) + ' ' + U + '/wk' : '—', pc ? 'last ' + pc.days + ' days' : 'needs more data'));
+  $('wproj').textContent = projText;
+  $('wlegend').innerHTML = '<span><i class="dot"></i>weigh-ins</span><span><i></i>7-day average</span>' + (proj ? '<span><i class="proj"></i>projection</span>' : '') + (goal ? '<span><i class="goal"></i>goal</span>' : '');
+  // -- chart
+  const W = 360, H = 210, L = 40, R = 12, T = 12, B = 26;
+  const x0 = WRANGE ? today - WRANGE + 1 : dayNum(first.date), x1 = Math.max(today, proj ? proj.to.day : today);
+  const dataYs = pts.map((p) => p.kg).concat(proj ? [proj.to.kg] : []);
+  const dMin = Math.min(...dataYs), dMax = Math.max(...dataYs);
+  const goalNear = goal && goal >= dMin - Math.max(3, (dMax - dMin) * 1.5) && goal <= dMax + Math.max(3, (dMax - dMin) * 1.5);
+  const ys = dataYs.concat(goalNear ? [goal] : []);
+  let ymin = Math.min(...ys), ymax = Math.max(...ys); const pad = Math.max(0.6, (ymax - ymin) * 0.12); ymin -= pad; ymax += pad;
+  const X = (d) => L + ((d - x0) / Math.max(1, x1 - x0)) * (W - L - R), Y = (kg) => T + (1 - (kg - ymin) / (ymax - ymin)) * (H - T - B);
+  const svg = []; const t = (x, y, txt, anchor = 'middle') => '<text x="' + x + '" y="' + y + '" text-anchor="' + anchor + '">' + esc(txt) + '</text>';
+  // y grid: 4 hairlines, labelled in the unit
+  const step = niceStep((ymax - ymin) / 4, U);
+  for (let v = Math.ceil(KG(ymin, U) / step) * step; v <= KG(ymax, U); v += step) { const kg = U === 'lb' ? v / 2.20462 : v; svg.push('<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(kg) + '" y2="' + Y(kg) + '" stroke="var(--edge)" stroke-width="1"/>' + t(L - 6, Y(kg) + 3.5, String(Math.round(v * 10) / 10), 'end')); }
+  // x labels: first, last data day, and a couple between
+  const span = x1 - x0; const ticks = [x0, x0 + Math.round(span / 3), x0 + Math.round(2 * span / 3), x1];
+  ticks.forEach((d, i) => svg.push(t(X(d), H - 8, shortDate(dayStr(d)), i === 0 ? 'start' : i === 3 ? 'end' : 'middle')));
+  // today marker when the chart runs past it (a projection is on)
+  if (x1 > today) svg.push('<line x1="' + X(today) + '" x2="' + X(today) + '" y1="' + T + '" y2="' + (H - B) + '" stroke="var(--edge)" stroke-width="1"/>');
+  if (goalNear) svg.push('<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(goal) + '" y2="' + Y(goal) + '" stroke="var(--text)" stroke-width="1" opacity=".55"/>' + t(W - R, Y(goal) - 4, 'goal ' + f1(goal), 'end'));
+  else if (goal) svg.push(t(W - R, goal < dMin ? H - B - 4 : T + 10, 'goal ' + f1(goal) + (goal < dMin ? ' ↓ below' : ' ↑ above'), 'end'));
+  const vis = pts.filter((p) => dayNum(p.date) >= x0), visAvg = avg.filter((p) => dayNum(p.date) >= x0);
+  svg.push(vis.map((p) => '<circle cx="' + X(dayNum(p.date)) + '" cy="' + Y(p.kg) + '" r="2.5" fill="var(--muted)" opacity=".5"/>').join(''));
+  if (visAvg.length > 1) svg.push('<polyline fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="' + visAvg.map((p) => X(dayNum(p.date)) + ',' + Y(p.kg)).join(' ') + '"/>');
+  else if (visAvg.length === 1) svg.push('<circle cx="' + X(dayNum(visAvg[0].date)) + '" cy="' + Y(visAvg[0].kg) + '" r="4" fill="var(--accent)"/>');
+  if (proj) svg.push('<line x1="' + X(proj.from.day) + '" y1="' + Y(proj.from.kg) + '" x2="' + X(proj.to.day) + '" y2="' + Y(proj.to.kg) + '" stroke="var(--accent)" stroke-width="2" stroke-dasharray="5 4" opacity=".7"/>' + (eta && eta === proj.to.day ? '<circle cx="' + X(eta) + '" cy="' + Y(proj.to.kg) + '" r="4" fill="none" stroke="var(--accent)" stroke-width="2"/>' : ''));
+  svg.push('<line id="wcross" x1="0" x2="0" y1="' + T + '" y2="' + (H - B) + '" stroke="var(--text)" stroke-width="1" opacity=".5" visibility="hidden"/><circle id="wdot" r="5" fill="var(--accent)" stroke="var(--bg)" stroke-width="2" visibility="hidden"/>');
+  const big = $('wbig'); big.innerHTML = svg.join('');
+  // -- hover / touch: nearest reading by x; one readout with both numbers
+  const tip = $('wtip'), cross = big.querySelector('#wcross'), dot = big.querySelector('#wdot');
+  const move = (ev) => {
+    if (!vis.length) return;
+    const rect = big.getBoundingClientRect(); const px = ((ev.clientX - rect.left) / rect.width) * W;
+    let best = 0, bd = Infinity; vis.forEach((p, i) => { const d = Math.abs(X(dayNum(p.date)) - px); if (d < bd) { bd = d; best = i; } });
+    const p = vis[best], a = visAvg[best]; const cx = X(dayNum(p.date));
+    cross.setAttribute('x1', cx); cross.setAttribute('x2', cx); cross.setAttribute('visibility', 'visible');
+    dot.setAttribute('cx', cx); dot.setAttribute('cy', Y(a.kg)); dot.setAttribute('visibility', 'visible');
+    tip.textContent = ''; const b1 = document.createElement('b'); b1.textContent = f1(p.kg) + ' ' + U; tip.appendChild(b1);
+    tip.appendChild(document.createTextNode(' on ' + shortDate(p.date, true))); tip.appendChild(document.createElement('br'));
+    tip.appendChild(document.createTextNode('7-day average ' + f1(a.kg) + ' ' + U));
+    tip.hidden = false; const left = (cx / W) * rect.width; tip.style.left = (left > rect.width * 0.6 ? Math.max(0, left - tip.offsetWidth - 10) : left + 10) + 'px';
+  };
+  const leave = () => { tip.hidden = true; cross.setAttribute('visibility', 'hidden'); dot.setAttribute('visibility', 'hidden'); };
+  big.onpointermove = move; big.onpointerdown = move; big.onpointerleave = leave;
+  // -- table (every value the chart shows, without hovering)
+  $('wtable').innerHTML = '<div class="wrow" style="font-weight:600"><span class="d">Date</span><span>Weight</span><span class="muted">7-day avg</span></div>' + vis.slice().reverse().map((p, i) => { const a = visAvg[visAvg.length - 1 - i]; return '<div class="wrow"><span class="d">' + shortDate(p.date) + '</span><span>' + f1(p.kg) + ' ' + U + '</span><span class="muted">' + f1(a.kg) + '</span></div>'; }).join('');
+}
+function niceStep(raw, unit) { const c = [0.2, 0.5, 1, 2, 5, 10, 20]; const r = unit === 'lb' ? raw * 2.20462 : raw; return c.find((x) => x >= r) || 50; }
+
+// ---------- import: a scale app's CSV or an Apple Health export ----------
+//  Renpho (and Withings, Fitbit, Garmin, MyFitnessPal…) export a CSV with a date column and a
+//  weight column whose header names the unit. Apple Health exports a zip; inside is export.xml
+//  with one <Record type="HKQuantityTypeIdentifierBodyMass" …/> per reading. Both are read here,
+//  in the browser; the server only ever sees {date, kg} rows. One reading per day: the first
+//  of the day (the morning weigh-in), because that's the one that means something.
+function openImport() {
+  sheet('<h2 style="margin-top:0">Import weigh-ins</h2>'
+    + '<p class="muted small" style="margin-top:0">Pick a file from your scale app or from Apple Health. It is read on this phone; only the dates and weights are saved.</p>'
+    + '<ul class="muted small" style="padding-left:18px;margin:0 0 10px;line-height:1.5"><li><b>Renpho</b>: the app → your profile → <b>Export data</b> → CSV. Withings, Fitbit, Garmin and MyFitnessPal CSVs work too.</li>'
+    + '<li><b>Apple Health</b>: Health app → your picture (top right) → <b>Export All Health Data</b>. It arrives as a zip; tap it once in Files to unzip, then pick <b>export.xml</b> inside. It can be big; give it a minute.</li></ul>'
+    + '<input type="file" id="wfile" accept=".csv,.xml,.txt,text/csv,text/xml,application/xml,text/plain" style="width:100%">'
+    + '<p class="muted small" id="wimsg" style="margin:10px 0 0"></p><div id="wpreview"></div>');
+  $('wfile').onchange = async () => {
+    const f = $('wfile').files[0]; if (!f) return;
+    $('wimsg').textContent = 'Reading ' + f.name + (f.size > 5e6 ? ' (' + Math.round(f.size / 1e6) + ' MB, hang on)' : '') + '…'; $('wpreview').innerHTML = '';
+    try {
+      const head = await f.slice(0, 4000).text();
+      const rows = /<HealthData|<\?xml|<Record /.test(head) ? await parseAppleHealth(f) : parseScaleCsv(await f.text(), (S.targets && S.targets.unit) || 'kg');
+      showImportPreview(rows, f.name);
+    } catch (e) { $('wimsg').textContent = 'Couldn’t read that file: ' + (e.message || e); }
+  };
+}
+// One row per day, the earliest reading. rows: [{date, kg, at}] where at sorts within the day.
+function oneADay(rows) {
+  const by = new Map();
+  for (const r of rows) { if (!r.date || !Number.isFinite(r.kg)) continue; const cur = by.get(r.date); if (!cur || (r.at || '') < (cur.at || '')) by.set(r.date, r); }
+  return [...by.values()].sort((a, b) => a.date < b.date ? -1 : 1).map((r) => ({ date: r.date, kg: Math.round(r.kg * 10) / 10 }));
+}
+function localDateOf(dt) { return new Date(dt.getTime() - dt.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
+// A date in most of the shapes scale apps write: ISO, "2024-03-05 07:12:33", "Mar 5, 2024 at 7:12 AM", "05/03/2024" (day first if the first number is > 12).
+function parseWhen(v) {
+  v = String(v || '').trim().replace(/\s+at\s+/i, ' ').replace(/,\s*(\d{1,2}:\d{2})/, ' $1');
+  let d = new Date(v);
+  if (isNaN(d)) { const m = v.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})(.*)$/); if (m) { const a = +m[1], b = +m[2]; const dayFirst = a > 12; d = new Date(m[3] + '-' + String(dayFirst ? b : a).padStart(2, '0') + '-' + String(dayFirst ? a : b).padStart(2, '0') + 'T' + ((m[4] || '').trim().match(/\d{1,2}:\d{2}(:\d{2})?/)?.[0] || '12:00') + ':00'); } }
+  return isNaN(d) ? null : d;
+}
+function splitCsvLine(line) { const out = []; let cur = '', q = false; for (let i = 0; i < line.length; i++) { const ch = line[i]; if (ch === '"') { if (q && line[i + 1] === '"') { cur += '"'; i++; } else q = !q; } else if (ch === ',' && !q) { out.push(cur); cur = ''; } else cur += ch; } out.push(cur); return out.map((x) => x.trim()); }
+function parseScaleCsv(text, fallbackUnit) {
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter((l) => l.trim());
+  if (lines.length < 2) throw new Error('no rows in it');
+  const header = splitCsvLine(lines[0]).map((h) => h.toLowerCase());
+  let wi = header.findIndex((h) => /weight|mass/.test(h) && !/fat.?free|muscle|bone|target|goal|water|lean|change|diff/.test(h));
+  if (wi < 0) wi = header.findIndex((h) => /\bkg\b|\blbs?\b/.test(h));
+  const di = header.findIndex((h) => /time|date|when|day/.test(h));
+  if (wi < 0 || di < 0) throw new Error('couldn’t find a date column and a weight column in the header: ' + header.slice(0, 6).join(', '));
+  const unitHdr = header[wi].match(/\b(kg|kgs|lb|lbs|pounds|kilograms)\b/); const unit = unitHdr ? (/^k/.test(unitHdr[1]) ? 'kg' : 'lb') : fallbackUnit;
+  const rows = [];
+  for (const line of lines.slice(1)) {
+    const c = splitCsvLine(line); const when = parseWhen(c[di]); const raw = parseFloat(String(c[wi] || '').replace(/[^\d.\-]/g, ''));
+    if (!when || !Number.isFinite(raw) || raw <= 0) continue;
+    rows.push({ date: localDateOf(when), at: when.toISOString(), kg: unit === 'lb' ? raw / 2.20462 : raw });
+  }
+  const out = oneADay(rows); out.unit = unit; out.readings = rows.length; return out;
+}
+// export.xml is one <Record …/> per line and can run to hundreds of MB, so it is read in
+// 4 MB slices; only the BodyMass lines are looked at. The date is the phone's local date.
+async function parseAppleHealth(file) {
+  const rows = []; let carry = '', readings = 0, unitSeen = 'kg';
+  const dec = new TextDecoder(); const CH = 4 * 1024 * 1024;
+  for (let off = 0; off < file.size; off += CH) {
+    const chunk = carry + dec.decode(await file.slice(off, off + CH).arrayBuffer(), { stream: off + CH < file.size });
+    const lines = chunk.split('\n'); carry = lines.pop() || '';
+    for (const line of lines) {
+      if (!line.includes('HKQuantityTypeIdentifierBodyMass')) continue;
+      const unit = (line.match(/\sunit="([^"]+)"/) || [])[1] || 'kg', start = (line.match(/\sstartDate="([^"]+)"/) || [])[1] || '', val = parseFloat((line.match(/\svalue="([^"]+)"/) || [])[1]);
+      if (!start || !Number.isFinite(val)) continue;
+      unitSeen = /^lb/i.test(unit) ? 'lb' : 'kg'; readings++;
+      rows.push({ date: start.slice(0, 10), at: start.slice(11, 19), kg: /^lb/i.test(unit) ? val / 2.20462 : unit === 'g' ? val / 1000 : val });
+    }
+    if (readings === 0 && off > 200 * CH) { /* keep going — weight records can sit late in the file */ }
+  }
+  if (carry.includes('HKQuantityTypeIdentifierBodyMass')) { const line = carry; const unit = (line.match(/\sunit="([^"]+)"/) || [])[1] || 'kg', start = (line.match(/\sstartDate="([^"]+)"/) || [])[1] || '', val = parseFloat((line.match(/\svalue="([^"]+)"/) || [])[1]); if (start && Number.isFinite(val)) { readings++; rows.push({ date: start.slice(0, 10), at: start.slice(11, 19), kg: /^lb/i.test(unit) ? val / 2.20462 : unit === 'g' ? val / 1000 : val }); } }
+  if (!readings) throw new Error('no body-mass records in it (is this export.xml from Apple Health?)');
+  const out = oneADay(rows); out.unit = unitSeen; out.readings = readings; return out;
+}
+function showImportPreview(rows, name) {
+  const unit = (S.targets && S.targets.unit) || 'kg';
+  if (!rows.length) { $('wimsg').textContent = 'Nothing usable in ' + name + '.'; return; }
+  $('wimsg').textContent = '';
+  const f1 = (kg) => KG(kg, unit).toFixed(1) + ' ' + unit;
+  $('wpreview').innerHTML = '<div class="card" style="padding:12px"><b>' + rows.length + ' days</b> from ' + rows.readings + ' readings (' + rows.unit + ' in the file), ' + shortDate(rows[0].date, true) + ' to ' + shortDate(rows.at(-1).date, true) + '.'
+    + '<div class="muted small" style="margin-top:6px">Where a day has several readings the first one is kept. A day you already logged is replaced by the file’s value.</div>'
+    + '<div style="margin-top:8px">' + rows.slice(-3).map((r) => '<div class="wrow"><span class="d">' + shortDate(r.date) + '</span><span>' + f1(r.kg) + '</span></div>').join('') + '</div>'
+    + '<button class="primary" id="wimport" style="width:100%;margin-top:12px">Import ' + rows.length + ' days</button></div>';
+  $('wimport').onclick = async () => {
+    $('wimport').disabled = true; $('wimport').textContent = 'Importing…';
+    const r = await api('weight/import', { json: { rows: rows.map((x) => ({ date: x.date, kg: x.kg })) } });
+    if (!r.ok) { $('wimport').disabled = false; $('wimport').textContent = 'Try again'; return toast(r.reason || 'Import failed.'); }
+    closeSheet(); toast('Imported ' + r.imported + ' new day' + (r.imported === 1 ? '' : 's') + (r.replaced ? ', replaced ' + r.replaced : ''));
+    WRANGE = 0; $('wranges').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x.dataset.r === '0'));
+    if ($('s-weight').hidden) openWeight(); else loadWeight();
+    refresh();
+  };
 }
 
 // ---------- receipts ----------

@@ -19,6 +19,33 @@ prompt. The value is never printed back and never enters git.
 
 ---
 
+## 0. A domain on Cloudflare (do this first)
+
+Why: the Worker runs on a `*.workers.dev` address out of the box, and that is fine
+for testing. It is not fine for customers: the address advertises the account,
+it can't be branded, and every passkey a person sets up is bound to the hostname,
+so moving later means they all set up again. You need a domain **on Cloudflare**,
+meaning Cloudflare runs its DNS. Three ways to get there, cheapest first:
+
+1. **Register a new one.** Dashboard → **Domain Registration → Register Domains**.
+   Cloudflare sells at cost (no markup, no upsell). It is on Cloudflare the moment
+   it's bought.
+2. **Transfer one you own.** Dashboard → **Domain Registration → Transfer Domains**.
+   Unlock it at the current registrar, get the auth code, paste it here. Takes up
+   to five days; the site keeps working throughout.
+3. **Keep it where it is, move the DNS.** Dashboard → **Add a domain** (top of the
+   account home) → type the domain → Free plan → change the nameservers at your
+   registrar to the two Cloudflare gives you. Live within an hour, usually.
+
+Then attach it to the Worker: **Workers & Pages → bot-you-own → Settings →
+Domains & Routes → Add → Custom Domain** → a hostname that has no DNS record yet
+(`chat.yourdomain.com`, say). Cloudflare makes the record and the certificate.
+
+Check: open `https://chat.yourdomain.com`. The bot is there, with a padlock. Keep
+the workers.dev address **out** of anything you give people.
+
+---
+
 ## 1. The AI Gateway (the dollar ceiling)
 
 **How you know it's not done yet:** under every reply on the live bot there's a

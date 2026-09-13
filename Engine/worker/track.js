@@ -47,7 +47,7 @@ import { identify, signInMethods, verifyIdToken } from "../identity/index.js";
 import { resolve as resolveExpiry, lapseReply, noticeFor, EXPIRY_BUILT_IN } from "./expiry.js";
 import { join as idJoin, userIdFor, userById as idUserById, bindDevice, linkByCode, deviceCount, listDevices, pendingByEmail, touch as idTouch, DEV_PEPPER, pepperOf } from "../identity/devices.js";
 import { runVision, PROMPTS, extractJson, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize, mergeCorrection } from "./track-vision.js";
-import { lookupBarcode, rememberLabel, saveReceipt, listReceipts, deleteReceipt, setWeight, listWeights, householdOf, createHousehold, joinHousehold, leaveHousehold, canView } from "./track-extras.js";
+import { lookupBarcode, rememberLabel, saveReceipt, listReceipts, deleteReceipt, setWeight, listWeights, importWeights, householdOf, createHousehold, joinHousehold, leaveHousehold, canView } from "./track-extras.js";
 import { ensureDaySchema, dayChat, addWords, afterMeal, editedMeal, removedMeal, listFavourites, nameFavourite, forgetFavourite, matchFavourite, repeatMeals, askDay, summaryFor, classifySay, looksLikeFood } from "./track-day.js";
 
 const THUMB_MAX_PX = 256, THUMB_MAX_BYTES = 48 * 1024;
@@ -243,8 +243,14 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
     const out = await lookupBarcode(env, body.code);
     return json(out, out.ok ? 200 : 404);
   }
+  if (sub === "weight/import") {
+    if (request.method !== "POST") return json({ error: "POST only" }, 405);
+    const out = await importWeights(env, me, body.rows);
+    return json(out.ok ? { ...out, trend: await listWeights(env, me.id, 0) } : out, out.ok ? 200 : 400);
+  }
   if (sub === "weight") {
-    if (request.method === "GET") return json(await listWeights(env, me.id, 30));
+    // GET ?days=N (default 30; 0 = all of it) — the weight screen asks for the range it shows.
+    if (request.method === "GET") return json(await listWeights(env, me.id, url.searchParams.has("days") ? Number(url.searchParams.get("days")) : 30));
     if (request.method !== "POST") return json({ error: "POST only" }, 405);
     const out = await setWeight(env, me, body);
     if (out.ok && out.unit !== (me.targets?.unit || "kg")) await env.DB.prepare(`UPDATE track_users SET targets_json = ? WHERE id = ?`).bind(JSON.stringify({ ...(me.targets || {}), unit: out.unit }), me.id).run();
@@ -543,6 +549,7 @@ function cleanTargets(t) {
     kcal: Math.round(clamp(t.kcal, 800, 8000, 2000)), protein_g: Math.round(clamp(t.protein_g, 0, 500, 150)),
     carbs_g: Math.round(clamp(t.carbs_g, 0, 1000, 200)), fat_g: Math.round(clamp(t.fat_g, 0, 400, 65)),
     unit: t.unit === "lb" ? "lb" : "kg", name: String(t.name || "").trim().slice(0, 40), preset: String(t.preset || "").slice(0, 12), weight_kg: round1(clamp(t.weight_kg, 0, 400, 0)) || null,
+    goal_kg: round1(clamp(t.goal_kg, 0, 400, 0)) || null,   // optional: the weight screen draws it and projects a date
   };
 }
 
