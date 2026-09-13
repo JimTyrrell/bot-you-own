@@ -129,6 +129,7 @@
   .presets { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
   .presets button { padding:14px 6px; border:2px solid transparent; }
   .presets button.on { border-color:var(--accent); }
+  #working button.fix { font:inherit; font-size:12.5px; padding:4px 10px; border-radius:999px; border:1px solid var(--accent); background:transparent; color:var(--accent); margin-top:6px; cursor:pointer; }
   .presets b { display:block; } .presets small { color:var(--muted); font-size:12px; }
   .code { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:34px; letter-spacing:.2em; font-weight:700; text-align:center; padding:16px; background:var(--panel); border-radius:16px; }
   .signin { display:flex; flex-direction:column; gap:8px; margin:12px 0; }
@@ -198,6 +199,7 @@
       <p class="muted small" id="formula">Maintenance ≈ 33 kcal per kg of bodyweight (the common 15 kcal/lb rule of thumb); cut = −500, build = +300. Protein 2.0 g/kg (cut) or 1.8 g/kg, fat 25% of calories, carbs the rest. Adjust to what your coach says.</p>
       <div class="row"><div><label>Calories</label><input id="tkcal" type="number" inputmode="numeric"></div><div><label>Protein g</label><input id="tprot" type="number" inputmode="numeric"></div></div>
       <div class="row"><div><label>Carbs g</label><input id="tcarb" type="number" inputmode="numeric"></div><div><label>Fat g</label><input id="tfat" type="number" inputmode="numeric"></div></div>
+      <p class="small" id="working" style="margin:10px 0 0;line-height:1.5"></p>
       <button class="primary" id="targetssave" style="width:100%;margin-top:16px">Save targets</button>
     </div>
   </section>
@@ -472,32 +474,103 @@ async function signIn(s) {
 }
 
 // ---------- targets ----------
+//  Three things happen here, all in the browser:
+//   1. What you type is kept as a DRAFT in this browser (localStorage) as you type, so
+//      leaving the page and coming back doesn't lose it. Save sends it to the server
+//      and clears the draft. Unsaved = "draft restored" shows under the boxes.
+//   2. A preset (Cut / Maintain / Build) works the numbers out from your weight and
+//      SHOWS its working. Change the weight and the preset re-does the sums.
+//   3. The macros are added up (protein 4, carbs 4, fat 9 kcal per gram) and compared
+//      with the Calories box, every keystroke. If they don't agree you get one-tap fixes.
 let preset = '';
+const TFIELDS = ['tname', 'tweight', 'tunit', 'tkcal', 'tprot', 'tcarb', 'tfat'];
+const fmt = (n) => Math.round(n).toLocaleString();
+function readForm() { return { name: $('tname').value, unit: $('tunit').value, weight: $('tweight').value, preset, kcal: $('tkcal').value, prot: $('tprot').value, carb: $('tcarb').value, fat: $('tfat').value }; }
+function draftSave() { S.targetsDraft = { ...readForm(), at: Date.now() }; save(); }
+function setPreset(p) { preset = p; document.querySelectorAll('#presets button').forEach((b) => b.classList.toggle('on', b.dataset.p === preset)); }
 function prefillTargets() {
   const t = S.targets || {};
-  $('tname').value = t.name || ''; $('tunit').value = t.unit || 'kg';
-  $('tweight').value = t.weight_kg ? (t.unit === 'lb' ? Math.round(t.weight_kg * 2.20462) : t.weight_kg) : '';
-  $('tkcal').value = t.kcal || ''; $('tprot').value = t.protein_g || ''; $('tcarb').value = t.carbs_g || ''; $('tfat').value = t.fat_g || '';
-  preset = t.preset || ''; document.querySelectorAll('#presets button').forEach((b) => b.classList.toggle('on', b.dataset.p === preset));
+  const d = S.targetsDraft;                         // a draft beats the saved copy: it's newer, by definition
+  if (d) {
+    $('tname').value = d.name || ''; $('tunit').value = d.unit || 'kg'; $('tweight').value = d.weight || '';
+    $('tkcal').value = d.kcal || ''; $('tprot').value = d.prot || ''; $('tcarb').value = d.carb || ''; $('tfat').value = d.fat || '';
+    setPreset(d.preset || '');
+  } else {
+    $('tname').value = t.name || ''; $('tunit').value = t.unit || 'kg';
+    $('tweight').value = t.weight_kg ? (t.unit === 'lb' ? Math.round(t.weight_kg * 2.20462) : t.weight_kg) : '';
+    $('tkcal').value = t.kcal || ''; $('tprot').value = t.protein_g || ''; $('tcarb').value = t.carbs_g || ''; $('tfat').value = t.fat_g || '';
+    setPreset(t.preset || '');
+  }
   $('targetsback').hidden = !S.targets;
+  working();
 }
 function weightKg() { const w = Number($('tweight').value); return $('tunit').value === 'lb' ? w / 2.20462 : w; }
-document.querySelectorAll('#presets button').forEach((b) => b.onclick = () => {
-  const kg = weightKg(); if (!kg) return toast('Type your weight first.');
-  preset = b.dataset.p; document.querySelectorAll('#presets button').forEach((x) => x.classList.toggle('on', x === b));
+// The preset's sums, from the weight. Returns the numbers and the lines of working.
+function presetNumbers(p) {
+  const kg = weightKg(); if (!kg) return null;
   const maint = kg * 33;
-  const kcal = Math.round((preset === 'cut' ? maint - 500 : preset === 'build' ? maint + 300 : maint) / 10) * 10;
-  const prot = Math.round(kg * (preset === 'cut' ? 2.0 : 1.8));
+  const kcal = Math.round((p === 'cut' ? maint - 500 : p === 'build' ? maint + 300 : maint) / 10) * 10;
+  const gkg = p === 'cut' ? 2.0 : 1.8;
+  const prot = Math.round(kg * gkg);
   const fat = Math.round(kcal * 0.25 / 9);
   const carb = Math.max(0, Math.round((kcal - prot * 4 - fat * 9) / 4));
-  $('tkcal').value = kcal; $('tprot').value = prot; $('tfat').value = fat; $('tcarb').value = carb;
-});
+  const w = $('tunit').value === 'lb' ? fmt(Number($('tweight').value)) + ' lb = ' + fmt(kg) + ' kg' : fmt(kg) + ' kg';
+  const lines = [
+    w + ' × 33 = ' + fmt(maint) + ' kcal to maintain' + (p === 'cut' ? ' − 500 = ' + fmt(kcal) + ' to cut' : p === 'build' ? ' + 300 = ' + fmt(kcal) + ' to build' : ' (rounded to ' + fmt(kcal) + ')'),
+    'protein ' + fmt(kg) + ' kg × ' + gkg + ' = ' + prot + ' g · fat 25% of ' + fmt(kcal) + ' = ' + fmt(kcal * 0.25) + ' kcal ÷ 9 = ' + fat + ' g · carbs the rest = ' + carb + ' g',
+  ];
+  return { kcal, prot, fat, carb, lines };
+}
+function applyPreset(p) {
+  const n = presetNumbers(p); if (!n) return toast('Type your weight first.');
+  setPreset(p);
+  $('tkcal').value = n.kcal; $('tprot').value = n.prot; $('tfat').value = n.fat; $('tcarb').value = n.carb;
+  draftSave(); working();
+}
+document.querySelectorAll('#presets button').forEach((b) => b.onclick = () => applyPreset(b.dataset.p));
+// The working line: the preset's sums (if one is on), then the macro total vs the Calories box.
+function working() {
+  const el = $('working'); const out = [];
+  if (preset) { const n = presetNumbers(preset); if (n) out.push('<span class="muted">' + esc(n.lines[0]) + '<br>' + esc(n.lines[1]) + '</span>'); }
+  const P = +$('tprot').value || 0, C = +$('tcarb').value || 0, F = +$('tfat').value || 0, K = +$('tkcal').value || 0;
+  const sum = P * 4 + C * 4 + F * 9;
+  if (P || C || F) {
+    let line = 'Macros add up to <b>' + fmt(sum) + ' kcal</b> <span class="muted">(protein ' + fmt(P * 4) + ' + carbs ' + fmt(C * 4) + ' + fat ' + fmt(F * 9) + ')</span>.';
+    if (K) {
+      const diff = sum - K;
+      if (Math.abs(diff) <= 25) line += ' <span style="color:var(--accent)">✓ Matches your ' + fmt(K) + ' calories.</span>';
+      else {
+        line += ' That\'s <b>' + fmt(Math.abs(diff)) + ' ' + (diff > 0 ? 'over' : 'under') + '</b> the ' + fmt(K) + ' in Calories.';
+        const carbFix = Math.round((K - P * 4 - F * 9) / 4);
+        line += '<br><button type="button" class="fix" data-fix="kcal">Set calories to ' + fmt(sum) + '</button>';
+        if (carbFix >= 0) line += ' <button type="button" class="fix" data-fix="carb">Set carbs to ' + carbFix + ' g</button>';
+      }
+    }
+    out.push(line);
+  }
+  if (S.targetsDraft && S.targets) out.push('<span class="muted">Unsaved changes, restored from this browser. Save targets to keep them.</span>');
+  el.innerHTML = out.join('<br>'); el.hidden = !out.length;
+  el.querySelectorAll('button.fix').forEach((b) => b.onclick = () => {
+    const P2 = +$('tprot').value || 0, C2 = +$('tcarb').value || 0, F2 = +$('tfat').value || 0, K2 = +$('tkcal').value || 0;
+    if (b.dataset.fix === 'kcal') $('tkcal').value = P2 * 4 + C2 * 4 + F2 * 9;
+    else $('tcarb').value = Math.max(0, Math.round((K2 - P2 * 4 - F2 * 9) / 4));
+    setPreset(''); draftSave(); working();
+  });
+}
+TFIELDS.forEach((id) => $(id).addEventListener('input', () => {
+  // Typing your own calories or macros means the preset's numbers no longer apply;
+  // changing the weight or unit with a preset on re-does the preset's sums.
+  if (['tkcal', 'tprot', 'tcarb', 'tfat'].includes(id)) setPreset('');
+  else if (['tweight', 'tunit'].includes(id) && preset) { const n = presetNumbers(preset); if (n) { $('tkcal').value = n.kcal; $('tprot').value = n.prot; $('tfat').value = n.fat; $('tcarb').value = n.carb; } }
+  draftSave(); working();
+}));
+$('tunit').addEventListener('change', () => { if (preset) { const n = presetNumbers(preset); if (n) { $('tkcal').value = n.kcal; $('tprot').value = n.prot; $('tfat').value = n.fat; $('tcarb').value = n.carb; } } draftSave(); working(); });
 $('targetssave').onclick = async () => {
   const t = { name: $('tname').value, unit: $('tunit').value, weight_kg: weightKg() || null, preset, kcal: +$('tkcal').value, protein_g: +$('tprot').value, carbs_g: +$('tcarb').value, fat_g: +$('tfat').value };
   if (!t.kcal) return toast('Calories are needed.');
   const r = await api('targets', { json: t });
   if (!r.ok) return toast(r.reason || 'Couldn’t save.');
-  S.targets = r.targets; save(); toast('Targets saved'); goHome();
+  S.targets = r.targets; delete S.targetsDraft; save(); toast('Targets saved'); goHome();
 };
 $('targetsback').onclick = goHome;
 document.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => { const g = b.dataset.go; if (g === 'home') goHome(); else if (g === 'targets') { show('targets'); prefillTargets(); } });

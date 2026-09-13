@@ -37,6 +37,7 @@
   #projects { flex:0 1 auto; max-height:45%; }
   .item { padding:8px 10px; border-radius:8px; cursor:pointer; font-size:14px; color:var(--text); display:flex; flex-direction:column; gap:1px; }
   .item:hover { background:var(--panel); }
+  a.item { text-decoration:none; }
   .item.active { background:var(--panel); font-weight:600; }
   .item small { color:var(--muted); font-weight:400; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .chats { flex:1 1 0; min-height:90px; }
@@ -741,15 +742,20 @@ function accessBadge(p) {
   else if (/key/.test(p.access || '')) b.push('🔒');
   return b.length ? ' <span class="pill" style="vertical-align:1px">' + b.map(esc).join(' · ') + '</span>' : '';
 }
+// ⌘-click, Ctrl-click, Shift-click and middle-click on a sidebar row are the
+// browser's: the rows are real links, so those open a new tab or window with
+// the same ?project=…&chat=… the row stands for. A plain click stays in-page.
+const wantsNewTab = (e) => e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1;
 function renderProjects() {
   $('projects').innerHTML = '';
   state.projects.forEach((p) => {
-    const el = document.createElement('div');
+    const el = document.createElement('a');
     el.className = 'item' + (p.id === state.project?.id ? ' active' : '');
     const isApp = p.kind && p.kind !== 'chat';
-    el.innerHTML = '<span>' + (isApp ? '📷 ' : '') + esc(p.name) + accessBadge(p) + (isApp ? ' <span class="pill" style="vertical-align:1px">app</span>' : '') + '</span><small>' + esc(p.tagline || '') + '</small>';
     // An app-shaped bot (the food log) lives on its own page: /apps/<id>. Chat bots stay here.
-    el.onclick = () => { if (isApp) { location.href = p.href || ('/apps/' + encodeURIComponent(p.id)); return; } selectProject(p); $('side').classList.remove('open'); };
+    el.href = isApp ? (p.href || ('/apps/' + encodeURIComponent(p.id))) : (location.pathname + '?project=' + encodeURIComponent(p.id));
+    el.innerHTML = '<span>' + (isApp ? '📷 ' : '') + esc(p.name) + accessBadge(p) + (isApp ? ' <span class="pill" style="vertical-align:1px">app</span>' : '') + '</span><small>' + esc(p.tagline || '') + '</small>';
+    el.onclick = (e) => { if (wantsNewTab(e)) return; e.preventDefault(); if (isApp) { location.href = el.href; return; } selectProject(p); $('side').classList.remove('open'); };
     $('projects').appendChild(el);
   });
 }
@@ -765,10 +771,11 @@ function renderChats() {
   if (chatQuery && !shown.length) { const p = document.createElement('div'); p.className = 'item'; p.style.color = 'var(--muted)'; p.textContent = all.length ? 'Nothing matches.' : 'No chats yet.'; box.appendChild(p); }
   shown.forEach((c) => {
     const row = document.createElement('div'); row.className = 'chat-row';
-    const el = document.createElement('div');
+    const el = document.createElement('a');
     el.className = 'item' + (c.id === state.chat?.id ? ' active' : '');
+    el.href = location.pathname + '?project=' + encodeURIComponent(state.project.id) + '&chat=' + encodeURIComponent(c.id);
     el.textContent = c.title || 'New chat'; el.title = c.title || 'New chat';
-    el.onclick = () => { loadChat(c); $('side').classList.remove('open'); };
+    el.onclick = (e) => { if (wantsNewTab(e)) return; e.preventDefault(); loadChat(c); $('side').classList.remove('open'); };
     row.appendChild(el);
     if (!viewAs) {
       const ren = document.createElement('button'); ren.textContent = '✎'; ren.title = 'Rename'; ren.className = 'rename';
