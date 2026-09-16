@@ -1065,10 +1065,26 @@ async function send(text) {
   state.abort = new AbortController();
   let full = '', finalText = null, flags = [], sources = [];
   try {
-    const res = await fetch('/api/chat', {
-      method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, signal: state.abort.signal,
-      body: JSON.stringify({ project: state.project.id, messages: botTurns(chat).map(({ role, content }) => ({ role, content })), attachments: (chat.attachments || []).map(({ name, text }) => ({ name, text })), voice: spoken ? 'in' : undefined, stream: true }),
-    });
+    // The request itself gets a few quiet retries with a longer pause each time —
+    // a dropped connection, a Worker mid-deploy (502/503/504) or the rate limiter
+    // (429) — before the person is told to try again. Only the send is retried;
+    // once a reply has started streaming, a break is a break.
+    const payload = JSON.stringify({ project: state.project.id, messages: botTurns(chat).map(({ role, content }) => ({ role, content })), attachments: (chat.attachments || []).map(({ name, text }) => ({ name, text })), voice: spoken ? 'in' : undefined, stream: true });
+    const waits = [1500, 4000, 9000];
+    let res = null;
+    for (let attempt = 0; ; attempt++) {
+      let why = '';
+      try { res = await fetch('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, signal: state.abort.signal, body: payload }); }
+      catch (e) { if (e.name === 'AbortError') throw e; why = 'No connection'; res = null; }
+      if (res && ![502, 503, 504, 429].includes(res.status)) break;
+      if (res) why = res.status === 429 ? 'Server busy' : 'Server unavailable';
+      if (attempt >= waits.length) { res = null; break; }
+      const wait = waits[attempt] * (why === 'Server busy' ? 2 : 1);
+      if (ticker) clearInterval(ticker);
+      body.className = 'body thinking'; body.innerHTML = '<span>' + esc(why + ' — trying again in ' + Math.round(wait / 1000) + ' s (' + (attempt + 1) + ' of ' + waits.length + ')') + '</span>';
+      await new Promise((r, rej) => { const t = setTimeout(r, wait); state.abort.signal.addEventListener('abort', () => { clearTimeout(t); rej(Object.assign(new Error('aborted'), { name: 'AbortError' })); }, { once: true }); });
+    }
+    if (!res) throw Object.assign(new Error('unreachable'), { name: 'Unreachable' });
     if (res.status === 401 || res.status === 403) lockedOut(await res.clone().json().catch(() => ({})), chat.project);
     if (!(res.headers.get('content-type') || '').includes('event-stream')) {
       const data = await res.json().catch(() => ({}));
@@ -1088,7 +1104,9 @@ async function send(text) {
       }
     }
   } catch (err) {
-    if (err.name === 'AbortError') finalText = full || '(stopped)'; else finalText = 'Sorry — something went wrong on our end.';
+    if (err.name === 'AbortError') finalText = full || '(stopped)';
+    else if (err.name === 'Unreachable') finalText = 'I couldn’t reach the server just now — I tried a few times. Check your connection and send that again in a moment.';
+    else finalText = 'Sorry — something went wrong on our end.';
   }
   stopThinking(); body.classList.remove('cursor');
   const reply = finalText ?? full;

@@ -184,6 +184,17 @@
   </section>
 
   <!-- PENDING: a second device -->
+  <section class="screen" id="s-offline" hidden>
+    <div class="top"><span></span><h1>Plate</h1><span></span></div>
+    <div class="card center">
+      <p style="font-size:34px;margin:6px 0">📡</p>
+      <p><b>Can’t reach the server</b></p>
+      <p class="muted small" id="offlinewhy"></p>
+      <p class="muted small">Your log is safe on the server; nothing here was lost. Tried a few times already.</p>
+      <button class="primary" style="width:100%;margin-top:8px" onclick="location.reload()">Try again</button>
+    </div>
+  </section>
+
   <section class="screen" id="s-pending" hidden>
     <div class="top"><h1>One more step</h1></div>
     <div class="card">
@@ -358,12 +369,36 @@ $('sheet').addEventListener('click', (e) => { if (e.target === $('sheet')) close
 
 if (!S.deviceKey) { const b = crypto.getRandomValues(new Uint8Array(32)); S.deviceKey = [...b].map((x) => x.toString(16).padStart(2, '0')).join(''); save(); }
 
+// Talking to the server. A flaky connection, a Worker mid-deploy, or a rate-limit
+// gets a few quiet retries with a longer pause each time before the person is asked
+// to try again. Only failures where the request never ran are retried: a network
+// error, a 502/503/504 (the edge couldn't reach the Worker), or a 429 (the limiter
+// said no). A 500 means the Worker ran and broke, so a POST is NOT sent twice.
+const RETRY_WAITS = [1500, 4000, 9000];                 // three more goes over ~15 s
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const OFFLINE_REASON = 'Can’t reach the server right now. Check your connection and try again in a moment.';
 async function api(path, opts = {}) {
   const headers = Object.assign({ 'x-device-key': S.deviceKey }, opts.headers || {});
   if (opts.json) { headers['content-type'] = 'application/json'; opts.body = JSON.stringify({ tz: TZ, ...opts.json }); }
-  const r = await fetch((opts.base || API) + path, { method: opts.method || (opts.body ? 'POST' : 'GET'), headers, body: opts.body });
-  let data = {}; try { data = await r.json(); } catch {}
-  return { ok: r.ok, status: r.status, ...data };
+  const method = opts.method || (opts.body ? 'POST' : 'GET');
+  for (let attempt = 0; ; attempt++) {
+    let r = null, why = '';
+    try { r = await fetch((opts.base || API) + path, { method, headers, body: opts.body }); }
+    catch (e) { why = 'network'; }                        // TypeError: never reached the server
+    if (r && ![502, 503, 504, 429].includes(r.status)) {
+      let data = {}; try { data = await r.json(); } catch {}
+      if (attempt) toast('Back online.', 1200);
+      return { ok: r.ok, status: r.status, ...data };
+    }
+    if (r) why = r.status === 429 ? 'busy' : 'unavailable';
+    if (attempt >= RETRY_WAITS.length) {
+      $('toast').hidden = true;
+      return { ok: false, status: r ? r.status : 0, offline: true, reason: why === 'busy' ? 'The server is busy. Give it a minute and try again.' : OFFLINE_REASON };
+    }
+    const wait = RETRY_WAITS[attempt] * (why === 'busy' ? 2 : 1);
+    toast((why === 'busy' ? 'Server busy' : why === 'network' ? 'No connection' : 'Server unavailable') + ' — trying again in ' + Math.round(wait / 1000) + ' s (' + (attempt + 1) + ' of ' + RETRY_WAITS.length + ')…', wait + 500);
+    await sleep(wait);
+  }
 }
 // Engine/identity/ routes: passkeys and authenticator codes. Same device key, the bot id in the body.
 const idApi = (path, json = {}) => api(path, { base: '/api/id/', json: { bot: BOT, ...json } });
@@ -378,15 +413,21 @@ const idApi = (path, json = {}) => api(path, { base: '/api/id/', json: { bot: BO
   renderSignIn();
   if (!S.email) return show('join');
   const me = await api('me');
+  if (me.offline) return showOffline(me.reason);
   if (me.linked) { onLinked(me); return; }
   if (me.code) { S.pending = me.code; save(); return showPending(me); }
   // Known email, unknown device (storage was cleared server-side?): try joining again.
   const j = await api('join', { json: { email: S.email } });
+  if (j.offline) return showOffline(j.reason);
   if (j.linked) return onLinked(j);
   if (j.code) { S.pending = j.code; save(); return showPending(j); }
   show('join');
 })();
 
+function showOffline(reason) {
+  $('offlinewhy').textContent = reason || OFFLINE_REASON;
+  show('offline');
+}
 function onLinked(me) {
   S.userId = me.userId; S.email = me.email; S.targets = me.targets; S.household = me.household; S.pending = null; save();
   $('whoami').textContent = S.email + ' · ' + (me.devices || 1) + ' device' + ((me.devices || 1) === 1 ? '' : 's');
