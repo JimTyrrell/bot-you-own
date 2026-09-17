@@ -20,6 +20,8 @@ const DISPOSABLE = new Set(["mailinator.com", "guerrillamail.com", "guerrillamai
 
 const IP_LIMIT = 5, DEVICE_LIMIT = 3;
 
+import { tourProgressMap } from "./tour.js";
+
 export async function listSignups(env, { project = "*", limit = 500 } = {}) {
   if (!env.DB) return { enabled: false, reason: "Sign-ups need the D1 database (wrangler.jsonc → d1_databases).", rows: [], totals: {} };
   const where = project && project !== "*" ? `WHERE bot = ?` : ``;
@@ -30,6 +32,7 @@ export async function listSignups(env, { project = "*", limit = 500 } = {}) {
   const byIp = new Map(), byFp = new Map();
   for (const r of (await env.DB.prepare(`SELECT ip_hash, COUNT(DISTINCT email) n FROM id_users WHERE created_at >= ? AND ip_hash IS NOT NULL GROUP BY ip_hash`).bind(since).all()).results || []) byIp.set(r.ip_hash, r.n);
   for (const r of (await env.DB.prepare(`SELECT fp_hash, COUNT(DISTINCT email) n FROM id_users WHERE created_at >= ? AND fp_hash IS NOT NULL AND fp_hash != '' GROUP BY fp_hash`).bind(since).all()).results || []) byFp.set(r.fp_hash, r.n);
+  const tour = await tourProgressMap(env);
   const out = rows.map((r) => {
     const domain = String(r.email || "").split("@")[1] || "";
     const marks = [];
@@ -37,7 +40,7 @@ export async function listSignups(env, { project = "*", limit = 500 } = {}) {
     if (r.fp_hash && (byFp.get(r.fp_hash) || 0) >= DEVICE_LIMIT) marks.push("many-from-device");
     if (DISPOSABLE.has(domain)) marks.push("throwaway");
     if (!r.marketing && !r.sms) marks.push("no-consent");
-    return { ...r, marketing: Boolean(r.marketing), sms: Boolean(r.sms), domain, marks, sameIp24h: r.ip_hash ? byIp.get(r.ip_hash) || 0 : 0, sameDevice24h: r.fp_hash ? byFp.get(r.fp_hash) || 0 : 0 };
+    return { ...r, marketing: Boolean(r.marketing), sms: Boolean(r.sms), domain, marks, tour: tour[r.id] || null, sameIp24h: r.ip_hash ? byIp.get(r.ip_hash) || 0 : 0, sameDevice24h: r.fp_hash ? byFp.get(r.fp_hash) || 0 : 0 };
   });
   const totals = { all: out.length, marketing: out.filter((r) => r.marketing).length, sms: out.filter((r) => r.sms).length, withPhone: out.filter((r) => r.phone).length, flagged: out.filter((r) => r.marks.some((m) => m !== "no-consent")).length };
   return { enabled: true, rows: out, totals };

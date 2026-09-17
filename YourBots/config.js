@@ -19,13 +19,20 @@ export const CONFIG = {
   // show:false, or point it wherever your own workshop lives.
   createYourOwn: { show: true, text: "Create your own — free @ Sovereign Operator", url: "https://www.skool.com/sovereign-operator/about" },
 
+  // ---- 1b. THE COMMUNITY ---------------------------------------------------------
+  // Where the tour sends people at the end, and where "deploy your own" points them
+  // when they aren't on the list yet. Mine out of the box; make it yours. Used by
+  // the tour strip above the chat (YourBots/tour) and appended as the last "next
+  // step" of any bot whose project.json says "communityStep": true.
+  community: { show: true, name: "Sovereign Operator", url: "https://www.skool.com/sovereign-operator/about", pitch: "The workshop, the help, and the people doing this. Free to join." },
+
   // ---- 2. WHICH PROJECT OPENS FIRST ------------------------------------------
   // Every folder in YourBots/ that is listed in YourBots/index.js is available in
   // the sidebar. This one is selected when someone opens the page.
   // Ship ONE project to customers. The samples exist so you can test the machine
   // before you feed it your own material — delete them from YourBots/index.js
   // when you go live (see YourBots/README.md).
-  defaultProject: "example-co",
+  defaultProject: "tour",
 
   // Hide the sidebar and show only the default project (for a customer-facing
   // deploy). The embed widget always behaves this way regardless.

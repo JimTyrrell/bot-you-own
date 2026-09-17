@@ -73,6 +73,8 @@ function normaliseChat(p) {
     bookingUrl: String(p.bookingUrl || ""), bookingFitRules: String(p.bookingFitRules || "").slice(0, 2000),
     booking: normaliseBooking(p.booking),                       // { provider, eventTypeId, timezone, durationNote } — Engine/worker/booking.js
     nextSteps: (Array.isArray(p.nextSteps) ? p.nextSteps : []).slice(0, 10),
+    communityStep: Boolean(p.communityStep),                    // append config.community as the last next step (Engine/worker/modes.js)
+    tour: p.tour && Array.isArray(p.tour.stops) ? { stops: p.tour.stops.map((x) => String(x).slice(0, 20)).filter(Boolean).slice(0, 8) } : null,   // this bot is the guide (Engine/worker/tour.js)
     website: normaliseWebsite(p.website),                       // one URL, and glob patterns for which pages to keep / skip
     instructions: clean(p.instructions).slice(0, 20000),
     files: Object.fromEntries(Object.entries(p.files || {}).filter(([n]) => /^[\w. -]{1,80}\.(md|txt|csv)$/i.test(n)).map(([n, t]) => [n, clean(t).slice(0, 200000)]).slice(0, 40)),
@@ -172,7 +174,7 @@ export async function resolveList(env) {
 }
 // What a bot shows to the page. `access` is what the bot SAYS ("" = default); the effective mode is per request. Never the secret's name.
 export function pickPublic(p) {
-  return { kind: cleanKind(p.kind), name: p.name, tagline: p.tagline, greeting: p.greeting, starters: p.starters, mode: p.mode, grounding: p.grounding, thinkingWords: (p.thinkingWords || []).length ? p.thinkingWords : undefined, order: p.order, access: cleanMode(p.access), listed: p.listed !== false };
+  return { kind: cleanKind(p.kind), name: p.name, tagline: p.tagline, greeting: p.greeting, starters: p.starters, mode: p.mode, grounding: p.grounding, thinkingWords: (p.thinkingWords || []).length ? p.thinkingWords : undefined, order: p.order, access: cleanMode(p.access), listed: p.listed !== false, ...(p.tour ? { tour: p.tour } : {}) };
 }
 // Where a bot lives on the page: chat bots on the chat page, apps at /apps/<id>.
 export function hrefFor(p) { return cleanKind(p.kind) === "chat" ? `/?project=${encodeURIComponent(p.id)}` : `/apps/${encodeURIComponent(p.id)}`; }

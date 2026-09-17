@@ -793,3 +793,44 @@ separately. ⬇ CSV gives you the whole table.
 
 **Locking it down:** Settings → Floor → `key`. Every bot then needs the
 passphrase, whatever else says. One click, no deploy.
+
+## The tour and the community
+
+Out of the box the default bot is **Start here** (`YourBots/tour`), a concierge
+that walks a visitor through five stops, and a strip above the chat that ticks
+them off by what the person actually does:
+
+| Stop | Ticked when |
+|---|---|
+| Try a bot | they send a message to any bot other than the guide |
+| Break it | a reply carries a firewall chip (blocked, withheld, link removed, contact added) |
+| See the code | they open the repo from the strip |
+| Make your own | they click Deploy or Import from the strip |
+| Join | they click the community link |
+
+Progress lives on the browser and, once they've signed up, on their row on the
+server, so **Under the hood → Sign-ups** shows how far each person got. That
+column is the funnel.
+
+**Make it yours.** Three places:
+
+1. `YourBots/config.js → community` — name, URL, pitch. Used by the strip, the
+   "make your own" panel, and appended as the last next step of any bot whose
+   `project.json` has `"communityStep": true`. One line and every guide follows.
+2. `YourBots/tour/instructions.md` and `knowledge/tour.md` — the guide's words.
+   They name the community and the sample bots; change them to yours.
+3. `YourBots/tour/project.json → tour.stops` — which stops, in what order, from
+   `try`, `break`, `hood`, `make`, `join`. Drop one to hide it. Delete the
+   `tour` block and the strip disappears altogether. Set another bot as
+   `defaultProject` in config.js to skip the tour.
+
+**Deploy your own is gated.** The Deploy button in the strip only appears for a
+visitor whose email is on the allowlist (the guide bot's list, or the list for
+every bot: Settings → Allowlist). Everyone else sees the community pitch instead,
+and can still read the licensed prompts. Fill the list from your community's
+member export. The guide bot has `identity.graceMinutes: 0`, so a typed email
+carries nothing over from another device.
+
+**One sign-up, every bot.** A browser that signed up on any bot of this
+deployment is let into the others in email mode without the form again; the
+sign-up record travels with it. Allow-mode bots still check their list.

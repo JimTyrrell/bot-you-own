@@ -75,6 +75,7 @@ export function listProjects() {
   return Object.entries(PROJECTS).map(([id, p]) => ({
     id, kind: typeof p.kind === "string" ? p.kind : "chat", order: Number(p.order ?? 100), name: p.name, tagline: p.tagline || "", greeting: p.greeting || "", starters: p.starters, mode: p.mode, grounding: p.grounding,
     thinkingWords: Array.isArray(p.thinkingWords) && p.thinkingWords.length ? p.thinkingWords : undefined,
+    tour: p.tour && Array.isArray(p.tour.stops) ? { stops: p.tour.stops.map(String) } : undefined,   // this bot is the guide (Engine/worker/tour.js)
     // who can use it (Engine/worker/access.js): what the bot says, and whether it's in the sidebar. Never accessKey.
     access: typeof p.access === "string" ? p.access : "", listed: p.listed !== false,
   }));

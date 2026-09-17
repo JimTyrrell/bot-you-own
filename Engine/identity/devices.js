@@ -73,6 +73,22 @@ export async function deviceHash(request) {
   return DEVICE_KEY_RE.test(k) ? sha256hex(k) : null;
 }
 
+// The same browser on ANY bot of this deployment: one sign-up covers every bot.
+export async function userForDeviceAnyBot(env, keyHash) {
+  if (!keyHash) return null;
+  return (await env.DB.prepare(`SELECT u.* FROM id_devices d JOIN id_users u ON u.id = d.user_id AND u.bot = d.bot WHERE d.key_hash = ? ORDER BY u.created_at LIMIT 1`).bind(keyHash).first()) || null;
+}
+// A browser already signed up on another bot joins this one silently: same email, same
+// device, and the sign-up record (name, number, what they ticked, the hashes) comes along.
+export async function adoptDevice(env, bot, keyHash, graceMinutes = DEFAULT_GRACE_MINUTES) {
+  const other = await userForDeviceAnyBot(env, keyHash);
+  if (!other || other.bot === bot) return null;
+  const r = await join(env, bot, { email: other.email, keyHash, graceMinutes: 0 });
+  if (!r.linked) return null;                          // that email is already someone else's on this bot: leave it to the code screen
+  if (r.fresh) { try { await recordSignup(env, bot, r.user.id, { ...other, consented_at: other.consented_at, source: other.source }); } catch {} }
+  console.log(JSON.stringify({ event: "identity-adopt", from: other.bot, to: bot }));
+  return userById(env, bot, r.user.id);
+}
 export async function userForDevice(env, bot, keyHash) {
   if (!keyHash) return null;
   const r = await env.DB.prepare(`SELECT u.* FROM id_devices d JOIN id_users u ON u.id = d.user_id WHERE d.key_hash = ? AND d.bot = ?`).bind(keyHash, bot).first();

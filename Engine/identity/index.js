@@ -27,7 +27,7 @@
 //  Never an email is sent. Nothing here can be "reset by email".
 // ============================================================================
 
-import { deviceHash, userForDevice, userById, userByEmail, pendingFor, bindDevice, cleanEmail, ensureIdentitySchema, nowIso, deviceCount, join as joinDevice, linkByCode, touch, cleanGrace, DEFAULT_GRACE_MINUTES, recordSignup, cleanPhone, pepperOf } from "./devices.js";
+import { deviceHash, userForDevice, userById, userByEmail, pendingFor, bindDevice, cleanEmail, ensureIdentitySchema, nowIso, deviceCount, join as joinDevice, linkByCode, touch, cleanGrace, DEFAULT_GRACE_MINUTES, recordSignup, cleanPhone, pepperOf, adoptDevice } from "./devices.js";
 import { SIGNUP_BUILT_IN } from "../worker/settings.js";
 
 // A short keyed hash: sixteen hex characters of SHA-256 over the pepper and the value.
@@ -72,7 +72,9 @@ const json = (data, status = 200) => new Response(JSON.stringify(data), { status
 export async function identify(request, env, bot) {
   await ensureIdentitySchema(env);
   const keyHash = await deviceHash(request);
-  const user = keyHash ? await userForDevice(env, bot.id, keyHash) : null;
+  // Known here? If not, known on another bot of this deployment? One sign-up, every bot.
+  let user = keyHash ? await userForDevice(env, bot.id, keyHash) : null;
+  if (!user && keyHash) { try { user = await adoptDevice(env, bot.id, keyHash); } catch (err) { console.warn("adopt failed", err?.message || err); } }
   if (user) touch(env, user);
   const pending = user ? null : await pendingFor(env, bot.id, keyHash);
   return { keyHash, user, pending };
@@ -116,7 +118,8 @@ export async function handleIdentity(request, env, url, { bot, allowed = async (
   const path = url.pathname.slice("/api/id/".length);
   const methods = signInMethods(bot, env);
   const keyHash = await deviceHash(request);
-  const me = keyHash ? await userForDevice(env, bot.id, keyHash) : null;
+  let me = keyHash ? await userForDevice(env, bot.id, keyHash) : null;
+  if (!me && keyHash) { try { me = await adoptDevice(env, bot.id, keyHash); } catch {} }
 
   if (path === "methods") {
     let totpSet = false, passkeys = 0;

@@ -2,6 +2,7 @@ import { CONFIG } from "../../YourBots/config.js";
 import { normaliseProject, normaliseWebsite, savedProjects, saveProject, deleteSavedProject, inFolder, resolveProject, resolveList, pickPublic, hrefFor, exportFiles, KINDS, KIND_LABELS, cleanKind } from "./projects.js";
 import { getSettings, saveSettings, settingsFileContent, cleanBadge, cleanSignup, publicSignup, SETTINGS_FILE_VIEW as SETTINGS_FILE } from "./settings.js";
 import { listSignups, signupsCsv } from "./signups.js";
+import { tourState } from "./tour.js";
 import { handleIdentity, identify, linkByCode, signInMethods, adminNeedsCode, adminCodeOk, graceMinutesFor } from "../identity/index.js";
 import { ensureIdentitySchema, userByEmail as idUserByEmail } from "../identity/devices.js";
 import { listThreads, putThread, renameThread, deleteThread, usersWithHistory, ensureChatSchema } from "./chats.js";
@@ -143,6 +144,16 @@ export default {
       const bot = await resolveProject(env, bid);
       if (!bid || bot.id !== bid) return json({ error: "which bot? send { bot }" }, 400);
       return handleIdentity(request, env, url, { bot, allowed, unlockAllowed, graceMinutes: graceMinutesFor(bot, settings.identity?.graceMinutes), signup: settings.signup });
+    }
+
+    // The tour strip: where this visitor is, and whether deploy is open to them (Engine/worker/tour.js).
+    if (url.pathname === "/api/tour") {
+      const bid = String(url.searchParams.get("bot") || (request.method === "POST" ? (await request.clone().json().catch(() => ({})))?.bot : "") || "").toLowerCase();
+      const guide = await resolveProject(env, bid);
+      if (!bid || guide.id !== bid || !guide.tour) return json({ error: "which guide? send { bot }" }, 400);
+      let stop = "";
+      if (request.method === "POST") { if (!(await allowed(env, request))) return json({ error: "rate-limited" }, 429); stop = String((await request.clone().json().catch(() => ({})))?.stop || "").slice(0, 20); }
+      return json(await tourState(env, request, guide, { stop }));
     }
 
     if (url.pathname.startsWith("/api/admin/") || url.pathname.startsWith("/engine/")) {
@@ -371,6 +382,7 @@ export default {
         siteName: CONFIG.siteName,
         createYourOwn: settings.createYourOwn.show ? { text: settings.createYourOwn.text, url: settings.createYourOwn.url } : null,
         signup: publicSignup(settings.signup),
+        community: CONFIG.community && CONFIG.community.show !== false && CONFIG.community.url ? { name: CONFIG.community.name, url: CONFIG.community.url, pitch: CONFIG.community.pitch } : null,
         accent: CONFIG.accent,
         thinkingWords: Array.isArray(CONFIG.thinkingWords) ? CONFIG.thinkingWords : ["Thinking"],
         model: CONFIG.model,

@@ -12,6 +12,7 @@
 // ============================================================================
 
 import { JOB_FILES } from "./jobs.generated.js";
+import { CONFIG } from "../../YourBots/config.js";
 
 const BLURBS = {
   assistant: "The ChatGPT-style clone. Helps with anything; uses the files first when they apply.",
@@ -47,8 +48,13 @@ export function modeBlock(project, { withExtras = true, bookingLive = false } = 
     else if (project.bookingUrl) extras.push(`The booking link: ${project.bookingUrl}`);
     if (project.booking?.durationNote) extras.push(`The call is ${project.booking.durationNote}.`);
   }
-  if (project.mode === "concierge" && project.nextSteps?.length) {
-    extras.push(`What you may point people at:\n` + project.nextSteps.map((s) => `- ${s.name} — for ${s.who}. ${s.link || "(no link)"}`).join("\n"));
+  if (project.mode === "concierge") {
+    // The community (YourBots/config.js → community) rides along as the last step of a
+    // bot that asks for it, so an attendee changes ONE line and every guide follows.
+    const steps = [...(project.nextSteps || [])];
+    const c = CONFIG.community;
+    if (project.communityStep && c && c.show !== false && c.url && !steps.some((s) => s.link === c.url)) steps.push({ name: `Join ${c.name || "the community"}`, who: c.pitch || "anyone who wants help and the people doing this", link: c.url });
+    if (steps.length) extras.push(`What you may point people at:\n` + steps.map((s) => `- ${s.name} — for ${s.who}. ${s.link || "(no link)"}`).join("\n"));
   }
   return `${mode.role}\n\nWhat a good answer looks like:\n${mode.shape}${extras.length ? "\n\n" + extras.join("\n\n") : ""}`;
 }
