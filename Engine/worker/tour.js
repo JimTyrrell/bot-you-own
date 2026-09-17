@@ -103,6 +103,7 @@ export async function tourState(env, request, guide, { stop = "", code = "" } = 
     else { const a = await isAllowed(env, guide.id, user.email); const b = a.ok ? a : await isAllowed(env, "*", user.email); deploy.allowed = Boolean(b.ok); }
     if (!deploy.allowed) deploy.why = "Deploying your own opens for community members. Got a code? Enter it here.";
   } else deploy.why = "Sign up first, then deploying opens for community members.";
+  if (!deploy.allowed) deploy.url = "";                 // the link only leaves the server for someone who may use it
   const { unlocked, ...stopsDone } = done;
   return { stops, done: stopsDone, signedUp: Boolean(user), deploy, redeemed, community: CONFIG.community?.show ? { name: CONFIG.community.name, url: CONFIG.community.url, pitch: CONFIG.community.pitch } : null };
 }

@@ -130,7 +130,7 @@ export async function handleIdentity(request, env, url, { bot, allowed = async (
     return json({ bot: bot.id, ...methods, providers: methods.providers.map((p) => p.provider), me: me ? { totp: totpSet, passkeys, devices: await deviceCount(env, me.id) } : null });
   }
   if (path === "me") {
-    if (me) return json({ linked: true, email: me.email });
+    if (me) return json({ linked: true, email: me.email, name: me.name || "" });
     const pending = keyHash ? await pendingFor(env, bot.id, keyHash) : null;
     return json({ linked: false, pending: pending ? { code: pending.code, email: pending.email } : null });
   }
@@ -192,7 +192,7 @@ export async function handleIdentity(request, env, url, { bot, allowed = async (
         console.log(JSON.stringify({ event: "signup", bot: bot.id, marketing: rec.marketing, sms: rec.sms, phone: Boolean(rec.phone), ip_hash: rec.ip_hash, fp_hash: rec.fp_hash }));
         await signupWebhook(signup.webhook, { event: "signup", bot: { id: bot.id, name: bot.name }, when: now, email, name: rec.name, phone: rec.phone, marketing: rec.marketing, sms: rec.sms, consent_text: rec.consent_text, source: rec.source, ip_hash: rec.ip_hash, fp_hash: rec.fp_hash, country: request.headers.get("cf-ipcountry") || "" });
       }
-      if (r.linked) return json({ ok: true, linked: true, email: r.user.email, fresh: Boolean(r.fresh), ...(r.grace ? { grace: true } : {}) });
+      if (r.linked) return json({ ok: true, linked: true, email: r.user.email, name: (r.fresh ? gate.name : r.user.name) || "", fresh: Boolean(r.fresh), ...(r.grace ? { grace: true } : {}) });
       return json({ ok: true, linked: false, code: r.code, email: r.email, reason: "This email is already in use on another device. The owner can link this one with the code." });
     }
 

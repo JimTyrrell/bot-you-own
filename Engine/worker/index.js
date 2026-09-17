@@ -367,7 +367,7 @@ export default {
         if (!env.DB) identity = { linked: false, pending: null, reason: "Email mode needs the D1 database (wrangler.jsonc → d1_databases)." };
         else try {
           const who = await identify(request, env, { ...current, id: curId });
-          identity = who.user ? { linked: true, email: who.user.email } : { linked: false, pending: who.pending ? { code: who.pending.code, email: who.pending.email } : null };
+          identity = who.user ? { linked: true, email: who.user.email, name: who.user.name || "" } : { linked: false, pending: who.pending ? { code: who.pending.code, email: who.pending.email } : null };
           // allow mode: say now whether they're on the list, so the page shows the right screen before the first message.
           if (who.user && view.list) { const r = await isAllowed(env, curId, who.user.email); identity.allowed = r.ok; if (!r.ok) identity.reason = r.reason; }
           // Their own window, in their own words: "your access ends in 5 days".
