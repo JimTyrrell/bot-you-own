@@ -1,6 +1,8 @@
 import { CONFIG } from "../../YourBots/config.js";
 import { normaliseProject, normaliseWebsite, savedProjects, saveProject, deleteSavedProject, inFolder, resolveProject, resolveList, pickPublic, hrefFor, exportFiles, KINDS, KIND_LABELS, cleanKind } from "./projects.js";
-import { getSettings, saveSettings, settingsFileContent, cleanBadge, cleanSignup, publicSignup, SETTINGS_FILE_VIEW as SETTINGS_FILE } from "./settings.js";
+import { getSettings, saveSettings, settingsFileContent, cleanBadge, cleanSignup, publicSignup, cleanLinks, SETTINGS_FILE_VIEW as SETTINGS_FILE } from "./settings.js";
+// The GitHub repo this deploys from: the GITHUB_REPO secret first, config.js second (blank in the template on purpose).
+const repoOf = (env) => String(env?.GITHUB_REPO || CONFIG.github?.repo || "").trim();
 import { listSignups, signupsCsv } from "./signups.js";
 import { tourState, listCodes, codeUses, createCode, disableCode } from "./tour.js";
 import { handleIdentity, identify, linkByCode, signInMethods, adminNeedsCode, adminCodeOk, graceMinutesFor } from "../identity/index.js";
@@ -153,7 +155,7 @@ export default {
       if (!bid || guide.id !== bid || !guide.tour) return json({ error: "which guide? send { bot }" }, 400);
       let stop = "", code = "";
       if (request.method === "POST") { if (!(await allowed(env, request))) return json({ error: "rate-limited" }, 429); const b = (await request.clone().json().catch(() => ({}))) || {}; stop = String(b.stop || "").slice(0, 20); code = String(b.code || "").slice(0, 20); }
-      return json(await tourState(env, request, guide, { stop, code }));
+      return json(await tourState(env, request, guide, { stop, code, links: settings.links }));
     }
 
     if (url.pathname.startsWith("/api/admin/") || url.pathname.startsWith("/engine/")) {
@@ -304,7 +306,8 @@ export default {
         const exp = cleanExpiryConfig(b?.expiry);
         if (b?.expiry && !exp) return json({ error: `expiry.onLapse must be one of: ${LAPSE_MODES.join(", ")}, and the day counts must be numbers` }, 400);
         const su = b?.signup ? cleanSignup(b.signup, settings.signup) : null;
-        await saveSettings(env, { access: next, createYourOwn: badge, identity: ident, expiry: exp, signup: su });
+        const lk = b?.links ? cleanLinks(b.links) : null;
+        await saveSettings(env, { access: next, createYourOwn: badge, identity: ident, expiry: exp, signup: su, links: lk });
         await logAdminEvent(env, request, "settings-save", "access", `default ${settings.default} → ${next.default} · floor ${settings.floor} → ${next.floor}${badge ? ` · badge ${badge.show ? `"${badge.text}"` : "hidden"}` : ""}${ident ? ` · return window ${settings.identity?.graceMinutes} → ${Math.round(Number(ident.graceMinutes))} min` : ""}${exp ? ` · when access lapses ${settings.expiry?.onLapse} → ${exp.onLapse ?? settings.expiry?.onLapse}${exp.graceDays !== undefined ? `, grace ${exp.graceDays}d` : ""}` : ""}`);
         return json(await settingsView(env, await getSettings(env)));
       }
@@ -401,6 +404,7 @@ export default {
         createYourOwn: settings.createYourOwn.show ? { text: settings.createYourOwn.text, url: settings.createYourOwn.url } : null,
         signup: publicSignup(settings.signup),
         community: CONFIG.community && CONFIG.community.show !== false && CONFIG.community.url ? { name: CONFIG.community.name, url: CONFIG.community.url, pitch: CONFIG.community.pitch } : null,
+        ...(isAdmin ? { links: settings.links } : {}),           // the owner's page may show them; a visitor asks /api/tour
         accent: CONFIG.accent,
         thinkingWords: Array.isArray(CONFIG.thinkingWords) ? CONFIG.thinkingWords : ["Thinking"],
         model: CONFIG.model,
@@ -1392,15 +1396,15 @@ async function settingsView(env, settings) {
     sharedKey: Boolean(env.ACCESS_PASSPHRASE),
     adminTokenVersion: String(env.ADMIN_TOKEN_VERSION || "1"),
     canSave: Boolean(env.DB),
-    github: { repo: CONFIG.github?.repo || "", branch: CONFIG.github?.branch || "main", ready: Boolean(CONFIG.github?.repo && env.GITHUB_TOKEN) },
+    github: { repo: repoOf(env), branch: CONFIG.github?.branch || "main", ready: Boolean(repoOf(env) && env.GITHUB_TOKEN), source: env.GITHUB_REPO ? "GITHUB_REPO secret" : CONFIG.github?.repo ? "YourBots/config.js" : "unset" },
     bots,
     note: "A bot's effective mode is the stricter of what it says (or the default) and the floor. The floor is the panic switch: set it to key and every bot needs the passphrase, whatever its file says. Save is live at once; Commit to GitHub writes YourBots/settings.json so the repo carries it.",
   };
 }
 // Settings → Commit to GitHub: one file, YourBots/settings.json, via the Contents API.
 async function syncSettingsToGitHub(env, settings) {
-  const repo = CONFIG.github?.repo, branch = CONFIG.github?.branch || "main";
-  if (!repo) return { error: "YourBots/config.js → github.repo is empty" };
+  const repo = repoOf(env), branch = CONFIG.github?.branch || "main";
+  if (!repo) return { error: "No repo: set the GITHUB_REPO secret (or YourBots/config.js → github.repo)" };
   if (!env.GITHUB_TOKEN) return { error: "GITHUB_TOKEN secret is not set (fine-grained token, Contents: read & write, only this repo)" };
   const path = "YourBots/settings.json";
   const content = settingsFileContent(settings);
@@ -1473,8 +1477,8 @@ async function auditView(env, q) {
 //     GITHUB_TOKEN secret (fine-grained, Contents read/write, this repo only).
 // exportFiles: Engine/worker/projects.js (project.json for every kind; the chat files for chat bots).
 async function syncToGitHub(env, id) {
-  const repo = CONFIG.github?.repo, branch = CONFIG.github?.branch || "main";
-  if (!repo) return { error: "YourBots/config.js → github.repo is empty" };
+  const repo = repoOf(env), branch = CONFIG.github?.branch || "main";
+  if (!repo) return { error: "No repo: set the GITHUB_REPO secret (or YourBots/config.js → github.repo)" };
   if (!env.GITHUB_TOKEN) return { error: "GITHUB_TOKEN secret is not set (fine-grained token, Contents: read & write, only this repo)" };
   const p = await resolveProject(env, id);
   if (!p || p.id !== id) return { error: "unknown bot" };

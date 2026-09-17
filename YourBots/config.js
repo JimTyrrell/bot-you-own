@@ -115,7 +115,7 @@ export const CONFIG = {
     askPhone: "required",          // "required" | "optional" | "off"   — the texting number
     marketing: { show: true, required: false, checked: false, text: "Email me the newsletter, workshop dates and the occasional offer. Unsubscribe any time." },
     sms: { show: true, required: false, checked: false, text: "Text me about this. Message rates may apply; reply STOP to end." },
-    privacyLine: "We keep your email, your number if you give it, and a hashed record of your device and connection to spot abuse. Nothing is sold or shared.",
+    privacyLine: "We keep your email, your number if you give it, and a hashed record of your device and connection to spot abuse. Shared only with the tools we use to email or text you. Delete it any time.",   // the page adds Privacy · Terms links after it
     webhook: "",                   // POST every sign-up here (Zapier, Make, your CRM). Empty = off.
   },
 
@@ -233,6 +233,7 @@ export const CONFIG = {
     max: 1,                      // files per conversation
     maxBytes: 4 * 1024 * 1024,   // 4 MB, Cloudflare's converter limit
     maxChars: 20000,             // the text is cut here (about 8 pages); the bot is told it was cut
+    retentionDays: 30,           // an attached file's text is dropped from server-side chat copies after this many days
   },
 
   // ---- 6a-i. VOICE IN AND OUT: talk to it, and hear it back --------------------
@@ -290,7 +291,17 @@ export const CONFIG = {
   // token with Contents: read & write on ONLY this repo), the Configure screen can
   // write a bot's folder straight into the repo. If the repo is connected to
   // Cloudflare Workers Builds, that commit redeploys the bot: the round trip.
-  github: { repo: "JimTyrrell/bot-you-own", branch: "main" },
+  // Left EMPTY on purpose: the repo name is not in this file or in the page. Set the
+  // GITHUB_REPO secret instead (printf 'you/your-repo' | npx wrangler secret put GITHUB_REPO).
+  github: { repo: "", branch: "main" },
+
+  // ---- 6d. LINKS THE APP HANDS OUT, KEPT OUT OF THE REPO ------------------------
+  // The code, the owner walkthrough and the prompt library. Not here, not in the page:
+  // set them live in Under the hood → Settings → Links. The page asks the Worker for
+  // them (/api/tour) and gets the code and prompts once someone has signed up, the
+  // walkthrough and the deploy button only if they may deploy. A grep of the app
+  // finds nothing; a bot reading the page finds nothing.
+  links: { code: "", checklist: "", prompts: "" },
 
   // ---- 6c. THE FOOD LOG: /food — snap a plate, get the numbers ----------------
   // A photo food log a coach deploys for their clients. Not a chat bot: a page

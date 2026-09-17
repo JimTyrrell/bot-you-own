@@ -76,9 +76,13 @@ async function redeemCode(env, request, guide, user, raw) {
   console.log(JSON.stringify({ event: "deploy-code-used", code, issuedTo: row.issued_to, bot: guide.id }));
   return { ok: true, code, issuedTo: row.issued_to };
 }
-export const deployUrl = () => (CONFIG.github?.repo ? `https://deploy.workers.cloudflare.com/?url=https://github.com/${CONFIG.github.repo}` : "");
+// The deploy button needs the public repo: from the links row (Settings) or the GITHUB_REPO secret. Never from a file in the repo.
+export const deployUrl = (env, links) => {
+  const code = links?.code || (env?.GITHUB_REPO || CONFIG.github?.repo ? `https://github.com/${env?.GITHUB_REPO || CONFIG.github.repo}` : "");
+  return code ? `https://deploy.workers.cloudflare.com/?url=${code}` : "";
+};
 
-export async function tourState(env, request, guide, { stop = "", code = "" } = {}) {
+export async function tourState(env, request, guide, { stop = "", code = "", links = null } = {}) {
   const stops = Array.isArray(guide?.tour?.stops) ? guide.tour.stops : [];
   let done = {}, user = null, redeemed = null;
   if (env.DB) {
@@ -97,15 +101,17 @@ export async function tourState(env, request, guide, { stop = "", code = "" } = 
     } else if (code) redeemed = { ok: false, reason: "Sign up first, then enter the code." };
   }
   // Deploy: a redeemed code, or on the guide's list, or the list for every bot.
-  let deploy = { allowed: false, url: deployUrl(), why: "", code: done.unlocked?.code || null };
+  let deploy = { allowed: false, url: deployUrl(env, links), checklist: links?.checklist || "", why: "", code: done.unlocked?.code || null };
   if (user && env.DB) {
     if (done.unlocked) deploy.allowed = true;
     else { const a = await isAllowed(env, guide.id, user.email); const b = a.ok ? a : await isAllowed(env, "*", user.email); deploy.allowed = Boolean(b.ok); }
     if (!deploy.allowed) deploy.why = "Deploying your own opens for community members. Got a code? Enter it here.";
   } else deploy.why = "Sign up first, then deploying opens for community members.";
-  if (!deploy.allowed) deploy.url = "";                 // the link only leaves the server for someone who may use it
+  if (!deploy.allowed) { deploy.url = ""; deploy.checklist = ""; }   // these only leave the server for someone who may deploy
   const { unlocked, ...stopsDone } = done;
-  return { stops, done: stopsDone, signedUp: Boolean(user), deploy, redeemed, community: CONFIG.community?.show ? { name: CONFIG.community.name, url: CONFIG.community.url, pitch: CONFIG.community.pitch } : null };
+  // The code and the prompt library: for people who have signed up. Not in the page, not in the repo.
+  const out = user ? { code: links?.code || "", prompts: links?.prompts || "" } : null;
+  return { stops, done: stopsDone, signedUp: Boolean(user), deploy, redeemed, links: out, community: CONFIG.community?.show ? { name: CONFIG.community.name, url: CONFIG.community.url, pitch: CONFIG.community.pitch } : null };
 }
 
 // For the Sign-ups tab: how far each person got, keyed by user id. { id: { n, of } }

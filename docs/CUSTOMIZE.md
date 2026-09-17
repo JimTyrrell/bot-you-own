@@ -851,3 +851,33 @@ deployment at once: chats and their attached text, sign-up rows, devices,
 passkeys, authenticator, tour progress, lead summaries. Two taps, no dialog,
 immediate. The owner's audit log keeps its asked/answered rows (never files), and
 a redeemed deploy code keeps the code but loses the email.
+
+## Links the app hands out, kept out of the repo
+
+`YourBots/config.js → links` is blank on purpose and `github.repo` is too. Set
+them where a grep of the code and a bot reading the page find nothing:
+
+- **Under the hood → Settings → Links**: the code (the repo URL), the owner
+  walkthrough (a members-only post, or the checklist), the prompt library.
+  Stored in the database only; never written to `settings.json`.
+- **The `GITHUB_REPO` secret**: `printf 'you/your-repo' | npx wrangler secret put GITHUB_REPO`.
+  Used for the deploy button and for Commit to GitHub.
+
+The page asks the Worker (`/api/tour`). Someone who has signed up gets the code
+and the prompt library; someone who may deploy (allowlist or a redeemed code)
+also gets the walkthrough and the deploy button. Nobody else gets a URL at all.
+
+## Privacy and terms
+
+`/privacy` and `/terms` are plain-English pages (`Engine/public/privacy.html`,
+`terms.html`) linked from the sign-up gate. They fill in your site name and
+owner from `/api/config`. They are templates, not legal advice: put your
+governing law and contact in, and have someone qualified read them for your
+jurisdiction. The gate's privacy line (Settings → The sign-up gate) should match
+what they say.
+
+## Retention
+
+`config.js → attachments.retentionDays` (30): an attached file's text is dropped
+from server-side chat copies after that many days, on the hour, the next time
+anyone lists their chats. The chat itself stays until the person deletes it.

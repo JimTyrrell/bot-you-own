@@ -1,3 +1,4 @@
+import { CONFIG } from "../../YourBots/config.js";
 // ============================================================================
 //  CHAT HISTORY ON THE SERVER — so an identified visitor's conversations follow
 //  them to any computer (with the return window in Engine/identity/devices.js).
@@ -79,8 +80,23 @@ function cleanMeta(meta) {
 const parse = (s, dflt) => { try { return s ? JSON.parse(s) : dflt; } catch { return dflt; } };
 
 // Every thread for one person on one bot, messages included, newest first.
+// An attached file's text lives in a thread's meta. After attachments.retentionDays it is
+// dropped from the server copy (the chat itself stays). Runs at most once an hour per isolate,
+// on the way through a list — no cron to set up.
+let SWEPT_AT = 0;
+async function sweepAttachments(env) {
+  const days = Number(CONFIG.attachments?.retentionDays);
+  if (!(days > 0) || Date.now() - SWEPT_AT < 3600 * 1000) return;
+  SWEPT_AT = Date.now();
+  try {
+    const cutoff = new Date(Date.now() - days * 86400 * 1000).toISOString();
+    const r = await env.DB.prepare(`UPDATE chat_threads SET meta = json_remove(meta, '$.attachments') WHERE updated_at < ? AND meta LIKE '%"attachments"%'`).bind(cutoff).run();
+    if (r?.meta?.changes) console.log(JSON.stringify({ event: "attachments-swept", threads: r.meta.changes, olderThanDays: days }));
+  } catch (err) { console.warn("attachment sweep failed", err?.message || err); }
+}
 export async function listThreads(env, bot, userId) {
   await ensureChatSchema(env);
+  sweepAttachments(env);
   const threads = (await env.DB.prepare(`SELECT id, client_id, title, meta, created_at, updated_at FROM chat_threads WHERE bot = ? AND user_id = ? ORDER BY updated_at DESC LIMIT ?`).bind(bot, userId, MAX_THREADS).all()).results || [];
   if (!threads.length) return [];
   const ids = threads.map((t) => t.id);

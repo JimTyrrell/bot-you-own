@@ -25,7 +25,19 @@ import { accessSettings } from "./access.js";
 import { cleanGrace, DEFAULT_GRACE_MINUTES } from "../identity/devices.js";
 import { expirySettings, cleanExpiryConfig, EXPIRY_BUILT_IN } from "./expiry.js";
 
-const KEYS = ["access", "createYourOwn", "identity", "expiry", "signup"];
+const KEYS = ["access", "createYourOwn", "identity", "expiry", "signup", "links"];
+
+// ---- Links the app hands out but the repo never carries (config.js → links is blank on purpose).
+export function cleanLinks(l) {
+  if (!l || typeof l !== "object") return null;
+  const u = (v) => { v = String(v || "").trim().slice(0, 500); return /^https?:\/\//.test(v) ? v : ""; };
+  return { code: u(l.code), checklist: u(l.checklist), prompts: u(l.prompts) };
+}
+function mergeLinks(c, f, s) {
+  let cur = { code: "", checklist: "", prompts: "" }, source = "built-in";
+  for (const [layer, label] of [[c, "YourBots/config.js"], [f, "YourBots/settings.json"], [s, "saved (Settings screen)"]]) { const v = cleanLinks(layer); if (v && (v.code || v.checklist || v.prompts)) { cur = { code: v.code || cur.code, checklist: v.checklist || cur.checklist, prompts: v.prompts || cur.prompts }; source = label; } }
+  return { ...cur, source };
+}
 
 // ---- The sign-up gate: what "email" mode asks for and stores. Same merge order.
 export const SIGNUP_BUILT_IN = {
@@ -33,7 +45,7 @@ export const SIGNUP_BUILT_IN = {
   askName: "optional", askPhone: "off",
   marketing: { show: true, required: false, checked: false, text: "Email me news and the occasional offer. Unsubscribe any time." },
   sms: { show: false, required: false, checked: false, text: "Text me about this. Message rates may apply; reply STOP to end." },
-  privacyLine: "We keep your email and a hashed record of your device and connection to spot abuse. Nothing is sold or shared.",
+  privacyLine: "We keep your email and a hashed record of your device and connection to spot abuse. Shared only with the tools we use to email or text you. Delete it any time.",
   webhook: "",
 };
 const ASK = ["required", "optional", "off"];
@@ -82,7 +94,8 @@ export async function getSettings(env) {
   const identity = mergeIdentity(CONFIG.identity, SETTINGS_FILE?.identity, rows.identity);
   const expiry = expirySettings(CONFIG, SETTINGS_FILE, rows.expiry ? { expiry: rows.expiry } : null);
   const signup = mergeSignup(CONFIG.signup, SETTINGS_FILE?.signup, rows.signup);
-  return { ...access, createYourOwn: badge, identity, expiry, signup };
+  const links = mergeLinks(CONFIG.links, SETTINGS_FILE?.links, rows.links);
+  return { ...access, createYourOwn: badge, identity, expiry, signup, links };
 }
 // identity.graceMinutes: the return window, in minutes. 0 = off. Same three places, later wins.
 const graceOf = (i) => (i && typeof i === "object" && i.graceMinutes !== undefined && i.graceMinutes !== null && i.graceMinutes !== "" && Number.isFinite(Number(i.graceMinutes)) && Number(i.graceMinutes) >= 0 ? cleanGrace(i.graceMinutes) : null);
@@ -103,7 +116,7 @@ function mergeBadge(c, f, s) {
 }
 
 // The Settings screen's Save: one row per key, live within 10 s everywhere.
-export async function saveSettings(env, { access, createYourOwn, identity, expiry, signup } = {}) {
+export async function saveSettings(env, { access, createYourOwn, identity, expiry, signup, links } = {}) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT)`).run();
   const put = (key, obj) => env.DB.prepare(`INSERT INTO settings (key, json, updated_at, updated_by) VALUES (?, ?, ?, 'admin') ON CONFLICT(key) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at, updated_by = excluded.updated_by`).bind(key, JSON.stringify(obj), new Date().toISOString());
   const ops = [];
@@ -112,6 +125,7 @@ export async function saveSettings(env, { access, createYourOwn, identity, expir
   if (identity && graceOf(identity) !== null) ops.push(put("identity", { graceMinutes: graceOf(identity) }));
   if (expiry && cleanExpiryConfig(expiry)) ops.push(put("expiry", cleanExpiryConfig(expiry)));
   if (signup && cleanSignup(signup)) ops.push(put("signup", cleanSignup(signup)));
+  if (links && cleanLinks(links)) ops.push(put("links", cleanLinks(links)));
   if (ops.length) await env.DB.batch(ops);
   CACHE = { at: 0, rows: null };
 }

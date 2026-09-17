@@ -116,6 +116,22 @@ what to search for.
 
 ---
 
+## 1b. Three secrets before the gate goes public
+
+```bash
+# the pepper behind every hash (device keys, connection, browser): random, never printed
+printf "$(openssl rand -base64 32)" | npx wrangler secret put FOODLOG_PEPPER
+# the admin second factor: a base32 secret you add to your authenticator app first
+printf 'YOURBASE32SECRET' | npx wrangler secret put ADMIN_TOTP_SECRET
+# the repo the deploy button and Commit to GitHub use — not in any file
+printf 'you/your-repo' | npx wrangler secret put GITHUB_REPO
+```
+
+Check: Under the hood → Settings shows "Admin second factor: ON" and the repo
+source as "GITHUB_REPO secret".
+
+---
+
 ## 2. The GitHub token (Commit to GitHub from the Configure screen)
 
 Why: with this token, the Configure screen's **Commit to GitHub** button writes a

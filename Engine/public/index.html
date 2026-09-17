@@ -196,6 +196,7 @@
   .lockwrap .lockbox { display:flex; gap:10px; align-items:flex-start; font-size:13px; color:var(--text); cursor:pointer; line-height:1.4; }
   .lockwrap .lockbox input { margin:3px 0 0; width:16px; height:16px; flex:none; padding:0; }
   .lockwrap .lockprivacy { font-size:11.5px; color:var(--muted); line-height:1.4; }
+  .lockwrap .lockprivacy a { color:var(--text); text-decoration:underline; text-underline-offset:2px; }
   #signout { display:flex; align-items:center; gap:8px; }
   #signout span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .lockwrap input { padding:11px 12px; border:1px solid var(--edge); border-radius:10px; background:var(--bg); color:var(--text); font:inherit; }
@@ -550,7 +551,9 @@ function drawSignup(on) {
   $('lphone').hidden = !on || su.askPhone === 'off'; $('lphone').required = on && su.askPhone === 'required'; $('lphone').placeholder = 'Mobile number, for texts' + (su.askPhone === 'optional' ? ' (optional)' : '');
   $('lmarketingwrap').hidden = !on || !su.marketing.show; $('lmarketingtext').textContent = su.marketing.text + (su.marketing.required ? ' (required)' : ''); if (on && !$('lmarketing').dataset.touched) $('lmarketing').checked = !!su.marketing.checked;
   $('lsmswrap').hidden = !on || !su.sms.show || su.askPhone === 'off'; $('lsmstext').textContent = su.sms.text + (su.sms.required ? ' (required)' : ''); if (on && !$('lsms').dataset.touched) $('lsms').checked = !!su.sms.checked;
-  $('lprivacy').hidden = !on || !su.privacyLine; $('lprivacy').textContent = su.privacyLine;
+  $('lprivacy').hidden = !on; $('lprivacy').textContent = su.privacyLine || ''; $('lprivacy').appendChild(document.createTextNode(su.privacyLine ? ' ' : ''));
+  const pl = document.createElement('a'); pl.href = '/privacy'; pl.target = '_blank'; pl.rel = 'noopener'; pl.textContent = 'Privacy'; const tl = document.createElement('a'); tl.href = '/terms'; tl.target = '_blank'; tl.rel = 'noopener'; tl.textContent = 'Terms';
+  $('lprivacy').append(pl, document.createTextNode(' · '), tl);
 }
 document.addEventListener('DOMContentLoaded', () => { ['lmarketing', 'lsms'].forEach((id) => $(id).addEventListener('change', () => { $(id).dataset.touched = '1'; })); });
 const checked = {};                                   // bot id → its door was checked this page-load
@@ -1111,9 +1114,8 @@ const FLAG_LABELS = {
 };
 // Chips that are also a link. Owner to-dos point at the step-by-step in the
 // repo (public), and open in a new tab so the chat stays where it is.
-const FLAG_LINKS = {
-  'gateway-direct': 'https://github.com/JimTyrrell/bot-you-own/blob/main/docs/OWNER-CHECKLIST.md#1-the-ai-gateway-the-dollar-ceiling',
-};
+// The owner's walkthrough link comes from Settings → Links (admin only; never in this file).
+const FLAG_LINKS = { 'gateway-direct': () => (state.cfg?.links?.checklist ? state.cfg.links.checklist + '#1-the-ai-gateway-the-dollar-ceiling' : '') };
 // The small chips under an answer. Two kinds share the row: firewall flags
 // (what the engine did to this turn) and citations — the documents the answer
 // drew on, as "📄 name". Names only, never a link: the files are admin-only.
@@ -1124,7 +1126,7 @@ const VISITOR_FLAGS = /^(injection-blocked|link-stripped|leak-blocked|rate-limit
 function flagRow(flags, sources) {
   const row = document.createElement('div'); row.className = 'flags';
   (flags || []).filter((f) => ADMIN || VISITOR_FLAGS.test(f)).forEach((f) => {
-    const link = FLAG_LINKS[f];
+    const link = typeof FLAG_LINKS[f] === 'function' ? FLAG_LINKS[f]() : FLAG_LINKS[f];
     const c = document.createElement(link ? 'a' : 'span'); c.className = 'flag' + (/blocked|error/.test(f) ? ' hard' : '') + (link ? ' link' : '');
     if (link) { c.href = link; c.target = '_blank'; c.rel = 'noopener'; c.title = 'Opens the step-by-step in a new tab'; }
     c.textContent = FLAG_LABELS[f] || f; row.appendChild(c);
@@ -1146,7 +1148,7 @@ form.addEventListener('submit', (e) => { e.preventDefault(); if (state.busy) { s
 //  The guide is the bot whose project.json has "tour" (YourBots/tour). Progress lives on
 //  this browser and, once they've signed up, on the server (Engine/worker/tour.js), so the
 //  owner's Sign-ups tab shows how far each person got.
-const TOUR = { guide: null, stops: [], done: {}, deploy: null, community: null, signedUp: false };
+const TOUR = { guide: null, stops: [], done: {}, deploy: null, community: null, signedUp: false, links: null };
 const STOP_META = {
   try:   { label: 'Try a bot',       hint: 'Chat with one of the sample bots in the sidebar.' },
   break: { label: 'Break it',        hint: 'Tell a bot to ignore its instructions, ask for its rules, paste a link. Watch the chip under the answer.' },
@@ -1154,7 +1156,6 @@ const STOP_META = {
   make:  { label: 'Make your own',   hint: 'Deploy your own, or import a ready-made prompt.' },
   join:  { label: 'Join',            hint: 'The workshop, the help, and the people doing this.' },
 };
-const REPO = 'https://github.com/JimTyrrell/bot-you-own';
 const STOP_DONE = {
   try: 'You tried a bot. Next: try to break it.',
   break: 'That chip under the reply is the firewall showing its work. Next: see the code.',
@@ -1180,7 +1181,7 @@ async function initTour() {
   try {
     const r = await fetch('/api/tour?bot=' + encodeURIComponent(TOUR.guide.id), { headers: authHeaders(TOUR.guide.id) });
     const d = await r.json();
-    if (r.ok) { TOUR.deploy = d.deploy || null; TOUR.signedUp = !!d.signedUp; if (d.community) TOUR.community = d.community; Object.assign(TOUR.done, d.done || {}); tourSave(); renderTour(); }
+    if (r.ok) { TOUR.deploy = d.deploy || null; TOUR.links = d.links || null; TOUR.signedUp = !!d.signedUp; if (d.community) TOUR.community = d.community; Object.assign(TOUR.done, d.done || {}); tourSave(); renderTour(); }
   } catch {}
 }
 function tourSample() { return (state.projects || []).find((p) => p.id === 'tumblebrook-dental') || (state.projects || []).find((p) => p.kind === 'chat' && p.id !== TOUR.guide?.id && p.mode !== 'concierge') || null; }
@@ -1192,7 +1193,7 @@ async function markStop(stop) {
   else tourToast('✓ ' + STOP_META[stop].label + ' · ' + n + ' of ' + TOUR.stops.length, STOP_DONE[stop] || '');
   try {
     const r = await fetch('/api/tour', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(TOUR.guide.id) }, body: JSON.stringify({ bot: TOUR.guide.id, stop }) });
-    const d = await r.json(); if (r.ok) { TOUR.deploy = d.deploy || TOUR.deploy; TOUR.signedUp = !!d.signedUp; Object.assign(TOUR.done, d.done || {}); tourSave(); renderTour(); }
+    const d = await r.json(); if (r.ok) { TOUR.deploy = d.deploy || TOUR.deploy; TOUR.links = d.links || TOUR.links; TOUR.signedUp = !!d.signedUp; Object.assign(TOUR.done, d.done || {}); tourSave(); renderTour(); }
   } catch {}
 }
 function tourOnSend() { if (TOUR.guide && state.project && state.project.id !== TOUR.guide.id) markStop('try'); }
@@ -1236,14 +1237,14 @@ function tourGo(stop) {
   $('tourmake').hidden = true;
   if (stop === 'try') { const p = tourSample(); if (p) { selectProject(p); $('side').classList.remove('open'); input.focus(); } return; }
   if (stop === 'break') { const p = tourSample(); if (p) { selectProject(p); $('side').classList.remove('open'); } try { sessionStorage.removeItem('byo:breakbar'); } catch {} showBreakBar(true); input.focus(); return; }
-  if (stop === 'hood') { window.open(REPO, '_blank', 'noopener'); markStop('hood'); return; }
+  if (stop === 'hood') { if (!TOUR.links?.code) { tourToast('Sign up first', TOUR.signedUp ? 'The owner hasn\'t set the code link yet.' : 'The code opens once you\'ve signed up.'); return; } window.open(TOUR.links.code, '_blank', 'noopener'); markStop('hood'); return; }
   if (stop === 'join') { if (TOUR.community?.url) window.open(TOUR.community.url, '_blank', 'noopener'); markStop('join'); return; }
   if (stop === 'make') {
     const d = TOUR.deploy || {}; const c = TOUR.community; const box = $('tourmake'); box.innerHTML = '';
     const add = (html) => { const w = document.createElement('span'); w.innerHTML = html; while (w.firstChild) box.appendChild(w.firstChild); };
-    if (d.allowed && d.url) add('<a class="primary" href="' + esc(d.url) + '" target="_blank" rel="noopener" data-mk="deploy">🚀 Deploy your own</a><a href="' + esc(REPO + '/blob/main/docs/OWNER-CHECKLIST.md') + '" target="_blank" rel="noopener" data-mk="deploy">the owner checklist</a>');
+    if (d.allowed && d.url) add('<a class="primary" href="' + esc(d.url) + '" target="_blank" rel="noopener" data-mk="deploy">🚀 Deploy your own</a>' + (d.checklist ? '<a href="' + esc(d.checklist) + '" target="_blank" rel="noopener" data-mk="deploy">the owner walkthrough</a>' : ''));
     else add('<span class="why">' + esc(d.why || 'Deploying your own opens for community members.') + '</span>' + (c?.url ? '<a class="primary" href="' + esc(c.url) + '" target="_blank" rel="noopener" data-mk="join">Join ' + esc(c.name || 'the community') + '</a>' : '') + (TOUR.signedUp ? '<input id="tourcode" placeholder="Code, e.g. K7M4-P2QX" maxlength="9" style="font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--edge);border-radius:10px;background:var(--bg);color:var(--text);width:150px;text-transform:uppercase" /><button type="button" data-mk="code">Unlock</button>' : ''));
-    add('<a href="' + esc(REPO + '/blob/main/docs/FREE-PROMPTS.md') + '" target="_blank" rel="noopener" data-mk="import">📄 Import a ready-made prompt</a><button type="button" data-mk="close">Close</button>');
+    add((TOUR.links?.prompts ? '<a href="' + esc(TOUR.links.prompts) + '" target="_blank" rel="noopener" data-mk="import">📄 Import a ready-made prompt</a>' : '') + '<button type="button" data-mk="close">Close</button>');
     box.hidden = false;
     box.onclick = async (e) => {
       const t = e.target.closest('[data-mk]'); if (!t) return;
@@ -1844,6 +1845,8 @@ async function renderSettings() {
       + '<div class="caps" style="margin-top:8px"><label><input type="checkbox" id="su_s_show"' + (d.signup?.sms?.show ? ' checked' : '') + ' /> Text opt-in box (only with a number)</label> <label><input type="checkbox" id="su_s_req"' + (d.signup?.sms?.required ? ' checked' : '') + ' /> required</label> <label><input type="checkbox" id="su_s_chk"' + (d.signup?.sms?.checked ? ' checked' : '') + ' /> pre-ticked</label></div><input type="text" id="su_s_text" value="' + esc(d.signup?.sms?.text || '') + '" placeholder="The words next to the text box" style="margin-top:4px" />'
       + '<input type="text" id="su_privacy" value="' + esc(d.signup?.privacyLine || '') + '" placeholder="The privacy line under the form" style="margin-top:8px" /><input type="url" id="su_webhook" value="' + esc(d.signup?.webhook || '') + '" placeholder="Webhook: POST every sign-up here (Zapier, Make, your CRM) — empty = off" style="margin-top:6px" />'
       + '<p style="color:var(--muted);font-size:12.5px;margin:6px 0 0">Saved with the Save button above.</p>'
+      + '<h4>Links the app hands out — kept out of the repo</h4><p style="color:var(--muted);font-size:12.5px;margin:0 0 6px">Not in any file, not in the page. The Worker gives the code and the prompt library to people who have signed up, and the walkthrough only to people who may deploy. Now from: ' + esc(d.links?.source || 'built-in') + '. The deploy button itself uses the GITHUB_REPO secret (' + esc(d.github?.source || 'unset') + ').</p>'
+      + '<input type="url" id="lk_code" value="' + esc(d.links?.code || '') + '" placeholder="The code (the public repo URL)" /><input type="url" id="lk_checklist" value="' + esc(d.links?.checklist || '') + '" placeholder="The owner walkthrough (a members-only post, or the checklist)" style="margin-top:6px" /><input type="url" id="lk_prompts" value="' + esc(d.links?.prompts || '') + '" placeholder="The prompt library page" style="margin-top:6px" />'
       + '<h4>The allowlist — access mode "allow": in the list → able to do things</h4><div id="allowbox"><p class="thinking"><span>Reading the list</span></p></div>'
       + '<h4>When access runs out</h4><div id="expbox"><p class="thinking"><span>Reading the windows</span></p></div>'
       + '<h4>Access over time — one person\'s whole history</h4><div id="timelinebox"></div>'
@@ -1857,7 +1860,7 @@ async function renderSettings() {
     $('s_save').onclick = async () => {
       $('s_save').disabled = true; $('s_msg').textContent = 'Saving…';
       try {
-        const r2 = await fetch('/api/admin/settings', { method: 'PUT', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ access: { default: $('s_default').value, floor: $('s_floor').value }, createYourOwn: { show: $('s_badge_show').checked, text: $('s_badge_text').value, url: $('s_badge_url').value }, identity: { graceMinutes: Number($('s_grace').value) }, signup: { title: $('su_title').value, blurb: $('su_blurb').value, askName: $('su_name').value, askPhone: $('su_phone').value, marketing: { show: $('su_m_show').checked, required: $('su_m_req').checked, checked: $('su_m_chk').checked, text: $('su_m_text').value }, sms: { show: $('su_s_show').checked, required: $('su_s_req').checked, checked: $('su_s_chk').checked, text: $('su_s_text').value }, privacyLine: $('su_privacy').value, webhook: $('su_webhook').value } }) });
+        const r2 = await fetch('/api/admin/settings', { method: 'PUT', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ access: { default: $('s_default').value, floor: $('s_floor').value }, createYourOwn: { show: $('s_badge_show').checked, text: $('s_badge_text').value, url: $('s_badge_url').value }, identity: { graceMinutes: Number($('s_grace').value) }, signup: { title: $('su_title').value, blurb: $('su_blurb').value, askName: $('su_name').value, askPhone: $('su_phone').value, marketing: { show: $('su_m_show').checked, required: $('su_m_req').checked, checked: $('su_m_chk').checked, text: $('su_m_text').value }, sms: { show: $('su_s_show').checked, required: $('su_s_req').checked, checked: $('su_s_chk').checked, text: $('su_s_text').value }, privacyLine: $('su_privacy').value, webhook: $('su_webhook').value }, links: { code: $('lk_code').value, checklist: $('lk_checklist').value, prompts: $('lk_prompts').value } }) });
         const d2 = await r2.json(); if (!r2.ok) throw new Error(d2.error || r2.status);
         renderSettings();
       } catch (err) { $('s_msg').textContent = 'Not saved: ' + err.message; $('s_save').disabled = false; }

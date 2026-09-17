@@ -2,7 +2,7 @@
 
 ## What it is
 A ChatGPT-style assistant you own. Your prompt, your files, your rules, on your
-own Cloudflare account. It runs from public code (github.com/JimTyrrell/bot-you-own).
+own Cloudflare account. It runs from public code; the link is under 'See the code' in the strip above the chat.
 You edit one folder per bot: instructions.md (what it is and how it behaves),
 a knowledge folder (the files it answers from), and project.json (name, greeting,
 starters, who can use it). Commit, and it's live in about a minute.
@@ -32,7 +32,7 @@ That chip is the firewall showing its work. Every check is tagged with the OWASP
 LLM Top 10 risk it covers, in Engine/worker/firewall.js.
 
 ## How it's made (stop 3)
-Everything is in the public repo: the prompt pieces (YourBots/_prompt), each
+Everything is in the public repo (the 'See the code' stop above the chat): the prompt pieces (YourBots/_prompt), each
 sample bot's folder (YourBots/<name>), the firewall, the tests. The owner can
 open "Under the hood" on this site to see the exact prompt, files and rules a bot
 is using. Visitors see the code on GitHub.
