@@ -343,7 +343,7 @@ document.addEventListener('DOMContentLoaded', function () {
     <div class="foot" id="foot"></div>
     <div class="foot" id="trackfoot" hidden><a href="/food" style="color:var(--muted)">📷 Food log</a></div>
     <script>fetch("/api/food/config").then((r) => r.ok && r.json()).then((c) => { if (c && c.enabled) document.getElementById("trackfoot").hidden = false; }).catch(() => {});</script>
-    <div class="foot" id="signout" hidden><button class="iconbtn" id="signoutbtn">Sign out</button> <span id="whoami"></span></div>
+    <div class="foot" id="signout" hidden><button class="iconbtn" id="signoutbtn">Sign out</button> <button class="iconbtn" id="erasebtn" title="Delete every chat, every attached file, and your sign-up on every bot here. Immediate.">Delete my data</button> <span id="whoami"></span></div>
   </aside>
 
   <main>
@@ -622,6 +622,19 @@ function signOut() {
   $('hood').classList.remove('show'); location.href = location.pathname;
 }
 $('signoutbtn').onclick = signOut;
+// Delete my data: two taps, no dialog. Everything about this person on every bot, then signed out.
+$('erasebtn').onclick = async () => {
+  const b = $('erasebtn');
+  if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = 'Really delete everything? Tap again'; b.style.color = 'var(--danger, #b42318)'; setTimeout(() => { b.dataset.armed = ''; b.textContent = 'Delete my data'; b.style.color = ''; }, 6000); return; }
+  b.disabled = true; b.textContent = 'Deleting…';
+  try {
+    const pid = state.project?.id; const r = await fetch('/api/id/erase', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(pid) }, body: JSON.stringify({ bot: pid }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.reason || d.error || r.status);
+    try { localStorage.removeItem('byo:tour'); } catch {}
+    signOut();
+  } catch (err) { b.disabled = false; b.dataset.armed = ''; b.textContent = 'Delete my data'; b.style.color = ''; alert('Could not delete: ' + err.message); }
+};
 // The server said no. Which door, and for which bot, is in the answer.
 function lockedOut(d, pid) {
   pid = pid || state.project?.id || ''; const name = state.projects?.find((p) => p.id === pid)?.name || '';
@@ -1153,10 +1166,26 @@ function tourGo(stop) {
     const d = TOUR.deploy || {}; const c = TOUR.community; const box = $('tourmake'); box.innerHTML = '';
     const add = (html) => { const w = document.createElement('span'); w.innerHTML = html; while (w.firstChild) box.appendChild(w.firstChild); };
     if (d.allowed && d.url) add('<a class="primary" href="' + esc(d.url) + '" target="_blank" rel="noopener" data-mk="deploy">🚀 Deploy your own</a><a href="' + esc(REPO + '/blob/main/docs/OWNER-CHECKLIST.md') + '" target="_blank" rel="noopener" data-mk="deploy">the owner checklist</a>');
-    else add('<span class="why">' + esc(d.why || 'Deploying your own opens for community members.') + '</span>' + (c?.url ? '<a class="primary" href="' + esc(c.url) + '" target="_blank" rel="noopener" data-mk="join">Join ' + esc(c.name || 'the community') + '</a>' : ''));
+    else add('<span class="why">' + esc(d.why || 'Deploying your own opens for community members.') + '</span>' + (c?.url ? '<a class="primary" href="' + esc(c.url) + '" target="_blank" rel="noopener" data-mk="join">Join ' + esc(c.name || 'the community') + '</a>' : '') + (TOUR.signedUp ? '<input id="tourcode" placeholder="Code, e.g. K7M4-P2QX" maxlength="9" style="font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--edge);border-radius:10px;background:var(--bg);color:var(--text);width:150px;text-transform:uppercase" /><button type="button" data-mk="code">Unlock</button>' : ''));
     add('<a href="' + esc(REPO + '/blob/main/docs/FREE-PROMPTS.md') + '" target="_blank" rel="noopener" data-mk="import">📄 Import a ready-made prompt</a><button type="button" data-mk="close">Close</button>');
     box.hidden = false;
-    box.onclick = (e) => { const t = e.target.closest('[data-mk]'); if (!t) return; if (t.dataset.mk === 'close') { box.hidden = true; return; } if (t.dataset.mk === 'join') markStop('join'); else markStop('make'); };
+    box.onclick = async (e) => {
+      const t = e.target.closest('[data-mk]'); if (!t) return;
+      if (t.dataset.mk === 'close') { box.hidden = true; return; }
+      if (t.dataset.mk === 'code') {
+        const v = ($('tourcode')?.value || '').trim(); if (!v) return $('tourcode')?.focus();
+        t.disabled = true; t.textContent = 'Checking…';
+        try {
+          const r = await fetch('/api/tour', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(TOUR.guide.id) }, body: JSON.stringify({ bot: TOUR.guide.id, code: v }) });
+          const d2 = await r.json();
+          if (d2.redeemed && d2.redeemed.ok) { TOUR.deploy = d2.deploy; markStop('make'); tourGo('make'); return; }
+          t.disabled = false; t.textContent = 'Unlock'; const w = box.querySelector('.why'); if (w) w.textContent = (d2.redeemed && d2.redeemed.reason) || d2.error || 'That code didn\'t work.';
+        } catch { t.disabled = false; t.textContent = 'Unlock'; }
+        return;
+      }
+      if (t.dataset.mk === 'join') markStop('join'); else markStop('make');
+    };
+    const ci = $('tourcode'); if (ci) ci.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); box.querySelector('[data-mk="code"]')?.click(); } });
   }
 }
 
@@ -1923,8 +1952,27 @@ async function renderSignups() {
     body.innerHTML = '<div class="kv" style="margin-bottom:10px"><b>People</b><span>' + t.all + '</span><b>Email opt-in</b><span>' + t.marketing + '</span><b>Text opt-in</b><span>' + t.sms + '</span><b>With a number</b><span>' + t.withPhone + '</span><b>Flagged</b><span>' + t.flagged + (t.flagged ? ' — same connection or device handing out addresses, or a throwaway domain' : '') + '</span></div>'
       + '<p style="color:var(--muted);font-size:12.5px;margin:0 0 8px">Marks are worked out when you look, over the last 24 hours across every bot. Hashes, never addresses: nothing here turns back into an IP. The exact words each person ticked are on their row (hover the ✓).</p>'
       + (d.rows.length ? '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px"><tr style="color:var(--muted);text-align:left"><th style="padding:4px 8px 4px 0">When</th><th style="padding:4px 8px">Who</th><th style="padding:4px 8px">Number</th><th style="padding:4px 8px">Opt-in</th><th style="padding:4px 8px">Marks</th><th style="padding:4px 8px">Tour</th><th style="padding:4px 8px">Same ip / device</th></tr>'
-        + d.rows.map((x) => '<tr style="border-top:1px solid var(--edge);vertical-align:top"><td style="padding:6px 8px 6px 0;white-space:nowrap;color:var(--muted)">' + esc(whenAt(x.created_at)) + '<br>' + esc(x.bot) + (x.source ? '<br>via ' + esc(x.source) : '') + '</td><td style="padding:6px 8px"><b>' + esc(x.email) + '</b>' + (x.name ? '<br>' + esc(x.name) : '') + '</td><td style="padding:6px 8px;white-space:nowrap">' + esc(x.phone || '—') + '</td><td style="padding:6px 8px;white-space:nowrap" title="' + esc(x.consent_text || '') + '">' + (x.marketing ? '✓ email ' : '') + (x.sms ? '✓ text' : '') + (!x.marketing && !x.sms ? '—' : '') + '</td><td style="padding:6px 8px">' + x.marks.map(mark).join(' ') + '</td><td style="padding:6px 8px;white-space:nowrap" title="' + esc((x.tour?.stops || []).join(', ')) + '">' + (x.tour ? x.tour.n + '/5' : '—') + '</td><td style="padding:6px 8px;color:var(--muted);white-space:nowrap">' + x.sameIp24h + ' / ' + x.sameDevice24h + '</td></tr>').join('') + '</table></div>'
+        + d.rows.map((x) => '<tr style="border-top:1px solid var(--edge);vertical-align:top"><td style="padding:6px 8px 6px 0;white-space:nowrap;color:var(--muted)">' + esc(whenAt(x.created_at)) + '<br>' + esc(x.bot) + (x.source ? '<br>via ' + esc(x.source) : '') + '</td><td style="padding:6px 8px"><b>' + esc(x.email) + '</b>' + (x.name ? '<br>' + esc(x.name) : '') + '</td><td style="padding:6px 8px;white-space:nowrap">' + esc(x.phone || '—') + '</td><td style="padding:6px 8px;white-space:nowrap" title="' + esc(x.consent_text || '') + '">' + (x.marketing ? '✓ email ' : '') + (x.sms ? '✓ text' : '') + (!x.marketing && !x.sms ? '—' : '') + '</td><td style="padding:6px 8px">' + x.marks.map(mark).join(' ') + '</td><td style="padding:6px 8px;white-space:nowrap" title="' + esc((x.tour?.stops || []).join(', ')) + '">' + (x.tour ? x.tour.n + '/5' : '—') + (x.tour?.code ? '<br><span class="flag" title="deploy unlocked with this code">🔑 ' + esc(x.tour.code) + '</span>' : '') + '</td><td style="padding:6px 8px;color:var(--muted);white-space:nowrap">' + x.sameIp24h + ' / ' + x.sameDevice24h + '</td></tr>').join('') + '</table></div>'
         : '<p style="color:var(--muted)">Nobody has come through the gate yet' + (signupsScope === 'this' ? ' on this project' : '') + '.</p>');
+    body.insertAdjacentHTML('beforeend', '<h4 style="margin-top:18px">Deploy codes — unlock "Deploy your own" for one person</h4><p style="color:var(--muted);font-size:12.5px;margin:0 0 8px">Make a code, say who you gave it to, DM it. Any number of email addresses may use it: every use is logged here against the code, and the code says who had it. Disable one and it stops working at once.</p><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px"><input type="text" id="dc_to" placeholder="Given to (name, Skool handle)" style="flex:2;min-width:180px;padding:6px 8px;border:1px solid var(--edge);border-radius:8px;background:var(--bg);color:var(--text);font:inherit" /><input type="text" id="dc_note" placeholder="Note (cohort, date…)" style="flex:2;min-width:140px;padding:6px 8px;border:1px solid var(--edge);border-radius:8px;background:var(--bg);color:var(--text);font:inherit" /><input type="number" id="dc_max" placeholder="Max uses (blank = no cap)" min="1" style="width:170px;padding:6px 8px;border:1px solid var(--edge);border-radius:8px;background:var(--bg);color:var(--text);font:inherit" /><button class="iconbtn" id="dc_make">Make a code</button><span id="dc_msg" style="color:var(--muted);font-size:12.5px"></span></div><div id="dc_list"><p class="thinking"><span>Reading the codes</span></p></div>');
+    const drawCodes = async () => {
+      const r2 = await fetch('/api/admin/deploy-codes', { headers: adminHeaders() }); const d2 = await r2.json();
+      const list = $('dc_list'); if (!list) return;
+      list.innerHTML = (d2.codes || []).length ? '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px"><tr style="color:var(--muted);text-align:left"><th style="padding:4px 8px 4px 0">Code</th><th style="padding:4px 8px">Given to</th><th style="padding:4px 8px">Uses</th><th style="padding:4px 8px">Last used</th><th style="padding:4px 8px"></th></tr>'
+        + d2.codes.map((k) => '<tr style="border-top:1px solid var(--edge);vertical-align:top' + (k.disabled ? ';opacity:.55' : '') + '"><td style="padding:6px 8px 6px 0;white-space:nowrap"><b style="letter-spacing:.06em">' + esc(k.code) + '</b>' + (k.disabled ? ' <span class="flag">off</span>' : '') + '</td><td style="padding:6px 8px">' + esc(k.issued_to || '—') + (k.note ? '<br><span style="color:var(--muted)">' + esc(k.note) + '</span>' : '') + '</td><td style="padding:6px 8px;white-space:nowrap"><a href="#" data-dcuses="' + esc(k.code) + '" style="color:inherit">' + k.uses + ' use' + (k.uses === 1 ? '' : 's') + ', ' + k.people + ' ' + (k.people === 1 ? 'person' : 'people') + '</a>' + (k.max_uses ? ' <span style="color:var(--muted)">of ' + k.max_uses + '</span>' : '') + '</td><td style="padding:6px 8px;white-space:nowrap;color:var(--muted)">' + (k.lastUsed ? esc(whenAt(k.lastUsed)) : '—') + '</td><td style="padding:6px 8px;white-space:nowrap"><button class="iconbtn" data-dctoggle="' + esc(k.code) + '" data-on="' + (k.disabled ? 'enable' : 'disable') + '">' + (k.disabled ? 'Enable' : 'Disable') + '</button></td></tr><tr id="dcu_' + esc(k.code) + '" hidden><td colspan="5" style="padding:0 0 8px 12px;color:var(--muted)"></td></tr>').join('') + '</table></div>'
+        : '<p style="color:var(--muted)">No codes yet.</p>';
+      list.onclick = async (e) => {
+        const tg = e.target.closest('[data-dctoggle]'); if (tg) { tg.disabled = true; await fetch('/api/admin/deploy-codes/' + encodeURIComponent(tg.dataset.dctoggle) + '/' + tg.dataset.on, { method: 'POST', headers: adminHeaders() }); drawCodes(); return; }
+        const us = e.target.closest('[data-dcuses]'); if (us) { e.preventDefault(); const row = $('dcu_' + us.dataset.dcuses); if (!row) return; if (!row.hidden) { row.hidden = true; return; } const r3 = await fetch('/api/admin/deploy-codes/' + encodeURIComponent(us.dataset.dcuses) + '/uses', { headers: adminHeaders() }); const d3 = await r3.json(); row.firstElementChild.innerHTML = (d3.uses || []).length ? d3.uses.map((u) => esc(whenAt(u.created_at)) + ' · <b>' + esc(u.email) + '</b> · ' + esc(u.bot)).join('<br>') : 'No uses yet.'; row.hidden = false; }
+      };
+    };
+    $('dc_make').onclick = async () => {
+      $('dc_make').disabled = true; $('dc_msg').textContent = 'Making…';
+      try { const r2 = await fetch('/api/admin/deploy-codes', { method: 'POST', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ issuedTo: $('dc_to').value, note: $('dc_note').value, maxUses: $('dc_max').value || null }) }); const d2 = await r2.json(); if (!r2.ok) throw new Error(d2.error || r2.status); $('dc_msg').innerHTML = 'Code: <b style="letter-spacing:.08em;font-size:14px;color:var(--text)">' + esc(d2.code) + '</b> — copy it into the DM.'; $('dc_to').value = ''; $('dc_note').value = ''; drawCodes(); }
+      catch (err) { $('dc_msg').textContent = 'Not made: ' + err.message; }
+      $('dc_make').disabled = false;
+    };
+    drawCodes();
   } catch (err) { $('subody').innerHTML = '<p style="color:var(--muted)">Could not read sign-ups: ' + esc(err.message) + '</p>'; }
 }
 async function renderLeads() {

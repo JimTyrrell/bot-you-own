@@ -824,13 +824,30 @@ column is the funnel.
    `tour` block and the strip disappears altogether. Set another bot as
    `defaultProject` in config.js to skip the tour.
 
-**Deploy your own is gated.** The Deploy button in the strip only appears for a
-visitor whose email is on the allowlist (the guide bot's list, or the list for
-every bot: Settings → Allowlist). Everyone else sees the community pitch instead,
-and can still read the licensed prompts. Fill the list from your community's
-member export. The guide bot has `identity.graceMinutes: 0`, so a typed email
+**Deploy your own is gated.** The Deploy button in the strip appears for a
+visitor who is on the allowlist (the guide bot's list, or the list for every bot:
+Settings → Allowlist) **or who has redeemed a deploy code**. Everyone else sees
+the community pitch, a box for a code, and the licensed prompts.
+
+**Deploy codes** (Under the hood → Sign-ups → Deploy codes): make one, say who
+you gave it to, DM it. A code looks like `K7M4-P2QX`. Any number of email
+addresses may use it: every use is logged against the code with the email and
+the time, and the code says who had it, so handing it round is visible rather
+than blocked. Optional cap on uses. Disable one and it stops at once. The guide bot has `identity.graceMinutes: 0`, so a typed email
 carries nothing over from another device.
 
 **One sign-up, every bot.** A browser that signed up on any bot of this
 deployment is let into the others in email mode without the form again; the
 sign-up record travels with it. Allow-mode bots still check their list.
+
+
+## What a visitor can delete
+
+Attached files are read once and kept only as text inside that conversation. The
+✕ on the file chip removes it from the conversation; the ✕ on a chat in the
+sidebar deletes that chat, on this browser and on the server. **Delete my data**
+(next to Sign out) erases everything about the person on every bot of the
+deployment at once: chats and their attached text, sign-up rows, devices,
+passkeys, authenticator, tour progress, lead summaries. Two taps, no dialog,
+immediate. The owner's audit log keeps its asked/answered rows (never files), and
+a redeemed deploy code keeps the code but loses the email.

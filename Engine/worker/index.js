@@ -2,7 +2,7 @@ import { CONFIG } from "../../YourBots/config.js";
 import { normaliseProject, normaliseWebsite, savedProjects, saveProject, deleteSavedProject, inFolder, resolveProject, resolveList, pickPublic, hrefFor, exportFiles, KINDS, KIND_LABELS, cleanKind } from "./projects.js";
 import { getSettings, saveSettings, settingsFileContent, cleanBadge, cleanSignup, publicSignup, SETTINGS_FILE_VIEW as SETTINGS_FILE } from "./settings.js";
 import { listSignups, signupsCsv } from "./signups.js";
-import { tourState } from "./tour.js";
+import { tourState, listCodes, codeUses, createCode, disableCode } from "./tour.js";
 import { handleIdentity, identify, linkByCode, signInMethods, adminNeedsCode, adminCodeOk, graceMinutesFor } from "../identity/index.js";
 import { ensureIdentitySchema, userByEmail as idUserByEmail } from "../identity/devices.js";
 import { listThreads, putThread, renameThread, deleteThread, usersWithHistory, ensureChatSchema } from "./chats.js";
@@ -151,9 +151,9 @@ export default {
       const bid = String(url.searchParams.get("bot") || (request.method === "POST" ? (await request.clone().json().catch(() => ({})))?.bot : "") || "").toLowerCase();
       const guide = await resolveProject(env, bid);
       if (!bid || guide.id !== bid || !guide.tour) return json({ error: "which guide? send { bot }" }, 400);
-      let stop = "";
-      if (request.method === "POST") { if (!(await allowed(env, request))) return json({ error: "rate-limited" }, 429); stop = String((await request.clone().json().catch(() => ({})))?.stop || "").slice(0, 20); }
-      return json(await tourState(env, request, guide, { stop }));
+      let stop = "", code = "";
+      if (request.method === "POST") { if (!(await allowed(env, request))) return json({ error: "rate-limited" }, 429); const b = (await request.clone().json().catch(() => ({}))) || {}; stop = String(b.stop || "").slice(0, 20); code = String(b.code || "").slice(0, 20); }
+      return json(await tourState(env, request, guide, { stop, code }));
     }
 
     if (url.pathname.startsWith("/api/admin/") || url.pathname.startsWith("/engine/")) {
@@ -163,6 +163,24 @@ export default {
       if (url.pathname === "/api/admin/library" || url.pathname.startsWith("/api/admin/library/")) return handleLibrary(request, env, url);
       if (url.pathname === "/api/admin/leads" || url.pathname.startsWith("/api/admin/leads/")) return handleLeads(request, env, url);
       if (url.pathname === "/api/admin/signups") return json(await listSignups(env, { project: String(url.searchParams.get("project") || "*").toLowerCase(), limit: url.searchParams.get("limit") }));
+      // Deploy codes (Engine/worker/tour.js): make, list, disable; every use is logged with who.
+      if (url.pathname === "/api/admin/deploy-codes") {
+        if (request.method === "GET") return json({ codes: await listCodes(env) });
+        if (request.method !== "POST") return json({ error: "POST only" }, 405);
+        if (!env.DB) return json({ error: "Deploy codes need the D1 database." }, 400);
+        const { body: b, error } = await readJson(request); if (error) return error;
+        const code = await createCode(env, { issuedTo: b?.issuedTo, note: b?.note, maxUses: b?.maxUses });
+        await logAdminEvent(env, request, "deploy-code-make", code, `for ${String(b?.issuedTo || "").slice(0, 80) || "(unnamed)"}`, String(b?.issuedTo || "").slice(0, 120));
+        return json({ ok: true, code });
+      }
+      const dc = url.pathname.match(/^\/api\/admin\/deploy-codes\/([A-Za-z0-9-]{4,12})\/(disable|enable|uses)$/);
+      if (dc) {
+        if (dc[2] === "uses") return json({ uses: await codeUses(env, dc[1]) });
+        if (request.method !== "POST") return json({ error: "POST only" }, 405);
+        await disableCode(env, dc[1], dc[2] === "disable");
+        await logAdminEvent(env, request, "deploy-code-" + dc[2], dc[1].toUpperCase(), "");
+        return json({ ok: true });
+      }
       if (url.pathname === "/api/admin/signups.csv") { await logAdminEvent(env, request, "signups-export", String(url.searchParams.get("project") || "*"), "CSV download"); return signupsCsv(env, { project: String(url.searchParams.get("project") || "*").toLowerCase() }); }
       // The owner links a visitor's second browser: the visitor reads out the 6-character
       // code their screen shows, the owner types it here with the email. Both must match.

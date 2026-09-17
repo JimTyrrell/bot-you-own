@@ -19,37 +19,92 @@ import { identify } from "../identity/index.js";
 import { isAllowed } from "./allowlist.js";
 import { CONFIG } from "../../YourBots/config.js";
 
+//  DEPLOY CODES. The owner makes a code under the hood (Sign-ups → Deploy codes), says who
+//  it was given to, and hands it over in a DM. A code may be used by any number of email
+//  addresses — that's fine, because every use is logged against the code, and the code
+//  says who it was given to. Redeeming one unlocks Deploy for that person on this bot.
+//    GET  /api/admin/deploy-codes                 the codes, with uses
+//    POST /api/admin/deploy-codes  {issuedTo, note, maxUses}   make one
+//    POST /api/admin/deploy-codes/<code>/disable  stop it
+//    POST /api/tour  { bot, code }                a visitor redeems one
 let SCHEMA_OK = false;
 async function ensureSchema(env) {
   if (SCHEMA_OK || !env.DB) return;
-  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS tour_progress (user_id TEXT NOT NULL, bot TEXT NOT NULL, json TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (user_id, bot))`).run();
+  await env.DB.batch([
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS tour_progress (user_id TEXT NOT NULL, bot TEXT NOT NULL, json TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (user_id, bot))`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS deploy_codes (code TEXT PRIMARY KEY, issued_to TEXT, note TEXT, max_uses INTEGER, disabled INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, created_by TEXT)`),
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS deploy_code_uses (id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT NOT NULL, user_id TEXT NOT NULL, bot TEXT NOT NULL, email TEXT NOT NULL, ip_hash TEXT, created_at TEXT NOT NULL)`),
+    env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_dcu_code ON deploy_code_uses(code, id)`),
+  ]);
   SCHEMA_OK = true;
+}
+// Codes people can read out loud: no 0/O, 1/I/L. "K7M4-P2QX".
+const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+export function newCode() { const b = crypto.getRandomValues(new Uint8Array(8)); const s = [...b].map((x) => ALPHABET[x % ALPHABET.length]).join(""); return s.slice(0, 4) + "-" + s.slice(4); }
+export const cleanCode = (c) => String(c || "").toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/^(.{4})(.{4})$/, "$1-$2");
+export async function listCodes(env) {
+  if (!env.DB) return [];
+  await ensureSchema(env);
+  const codes = (await env.DB.prepare(`SELECT * FROM deploy_codes ORDER BY created_at DESC LIMIT 500`).all()).results || [];
+  const uses = (await env.DB.prepare(`SELECT code, COUNT(*) n, COUNT(DISTINCT email) people, MAX(created_at) last FROM deploy_code_uses GROUP BY code`).all()).results || [];
+  const by = Object.fromEntries(uses.map((u) => [u.code, u]));
+  return codes.map((c) => ({ ...c, disabled: Boolean(c.disabled), uses: by[c.code]?.n || 0, people: by[c.code]?.people || 0, lastUsed: by[c.code]?.last || null }));
+}
+export async function codeUses(env, code) {
+  await ensureSchema(env);
+  return (await env.DB.prepare(`SELECT email, bot, ip_hash, created_at FROM deploy_code_uses WHERE code = ? ORDER BY id DESC LIMIT 200`).bind(cleanCode(code)).all()).results || [];
+}
+export async function createCode(env, { issuedTo = "", note = "", maxUses = null } = {}) {
+  await ensureSchema(env);
+  const code = newCode();
+  await env.DB.prepare(`INSERT INTO deploy_codes (code, issued_to, note, max_uses, created_at, created_by) VALUES (?, ?, ?, ?, ?, 'admin')`).bind(code, String(issuedTo).slice(0, 120), String(note).slice(0, 300), Number.isFinite(Number(maxUses)) && Number(maxUses) > 0 ? Math.round(Number(maxUses)) : null, new Date().toISOString()).run();
+  return code;
+}
+export async function disableCode(env, code, on = true) { await ensureSchema(env); await env.DB.prepare(`UPDATE deploy_codes SET disabled = ? WHERE code = ?`).bind(on ? 1 : 0, cleanCode(code)).run(); }
+// A visitor redeems a code: it has to exist, be on, and be under its cap. Every attempt that
+// succeeds is logged with who used it; the unlock is written onto their tour row.
+async function redeemCode(env, request, guide, user, raw) {
+  const code = cleanCode(raw);
+  if (!user) return { ok: false, reason: "Sign up first, then enter the code." };
+  if (!/^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(code)) return { ok: false, reason: "That doesn't look like a code. It's eight letters and numbers, like K7M4-P2QX." };
+  const row = await env.DB.prepare(`SELECT * FROM deploy_codes WHERE code = ?`).bind(code).first();
+  if (!row || row.disabled) return { ok: false, reason: "That code isn't active." };
+  if (row.max_uses) { const n = (await env.DB.prepare(`SELECT COUNT(*) n FROM deploy_code_uses WHERE code = ?`).bind(code).first())?.n || 0; if (n >= row.max_uses) return { ok: false, reason: "That code has been used up." }; }
+  const ip = request.headers.get("cf-connecting-ip") || "";
+  const ipHash = ip ? [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode("code|" + ip)))].slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("") : "";
+  await env.DB.prepare(`INSERT INTO deploy_code_uses (code, user_id, bot, email, ip_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)`).bind(code, user.id, guide.id, user.email, ipHash, new Date().toISOString()).run();
+  console.log(JSON.stringify({ event: "deploy-code-used", code, issuedTo: row.issued_to, bot: guide.id }));
+  return { ok: true, code, issuedTo: row.issued_to };
 }
 export const deployUrl = () => (CONFIG.github?.repo ? `https://deploy.workers.cloudflare.com/?url=https://github.com/${CONFIG.github.repo}` : "");
 
-export async function tourState(env, request, guide, { stop = "" } = {}) {
+export async function tourState(env, request, guide, { stop = "", code = "" } = {}) {
   const stops = Array.isArray(guide?.tour?.stops) ? guide.tour.stops : [];
-  let done = {}, user = null;
+  let done = {}, user = null, redeemed = null;
   if (env.DB) {
     await ensureSchema(env);
     try { user = (await identify(request, env, guide)).user; } catch {}
     if (user) {
       const row = await env.DB.prepare(`SELECT json FROM tour_progress WHERE user_id = ? AND bot = ?`).bind(user.id, guide.id).first();
       try { done = row ? JSON.parse(row.json) || {} : {}; } catch { done = {}; }
-      if (stop && stops.includes(stop) && !done[stop]) {
-        done[stop] = new Date().toISOString();
-        await env.DB.prepare(`INSERT INTO tour_progress (user_id, bot, json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, bot) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at`).bind(user.id, guide.id, JSON.stringify(done), done[stop]).run();
+      let changed = false;
+      if (stop && stops.includes(stop) && !done[stop]) { done[stop] = new Date().toISOString(); changed = true; }
+      if (code) {
+        redeemed = await redeemCode(env, request, guide, user, code);
+        if (redeemed.ok) { done.unlocked = { code: redeemed.code, at: new Date().toISOString() }; changed = true; }
       }
-    }
+      if (changed) await env.DB.prepare(`INSERT INTO tour_progress (user_id, bot, json, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, bot) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at`).bind(user.id, guide.id, JSON.stringify(done), new Date().toISOString()).run();
+    } else if (code) redeemed = { ok: false, reason: "Sign up first, then enter the code." };
   }
-  // Deploy: on the guide's list, or the list for every bot.
-  let deploy = { allowed: false, url: deployUrl(), why: "" };
+  // Deploy: a redeemed code, or on the guide's list, or the list for every bot.
+  let deploy = { allowed: false, url: deployUrl(), why: "", code: done.unlocked?.code || null };
   if (user && env.DB) {
-    const a = await isAllowed(env, guide.id, user.email); const b = a.ok ? a : await isAllowed(env, "*", user.email);
-    deploy.allowed = Boolean(b.ok);
-    if (!deploy.allowed) deploy.why = "Deploying your own opens for community members.";
+    if (done.unlocked) deploy.allowed = true;
+    else { const a = await isAllowed(env, guide.id, user.email); const b = a.ok ? a : await isAllowed(env, "*", user.email); deploy.allowed = Boolean(b.ok); }
+    if (!deploy.allowed) deploy.why = "Deploying your own opens for community members. Got a code? Enter it here.";
   } else deploy.why = "Sign up first, then deploying opens for community members.";
-  return { stops, done, signedUp: Boolean(user), deploy, community: CONFIG.community?.show ? { name: CONFIG.community.name, url: CONFIG.community.url, pitch: CONFIG.community.pitch } : null };
+  const { unlocked, ...stopsDone } = done;
+  return { stops, done: stopsDone, signedUp: Boolean(user), deploy, redeemed, community: CONFIG.community?.show ? { name: CONFIG.community.name, url: CONFIG.community.url, pitch: CONFIG.community.pitch } : null };
 }
 
 // For the Sign-ups tab: how far each person got, keyed by user id. { id: { n, of } }
@@ -58,7 +113,7 @@ export async function tourProgressMap(env) {
   await ensureSchema(env);
   const out = {};
   for (const r of (await env.DB.prepare(`SELECT user_id, bot, json FROM tour_progress`).all()).results || []) {
-    try { const d = JSON.parse(r.json) || {}; out[r.user_id] = { n: Object.keys(d).length, bot: r.bot, stops: Object.keys(d) }; } catch {}
+    try { const { unlocked, ...d } = JSON.parse(r.json) || {}; out[r.user_id] = { n: Object.keys(d).length, bot: r.bot, stops: Object.keys(d), code: unlocked?.code || null }; } catch {}
   }
   return out;
 }

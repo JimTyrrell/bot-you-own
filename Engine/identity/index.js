@@ -141,6 +141,34 @@ export async function handleIdentity(request, env, url, { bot, allowed = async (
   const rp = rpOf(request);
 
   try {
+    // ---- ERASE: everything about this person, on every bot of this deployment, right now. ----
+    //   Their chats (which is where an attached file's text lives), their sign-up rows, their
+    //   devices, passkeys, authenticator, tour progress, lead summaries. The owner's audit log
+    //   keeps its rows (asked/answered, no files); a deploy-code use keeps the code but loses the
+    //   email. A demo where people upload their own material owes them this button.
+    if (path === "erase") {
+      if (!me) return json({ error: "unknown device", reason: "This browser isn't signed in." }, 401);
+      const people = (await env.DB.prepare(`SELECT id, bot FROM id_users WHERE email = ?`).bind(me.email).all()).results || [];
+      const ids = people.map((p) => p.id);
+      const ops = [];
+      const del = (sql, ...b) => ops.push(env.DB.prepare(sql).bind(...b));
+      for (const id of ids) {
+        del(`DELETE FROM chat_threads WHERE user_id = ?`, id);
+        del(`DELETE FROM tour_progress WHERE user_id = ?`, id);
+        del(`DELETE FROM id_devices WHERE user_id = ?`, id);
+        del(`DELETE FROM id_passkeys WHERE user_id = ?`, id);
+        del(`DELETE FROM id_totp WHERE user_id = ?`, id);
+        del(`UPDATE deploy_code_uses SET email = 'erased' WHERE user_id = ?`, id);
+      }
+      del(`DELETE FROM id_pending WHERE email = ?`, me.email);
+      del(`DELETE FROM leads WHERE visitor = ?`, me.email);
+      del(`DELETE FROM id_users WHERE email = ?`, me.email);
+      let erased = 0;
+      for (const op of ops) { try { await op.run(); erased++; } catch (err) { /* a table that doesn't exist yet on this deployment: nothing to erase there */ } }
+      console.log(JSON.stringify({ event: "visitor-erase", bots: people.map((p) => p.bot), statements: erased }));
+      return json({ ok: true, bots: people.length });
+    }
+
     // ---- JOIN: email + this device. The first device just joins; a second one waits for a link. ----
     if (path === "join") {
       const email = cleanEmail(body.email);
