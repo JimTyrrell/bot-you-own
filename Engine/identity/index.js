@@ -27,7 +27,36 @@
 //  Never an email is sent. Nothing here can be "reset by email".
 // ============================================================================
 
-import { deviceHash, userForDevice, userById, userByEmail, pendingFor, bindDevice, cleanEmail, ensureIdentitySchema, nowIso, deviceCount, join as joinDevice, linkByCode, touch, cleanGrace, DEFAULT_GRACE_MINUTES } from "./devices.js";
+import { deviceHash, userForDevice, userById, userByEmail, pendingFor, bindDevice, cleanEmail, ensureIdentitySchema, nowIso, deviceCount, join as joinDevice, linkByCode, touch, cleanGrace, DEFAULT_GRACE_MINUTES, recordSignup, cleanPhone, pepperOf } from "./devices.js";
+import { SIGNUP_BUILT_IN } from "../worker/settings.js";
+
+// A short keyed hash: sixteen hex characters of SHA-256 over the pepper and the value.
+// Enough to group repeats in the Sign-ups view, not enough to get the value back.
+async function hashOf(env, value) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(pepperOf(env) + "|" + String(value || "")));
+  return [...new Uint8Array(buf)].slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+// The gate's own rules on a FRESH sign-up. Returns { ok, error, reason } or the cleaned fields.
+function checkSignup(su, body) {
+  const name = String(body.name || "").trim().slice(0, 80);
+  if (su.askName === "required" && !name) return { ok: false, error: "name", reason: "Please add your name." };
+  const phoneRaw = String(body.phone || "").trim();
+  const phone = su.askPhone === "off" ? "" : cleanPhone(phoneRaw);
+  if (su.askPhone === "required" && !phone) return { ok: false, error: "phone", reason: phoneRaw ? "That doesn't look like a mobile number. Include the area code." : "Please add a mobile number we can text." };
+  if (su.askPhone === "optional" && phoneRaw && !phone) return { ok: false, error: "phone", reason: "That doesn't look like a mobile number. Include the area code, or leave it blank." };
+  const marketing = su.marketing.show ? Boolean(body.marketing) : false;
+  if (su.marketing.show && su.marketing.required && !marketing) return { ok: false, error: "marketing", reason: "Please tick the box to continue." };
+  const sms = su.sms.show && phone ? Boolean(body.sms) : false;
+  if (su.sms.show && su.sms.required && phone && !sms) return { ok: false, error: "sms", reason: "Please tick the texting box to continue." };
+  const consent_text = [marketing ? "[x] " + su.marketing.text : su.marketing.show ? "[ ] " + su.marketing.text : "", sms ? "[x] " + su.sms.text : su.sms.show ? "[ ] " + su.sms.text : "", su.privacyLine].filter(Boolean).join("\n");
+  return { ok: true, name: su.askName === "off" ? "" : name, phone, marketing, sms, consent_text };
+}
+// Tell the owner's list tool. Best effort, four seconds, never blocks the join.
+async function signupWebhook(url, payload) {
+  if (!url) return;
+  try { await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload), signal: AbortSignal.timeout(4000) }); }
+  catch (err) { console.warn("signup webhook failed", err?.message || err); }
+}
 export { linkByCode, cleanGrace, DEFAULT_GRACE_MINUTES };
 import { verifyRegistration, verifyAssertion, randomChallenge } from "./passkeys.js";
 import { newSecret, totp, verifyTotp, otpauthUri } from "./totp.js";
@@ -81,7 +110,7 @@ export async function adminCodeOk(env, code) {
 }
 
 // --- The routes. `bot` is already resolved by the caller; `allowed` is the rate limiter. ----
-export async function handleIdentity(request, env, url, { bot, allowed = async () => true, unlockAllowed = async () => true, graceMinutes = DEFAULT_GRACE_MINUTES }) {
+export async function handleIdentity(request, env, url, { bot, allowed = async () => true, unlockAllowed = async () => true, graceMinutes = DEFAULT_GRACE_MINUTES, signup = SIGNUP_BUILT_IN }) {
   if (!env.DB) return json({ error: "Identity needs the D1 database (wrangler.jsonc → d1_databases)." }, 503);
   await ensureIdentitySchema(env);
   const path = url.pathname.slice("/api/id/".length);
@@ -114,7 +143,24 @@ export async function handleIdentity(request, env, url, { bot, allowed = async (
       const email = cleanEmail(body.email);
       if (!email) return json({ error: "email", reason: "That doesn't look like an email address." }, 400);
       if (me && me.email !== email) return json({ error: "different person", reason: "This browser is already linked to a different email. Sign out first." }, 409);
+      // A NEW person meets the gate's rules (name, number, the boxes). Someone already
+      // signed up on another device only has to prove it's them, so the rules don't re-run.
+      const fresh = !(await userByEmail(env, bot.id, email));
+      const gate = fresh ? checkSignup(signup, body) : { ok: true };
+      if (!gate.ok) return json({ error: gate.error, reason: gate.reason }, 400);
       const r = await joinDevice(env, bot.id, { email, keyHash, graceMinutes });
+      if (r.linked && r.fresh) {
+        const now = nowIso();
+        const ip = request.headers.get("cf-connecting-ip") || "";
+        const rec = {
+          name: gate.name, phone: gate.phone, marketing: gate.marketing, sms: gate.sms, consented_at: now, consent_text: gate.consent_text,
+          ip_hash: ip ? await hashOf(env, ip) : "", ua_hash: await hashOf(env, (request.headers.get("user-agent") || "") + "|" + (request.headers.get("accept-language") || "")),
+          fp_hash: body.fp ? await hashOf(env, String(body.fp).slice(0, 400)) : "", source: String(body.source || "").slice(0, 80),
+        };
+        try { await recordSignup(env, bot.id, r.user.id, rec); } catch (err) { console.warn("recordSignup failed", err?.message || err); }
+        console.log(JSON.stringify({ event: "signup", bot: bot.id, marketing: rec.marketing, sms: rec.sms, phone: Boolean(rec.phone), ip_hash: rec.ip_hash, fp_hash: rec.fp_hash }));
+        await signupWebhook(signup.webhook, { event: "signup", bot: { id: bot.id, name: bot.name }, when: now, email, name: rec.name, phone: rec.phone, marketing: rec.marketing, sms: rec.sms, consent_text: rec.consent_text, source: rec.source, ip_hash: rec.ip_hash, fp_hash: rec.fp_hash, country: request.headers.get("cf-ipcountry") || "" });
+      }
       if (r.linked) return json({ ok: true, linked: true, email: r.user.email, fresh: Boolean(r.fresh), ...(r.grace ? { grace: true } : {}) });
       return json({ ok: true, linked: false, code: r.code, email: r.email, reason: "This email is already in use on another device. The owner can link this one with the code." });
     }

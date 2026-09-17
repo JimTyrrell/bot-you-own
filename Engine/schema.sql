@@ -160,7 +160,14 @@ CREATE TABLE IF NOT EXISTS id_users (
   email      TEXT NOT NULL,        -- the only personal thing stored
   created_at TEXT NOT NULL,
   last_seen  TEXT,                 -- bumped on every identified request; the return window measures from here
-  access_until TEXT                -- when THIS PERSON's access runs out. NULL = unlimited.
+  access_until TEXT,               -- when THIS PERSON's access runs out. NULL = unlimited.
+  -- The sign-up gate (v3.12, Engine/identity/index.js → join). Added by ensureIdentitySchema
+  -- when missing. The consent record is consent_text: the exact words next to the boxes.
+  name TEXT, phone TEXT,           -- phone as +digits (E.164-ish); NULL when not asked or not given
+  marketing INTEGER, sms INTEGER,  -- the two opt-in boxes, 1/0
+  consented_at TEXT, consent_text TEXT,
+  ip_hash TEXT, ua_hash TEXT, fp_hash TEXT,   -- keyed SHA-256 prefixes: connection, browser, device facts
+  source TEXT                      -- the referring host, or "direct"
                                    -- Engine/worker/expiry.js; set from Under the hood → Settings.
                                    -- expiry.defaultDays gives a window without writing a date here.
 );

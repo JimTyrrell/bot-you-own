@@ -57,6 +57,13 @@ export async function ensureIdentitySchema(env) {
     // authenticator app (TOTP): one secret per user; confirmed = they typed a right code once.
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS id_totp (user_id TEXT PRIMARY KEY, bot TEXT NOT NULL, secret TEXT NOT NULL, confirmed INTEGER DEFAULT 0, created_at TEXT NOT NULL)`),
   ]);
+  // The sign-up columns (v3.12). SQLite has no ADD COLUMN IF NOT EXISTS: look first.
+  try {
+    const have = new Set(((await env.DB.prepare(`PRAGMA table_info(id_users)`).all()).results || []).map((c) => c.name));
+    const want = [["name", "TEXT"], ["phone", "TEXT"], ["marketing", "INTEGER"], ["sms", "INTEGER"], ["consented_at", "TEXT"], ["consent_text", "TEXT"], ["ip_hash", "TEXT"], ["ua_hash", "TEXT"], ["fp_hash", "TEXT"], ["source", "TEXT"]];
+    for (const [col, decl] of want) if (!have.has(col)) await env.DB.prepare(`ALTER TABLE id_users ADD COLUMN ${col} ${decl}`).run();
+    await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_id_users_created ON id_users(created_at)`).run();
+  } catch (err) { console.warn("sign-up columns not added (sign-ups will store email only)", err?.message || err); }
   SCHEMA_OK = true;
 }
 
@@ -140,4 +147,19 @@ export async function linkByCode(env, bot, { email, code }) {
   if (!user) return { ok: false, status: 404, error: "no such person" };
   await bindDevice(env, bot, { userId: user.id, email, keyHash: pend.key_hash, label: "linked by the owner" });
   return { ok: true, linked: true, userId: user.id };
+}
+
+// What the sign-up gate collected, written once onto a fresh person's row. The words
+// they ticked are kept verbatim: that is the consent record. Hashes only, never the IP.
+export async function recordSignup(env, bot, userId, f) {
+  await env.DB.prepare(`UPDATE id_users SET name = ?, phone = ?, marketing = ?, sms = ?, consented_at = ?, consent_text = ?, ip_hash = ?, ua_hash = ?, fp_hash = ?, source = ? WHERE id = ? AND bot = ?`)
+    .bind(f.name || null, f.phone || null, f.marketing ? 1 : 0, f.sms ? 1 : 0, f.consented_at || null, f.consent_text || null, f.ip_hash || null, f.ua_hash || null, f.fp_hash || null, f.source || null, userId, bot).run();
+}
+// A phone number as digits with a leading +. Accepts what people type: (303) 555-0142,
+// 303.555.0142, +44 20 7946 0958. A bare 10-digit number is taken as North American.
+export function cleanPhone(v) {
+  const raw = String(v || "").trim(); if (!raw) return "";
+  const digits = raw.replace(/[^\d]/g, "");
+  if (digits.length < 10 || digits.length > 15) return "";
+  return "+" + (digits.length === 10 ? "1" + digits : digits);
 }

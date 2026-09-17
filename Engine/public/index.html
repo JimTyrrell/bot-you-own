@@ -157,7 +157,10 @@
   .lockwrap.show { display:flex; }
   .lockwrap form { width:min(380px,100%); border:1px solid var(--edge); border-radius:16px; padding:24px; background:var(--side); display:flex; flex-direction:column; gap:12px; box-shadow:0 2px 12px rgba(0,0,0,.06); }
   .lockwrap h2 { margin:0; font-size:18px; } .lockwrap p { margin:0; color:var(--muted); font-size:13px; }
-  .lockwrap input[hidden] { display:none; }
+  .lockwrap input[hidden], .lockwrap label[hidden], .lockwrap p[hidden] { display:none; }
+  .lockwrap .lockbox { display:flex; gap:10px; align-items:flex-start; font-size:13px; color:var(--text); cursor:pointer; line-height:1.4; }
+  .lockwrap .lockbox input { margin:3px 0 0; width:16px; height:16px; flex:none; padding:0; }
+  .lockwrap .lockprivacy { font-size:11.5px; color:var(--muted); line-height:1.4; }
   #signout { display:flex; align-items:center; gap:8px; }
   #signout span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .lockwrap input { padding:11px 12px; border:1px solid var(--edge); border-radius:10px; background:var(--bg); color:var(--text); font:inherit; }
@@ -300,7 +303,12 @@ document.addEventListener('DOMContentLoaded', function () {
   <p id="lockhint">Enter the passphrase to continue.</p>
   <input id="pass" type="password" placeholder="Passphrase" autocomplete="current-password" />
   <input id="adminkey" type="password" placeholder="Admin code" autocomplete="off" hidden /><input id="adminkeycode" inputmode="numeric" placeholder="Authenticator code" autocomplete="one-time-code" hidden />
+  <input id="lname" type="text" placeholder="Your name" autocomplete="name" maxlength="80" hidden />
   <input id="email" type="email" placeholder="Your email address" autocomplete="email" />
+  <input id="lphone" type="tel" placeholder="Mobile number (for texts)" autocomplete="tel" inputmode="tel" hidden />
+  <label class="lockbox" id="lmarketingwrap" hidden><input type="checkbox" id="lmarketing" /><span id="lmarketingtext"></span></label>
+  <label class="lockbox" id="lsmswrap" hidden><input type="checkbox" id="lsms" /><span id="lsmstext"></span></label>
+  <p id="lprivacy" class="lockprivacy" hidden></p>
   <div style="display:flex;gap:8px"><button type="submit" id="lockgo" style="flex:1">Continue</button><button type="button" id="lockback" style="flex:1;background:var(--panel);color:var(--text)" hidden>Back</button></div>
   <button type="button" id="lockcfg" hidden>✎ Configure this bot</button>
   <button type="button" id="lockswitch" hidden style="background:var(--panel);color:var(--text)">Use a different email</button>
@@ -357,7 +365,7 @@ document.addEventListener('DOMContentLoaded', function () {
     <aside id="hood">
       <header><h1>Under the hood</h1><span class="pill" id="hoodproj"></span><span class="spacer"></span><button class="iconbtn" id="hoodclose">✕</button></header>
       <div class="tabs" id="hoodtabs">
-        <button data-tab="prompt" class="on">Prompt</button><button data-tab="files">Files</button><button data-tab="firewall">Firewall</button><button data-tab="gateway">Gateway &amp; model</button><button data-tab="settings">Settings</button><button data-tab="audit">Audit</button><button data-tab="leads">Leads</button><button data-tab="conversations">Conversations<span class="badge" id="convbadge" hidden></span></button><button data-tab="source">Source</button>
+        <button data-tab="prompt" class="on">Prompt</button><button data-tab="files">Files</button><button data-tab="firewall">Firewall</button><button data-tab="gateway">Gateway &amp; model</button><button data-tab="settings">Settings</button><button data-tab="audit">Audit</button><button data-tab="leads">Leads</button><button data-tab="signups">Sign-ups</button><button data-tab="conversations">Conversations<span class="badge" id="convbadge" hidden></span></button><button data-tab="source">Source</button>
       </div>
       <div id="hoodbody"></div>
     </aside>
@@ -488,19 +496,39 @@ let needKey = false, needEmail = false, needAdmin = false;
 // answer, which is exactly when we need it: a wrong front-door passphrase is very
 // often the admin code typed one screen too early.
 let ADMIN_ENABLED = false;
+// What the sign-up gate asks for (Under the hood → Settings → The sign-up gate). Comes with /api/config.
+let SIGNUP = { title: '', blurb: '', askName: 'optional', askPhone: 'off', marketing: { show: true, required: false, checked: false, text: '' }, sms: { show: false, required: false, checked: false, text: '' }, privacyLine: '' };
+// A few facts about this browser, hashed on the server and never stored raw: enough to see
+// one device handing out many email addresses, not enough to identify anybody.
+function browserFacts() {
+  try { return [Intl.DateTimeFormat().resolvedOptions().timeZone, screen.width + 'x' + screen.height + 'x' + screen.colorDepth, navigator.hardwareConcurrency || '', navigator.platform || '', navigator.language, navigator.maxTouchPoints || 0, (navigator.deviceMemory || '')].join('|'); } catch { return ''; }
+}
+// The sign-up fields: shown for a fresh email join according to the gate's rules.
+function drawSignup(on) {
+  const su = SIGNUP;
+  $('lname').hidden = !on || su.askName === 'off'; $('lname').required = on && su.askName === 'required'; $('lname').placeholder = 'Your name' + (su.askName === 'optional' ? ' (optional)' : '');
+  $('lphone').hidden = !on || su.askPhone === 'off'; $('lphone').required = on && su.askPhone === 'required'; $('lphone').placeholder = 'Mobile number, for texts' + (su.askPhone === 'optional' ? ' (optional)' : '');
+  $('lmarketingwrap').hidden = !on || !su.marketing.show; $('lmarketingtext').textContent = su.marketing.text + (su.marketing.required ? ' (required)' : ''); if (on && !$('lmarketing').dataset.touched) $('lmarketing').checked = !!su.marketing.checked;
+  $('lsmswrap').hidden = !on || !su.sms.show || su.askPhone === 'off'; $('lsmstext').textContent = su.sms.text + (su.sms.required ? ' (required)' : ''); if (on && !$('lsms').dataset.touched) $('lsms').checked = !!su.sms.checked;
+  $('lprivacy').hidden = !on || !su.privacyLine; $('lprivacy').textContent = su.privacyLine;
+}
+document.addEventListener('DOMContentLoaded', () => { ['lmarketing', 'lsms'].forEach((id) => $(id).addEventListener('change', () => { $(id).dataset.touched = '1'; })); });
 const checked = {};                                   // bot id → its door was checked this page-load
 function showLock(msg, l) {
   if (l) lock = { ...lock, list: false, ...l };
   needAdmin = !!lock.admin; needKey = !!lock.key && !needAdmin; needEmail = !!lock.email && !VISITOR && !lock.draft;
   $('pass').hidden = !needKey; $('adminkey').hidden = !needAdmin; $('email').hidden = !needEmail; $('lockgo').hidden = !!lock.draft || !!lock.list;
+  drawSignup(needEmail && !lock.list);
+  const welcome = needEmail && !needKey && !lock.list && !lock.draft && !lock.admin;   // the plain sign-up gate: sell it a little
   $('lockswitch').hidden = !lock.list;
   // Back: to the bot list when we have one, else (a direct link to a locked bot) home to the default bot.
   $('lockback').hidden = !((state.projects && state.projects.length) || new URLSearchParams(location.search).get('project'));
-  $('locktitle').textContent = lock.draft ? 'This bot is a draft' : lock.admin ? 'Owner only' : lock.list ? 'Invited people only' : 'Before we start';
+  $('locktitle').textContent = lock.draft ? 'This bot is a draft' : lock.admin ? 'Owner only' : lock.list ? 'Invited people only' : welcome && SIGNUP.title ? SIGNUP.title : 'Before we start';
   $('lockhint').textContent = lock.draft ? 'It only answers in the Configure preview. The owner can publish it from ✎ Configure.'
     : lock.list ? (lock.name || 'This bot') + ' is for people on its list. You\'re signed in as ' + (VISITOR || 'nobody') + '. Ask ' + (state.cfg?.owner || 'the owner') + ' to add that address, or use a different email.'
     : lock.admin ? (lock.name ? lock.name + ' opens' : 'This bot opens') + ' with the admin code only.'
     : needKey && needEmail ? 'Enter the passphrase and your email address.'
+    : welcome && SIGNUP.blurb ? SIGNUP.blurb
     : needEmail ? 'Enter your email address to start. It is kept with your conversation so the owner knows who asked.'
     : (lock.name && lock.project !== state.cfg?.defaultProject ? lock.name + ' needs a passphrase. ' : '') + 'Enter the passphrase to continue.';
   // The owner, already holding the admin token, can go straight to the form that publishes a draft.
@@ -554,9 +582,12 @@ $('lockform').addEventListener('submit', async (e) => {
       const em = $('email').value.trim();
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(em)) { $('lockmsg').textContent = 'That doesn\'t look like an email address.'; return; }
       // Join: email + this device (Engine/identity/). The first device is in at once.
-      const res = await fetch('/api/id/join', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(lock.project) }, body: JSON.stringify({ bot: lock.project, email: em }) });
+      const gate = { name: $('lname').hidden ? '' : $('lname').value.trim(), phone: $('lphone').hidden ? '' : $('lphone').value.trim(), marketing: !$('lmarketingwrap').hidden && $('lmarketing').checked, sms: !$('lsmswrap').hidden && $('lsms').checked, fp: browserFacts(), source: document.referrer ? new URL(document.referrer).hostname : 'direct' };
+      if (!$('lname').hidden && $('lname').required && !gate.name) { $('lockmsg').textContent = 'Please add your name.'; $('lname').focus(); return; }
+      if (!$('lphone').hidden && $('lphone').required && !gate.phone) { $('lockmsg').textContent = 'Please add a mobile number we can text.'; $('lphone').focus(); return; }
+      const res = await fetch('/api/id/join', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(lock.project) }, body: JSON.stringify({ bot: lock.project, email: em, ...gate }) });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { $('lockmsg').textContent = res.status === 429 ? 'Too many tries. Wait a minute.' : (data.reason || 'Could not join. Try again.'); return; }
+      if (!res.ok) { $('lockmsg').textContent = res.status === 429 ? 'Too many tries. Wait a minute.' : (data.reason || 'Could not join. Try again.'); if (data.error === 'phone') $('lphone').focus(); else if (data.error === 'name') $('lname').focus(); return; }
       if (!data.linked) return showPending(data.code, em.toLowerCase());
       VISITOR = data.email || em.toLowerCase(); identified[lock.project] = true;
     }
@@ -588,7 +619,7 @@ const configHeaders = (pid) => ({ ...authHeaders(pid), ...(ADMIN ? { 'x-admin-to
 function boot(pid) {
   const want = pid || new URLSearchParams(location.search).get('project') || '';
   fetch('/api/config' + (want ? '?project=' + encodeURIComponent(want) : ''), { headers: configHeaders(want) }).then((r) => r.json()).then((cfg) => {
-    ADMIN_ENABLED = Boolean(cfg.adminEnabled);
+    ADMIN_ENABLED = Boolean(cfg.adminEnabled); if (cfg.signup) SIGNUP = cfg.signup;
   $('brand').textContent = cfg.siteName || 'The Bot You Own';
   const a = cfg.access || {};
   const l = { project: cfg.current || cfg.project || want, name: cfg.projectName || '', mode: a.mode, key: !!a.key, email: !!a.email, admin: !!a.admin, draft: !!a.draft };
@@ -699,7 +730,7 @@ async function checkDoor(p) {
   try {
     const r = await fetch('/api/config?project=' + encodeURIComponent(p.id), { headers: configHeaders(p.id) });
     const cfg = await r.json();
-    ADMIN_ENABLED = Boolean(cfg.adminEnabled);
+    ADMIN_ENABLED = Boolean(cfg.adminEnabled); if (cfg.signup) SIGNUP = cfg.signup;
     if (state.project?.id !== p.id) return;                          // they moved on meanwhile
     const a = cfg.access || {};
     const l = { project: p.id, name: p.name, mode: a.mode, key: !!a.key, email: !!a.email, admin: !!a.admin, draft: !!a.draft };
@@ -1279,6 +1310,7 @@ function renderHood() {
   if (hoodTab === 'settings') { renderSettings(); return; }
   if (hoodTab === 'audit') { renderAudit(); return; }
   if (hoodTab === 'leads') { renderLeads(); return; }
+  if (hoodTab === 'signups') { renderSignups(); return; }
   if (hoodTab === 'conversations') { renderConversations(); return; }
   if (hoodTab === 'source') { box.innerHTML = '<h4>Engine source (snapshot taken at deploy)</h4><select id="srcsel">' + (d.sources || []).map((n) => '<option>' + esc(n) + '</option>').join('') + '</select><div id="srcbox"></div>'; const load = async () => { const n = $('srcsel').value; $('srcbox').innerHTML = '<p class="thinking"><span>Loading ' + esc(n) + '</span></p>'; try { const t = await (await fetch('/api/admin/source?name=' + encodeURIComponent(n), { headers: { 'x-admin-token': ADMIN } })).text(); $('srcbox').innerHTML = pre(t); } catch { $('srcbox').innerHTML = '<p style="color:var(--danger)">Could not load ' + esc(n) + '.</p>'; } }; $('srcsel').onchange = load; load(); }
 }
@@ -1610,6 +1642,13 @@ async function renderSettings() {
       + '<div class="kv" style="margin-top:12px"><b>Shared key</b><span>' + (d.sharedKey ? 'ACCESS_PASSPHRASE is set.' : 'ACCESS_PASSPHRASE is NOT set — a bot that wants a key runs open and says so in the logs.') + '</span><b>Admin token</b><span>version ' + esc(d.adminTokenVersion) + ' — set the ADMIN_TOKEN_VERSION secret to a new value to log every admin out (docs/DEPLOY.md §B3).</span><b>Admin second factor</b><span>' + (d.adminTotp ? 'ON — ADMIN_TOTP_SECRET is set; the admin code needs the six digits too.' : 'off — set the ADMIN_TOTP_SECRET secret (a base32 key from an authenticator app) to require six digits with the admin code (docs/IDENTITY.md).') + '</span><b>Break-glass key</b><span>' + (d.breakGlass ? 'SET — ADMIN_UNLOCK_KEY typed where the admin code goes opens this door with no code and no authenticator step; every use is in the record below. Keep it somewhere the authenticator isn\'t.' : 'not set — set the ADMIN_UNLOCK_KEY secret (16+ random characters) so you can always get back in here if the authenticator is lost (docs/DEPLOY.md → B3d).') + '</span></div>'
       + '<h4>The return window</h4><p style="color:var(--muted);font-size:12.5px;margin:0 0 6px">A visitor in email / allow mode who types their email on a <b>new</b> computer within this many minutes of their last activity is trusted at once and their chats follow them (docs/IDENTITY.md). After it, the new computer waits for you to link it (Leads). <b>The trade-off:</b> inside the window, anyone who knows the email can pick up that person\'s recent conversation from their own computer. 0 = off. A bot can set its own in Configure. Now from: ' + esc(d.identity?.source || 'built-in') + '.</p><div class="row2"><input type="number" id="s_grace" min="0" max="10080" step="1" value="' + esc(String(d.identity?.graceMinutes ?? 60)) + '" style="max-width:160px" /><span style="color:var(--muted);font-size:12.5px;align-self:center">minutes</span></div>'
       + '<h4>The badge under the chat</h4><div class="caps"><label><input type="checkbox" id="s_badge_show"' + (d.createYourOwn.show ? ' checked' : '') + ' /> Show "create your own" (now from: ' + esc(d.createYourOwn.source) + ')</label></div><div class="row2" style="margin-top:6px"><input type="text" id="s_badge_text" value="' + esc(d.createYourOwn.text) + '" placeholder="Create your own bot" /><input type="url" id="s_badge_url" value="' + esc(d.createYourOwn.url) + '" placeholder="https://…" /></div>'
+      + '<h4>The sign-up gate — what "email" mode asks for</h4><p style="color:var(--muted);font-size:12.5px;margin:0 0 6px">The welcome page a new visitor meets when a bot is in email (or allow) mode. Fields can be required, optional or off; the boxes are never pre-ticked unless you say so. Every sign-up lands in the Sign-ups tab and, if set, is POSTed to the webhook. Now from: ' + esc(d.signup?.source || 'built-in') + '.</p>'
+      + '<div class="row2"><input type="text" id="su_title" value="' + esc(d.signup?.title || '') + '" placeholder="Title, e.g. Try it, free" /><input type="text" id="su_blurb" value="' + esc(d.signup?.blurb || '') + '" placeholder="One or two sentences under the title" /></div>'
+      + '<div class="row2" style="margin-top:6px"><div><label style="margin-top:0">Name</label><select id="su_name" style="margin:0"><option' + (d.signup?.askName === 'required' ? ' selected' : '') + '>required</option><option' + (d.signup?.askName === 'optional' ? ' selected' : '') + '>optional</option><option' + (d.signup?.askName === 'off' ? ' selected' : '') + '>off</option></select></div><div><label style="margin-top:0">Mobile number (the texting number)</label><select id="su_phone" style="margin:0"><option' + (d.signup?.askPhone === 'required' ? ' selected' : '') + '>required</option><option' + (d.signup?.askPhone === 'optional' ? ' selected' : '') + '>optional</option><option' + (d.signup?.askPhone === 'off' ? ' selected' : '') + '>off</option></select></div></div>'
+      + '<div class="caps" style="margin-top:8px"><label><input type="checkbox" id="su_m_show"' + (d.signup?.marketing?.show ? ' checked' : '') + ' /> Email opt-in box</label> <label><input type="checkbox" id="su_m_req"' + (d.signup?.marketing?.required ? ' checked' : '') + ' /> required</label> <label><input type="checkbox" id="su_m_chk"' + (d.signup?.marketing?.checked ? ' checked' : '') + ' /> pre-ticked</label></div><input type="text" id="su_m_text" value="' + esc(d.signup?.marketing?.text || '') + '" placeholder="The words next to the email box" style="margin-top:4px" />'
+      + '<div class="caps" style="margin-top:8px"><label><input type="checkbox" id="su_s_show"' + (d.signup?.sms?.show ? ' checked' : '') + ' /> Text opt-in box (only with a number)</label> <label><input type="checkbox" id="su_s_req"' + (d.signup?.sms?.required ? ' checked' : '') + ' /> required</label> <label><input type="checkbox" id="su_s_chk"' + (d.signup?.sms?.checked ? ' checked' : '') + ' /> pre-ticked</label></div><input type="text" id="su_s_text" value="' + esc(d.signup?.sms?.text || '') + '" placeholder="The words next to the text box" style="margin-top:4px" />'
+      + '<input type="text" id="su_privacy" value="' + esc(d.signup?.privacyLine || '') + '" placeholder="The privacy line under the form" style="margin-top:8px" /><input type="url" id="su_webhook" value="' + esc(d.signup?.webhook || '') + '" placeholder="Webhook: POST every sign-up here (Zapier, Make, your CRM) — empty = off" style="margin-top:6px" />'
+      + '<p style="color:var(--muted);font-size:12.5px;margin:6px 0 0">Saved with the Save button above.</p>'
       + '<h4>The allowlist — access mode "allow": in the list → able to do things</h4><div id="allowbox"><p class="thinking"><span>Reading the list</span></p></div>'
       + '<h4>When access runs out</h4><div id="expbox"><p class="thinking"><span>Reading the windows</span></p></div>'
       + '<h4>Access over time — one person\'s whole history</h4><div id="timelinebox"></div>'
@@ -1623,7 +1662,7 @@ async function renderSettings() {
     $('s_save').onclick = async () => {
       $('s_save').disabled = true; $('s_msg').textContent = 'Saving…';
       try {
-        const r2 = await fetch('/api/admin/settings', { method: 'PUT', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ access: { default: $('s_default').value, floor: $('s_floor').value }, createYourOwn: { show: $('s_badge_show').checked, text: $('s_badge_text').value, url: $('s_badge_url').value }, identity: { graceMinutes: Number($('s_grace').value) } }) });
+        const r2 = await fetch('/api/admin/settings', { method: 'PUT', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ access: { default: $('s_default').value, floor: $('s_floor').value }, createYourOwn: { show: $('s_badge_show').checked, text: $('s_badge_text').value, url: $('s_badge_url').value }, identity: { graceMinutes: Number($('s_grace').value) }, signup: { title: $('su_title').value, blurb: $('su_blurb').value, askName: $('su_name').value, askPhone: $('su_phone').value, marketing: { show: $('su_m_show').checked, required: $('su_m_req').checked, checked: $('su_m_chk').checked, text: $('su_m_text').value }, sms: { show: $('su_s_show').checked, required: $('su_s_req').checked, checked: $('su_s_chk').checked, text: $('su_s_text').value }, privacyLine: $('su_privacy').value, webhook: $('su_webhook').value } }) });
         const d2 = await r2.json(); if (!r2.ok) throw new Error(d2.error || r2.status);
         renderSettings();
       } catch (err) { $('s_msg').textContent = 'Not saved: ' + err.message; $('s_save').disabled = false; }
@@ -1777,6 +1816,27 @@ async function renderAdminEvents() {
 // ---- Leads tab: every visitor who gave an email, and the AI brief per lead ----
 let leadsScope = 'this', leadOpen = '';
 const scoreChip = (s) => s == null ? '<span class="flag">not summarised</span>' : '<span class="flag' + (s >= 70 ? ' hard' : '') + '">' + s + '</span>';
+// ---- Sign-ups: everyone who came through the gate, with the abuse marks. ----
+let signupsScope = 'all';
+async function renderSignups() {
+  const box = $('hoodbody');
+  box.innerHTML = '<h4>Sign-ups</h4><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;align-items:center" id="subar"><button class="iconbtn" data-s="this"' + (signupsScope === 'this' ? ' style="background:var(--panel)"' : '') + '>this project</button><button class="iconbtn" data-s="all"' + (signupsScope === 'all' ? ' style="background:var(--panel)"' : '') + '>all projects</button><span class="spacer"></span><a class="iconbtn" id="sucsv" href="#" style="text-decoration:none">⬇ CSV</a></div><div id="subody"><p class="thinking"><span>Reading the list</span></p></div>';
+  $('subar').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; signupsScope = b.dataset.s; renderSignups(); };
+  const scope = signupsScope === 'all' ? '*' : state.project.id;
+  $('sucsv').onclick = async (e) => { e.preventDefault(); try { const r = await fetch('/api/admin/signups.csv?project=' + encodeURIComponent(scope), { headers: adminHeaders() }); const blob = await r.blob(); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'signups-' + new Date().toISOString().slice(0, 10) + '.csv'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); } catch { alert('Could not download the CSV.'); } };
+  try {
+    const r = await fetch('/api/admin/signups?project=' + encodeURIComponent(scope) + '&limit=500', { headers: adminHeaders() });
+    const d = await r.json(); const body = $('subody');
+    if (!d.enabled) { body.innerHTML = '<p style="color:var(--muted)">' + esc(d.reason) + '</p>'; return; }
+    const t = d.totals || {};
+    const mark = (m) => '<span class="flag' + (m === 'no-consent' ? '' : ' hard') + '" title="' + esc({ 'many-from-ip': 'five or more different emails from this connection in 24 h', 'many-from-device': 'three or more different emails from this device in 24 h', 'throwaway': 'a disposable-email domain', 'no-consent': 'ticked neither box' }[m] || m) + '">' + esc(m) + '</span>';
+    body.innerHTML = '<div class="kv" style="margin-bottom:10px"><b>People</b><span>' + t.all + '</span><b>Email opt-in</b><span>' + t.marketing + '</span><b>Text opt-in</b><span>' + t.sms + '</span><b>With a number</b><span>' + t.withPhone + '</span><b>Flagged</b><span>' + t.flagged + (t.flagged ? ' — same connection or device handing out addresses, or a throwaway domain' : '') + '</span></div>'
+      + '<p style="color:var(--muted);font-size:12.5px;margin:0 0 8px">Marks are worked out when you look, over the last 24 hours across every bot. Hashes, never addresses: nothing here turns back into an IP. The exact words each person ticked are on their row (hover the ✓).</p>'
+      + (d.rows.length ? '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px"><tr style="color:var(--muted);text-align:left"><th style="padding:4px 8px 4px 0">When</th><th style="padding:4px 8px">Who</th><th style="padding:4px 8px">Number</th><th style="padding:4px 8px">Opt-in</th><th style="padding:4px 8px">Marks</th><th style="padding:4px 8px">Same ip / device</th></tr>'
+        + d.rows.map((x) => '<tr style="border-top:1px solid var(--edge);vertical-align:top"><td style="padding:6px 8px 6px 0;white-space:nowrap;color:var(--muted)">' + esc(whenAt(x.created_at)) + '<br>' + esc(x.bot) + (x.source ? '<br>via ' + esc(x.source) : '') + '</td><td style="padding:6px 8px"><b>' + esc(x.email) + '</b>' + (x.name ? '<br>' + esc(x.name) : '') + '</td><td style="padding:6px 8px;white-space:nowrap">' + esc(x.phone || '—') + '</td><td style="padding:6px 8px;white-space:nowrap" title="' + esc(x.consent_text || '') + '">' + (x.marketing ? '✓ email ' : '') + (x.sms ? '✓ text' : '') + (!x.marketing && !x.sms ? '—' : '') + '</td><td style="padding:6px 8px">' + x.marks.map(mark).join(' ') + '</td><td style="padding:6px 8px;color:var(--muted);white-space:nowrap">' + x.sameIp24h + ' / ' + x.sameDevice24h + '</td></tr>').join('') + '</table></div>'
+        : '<p style="color:var(--muted)">Nobody has come through the gate yet' + (signupsScope === 'this' ? ' on this project' : '') + '.</p>');
+  } catch (err) { $('subody').innerHTML = '<p style="color:var(--muted)">Could not read sign-ups: ' + esc(err.message) + '</p>'; }
+}
 async function renderLeads() {
   const box = $('hoodbody');
   box.innerHTML = '<h4>Leads</h4><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="leadsbar"><button class="iconbtn" data-s="this"' + (leadsScope === 'this' ? ' style="background:var(--panel)"' : '') + '>this project</button><button class="iconbtn" data-s="all"' + (leadsScope === 'all' ? ' style="background:var(--panel)"' : '') + '>all projects</button><span class="spacer"></span><button class="iconbtn" data-r="1">Refresh list</button></div><div id="leadsbody"><p class="thinking"><span>Reading the log</span></p></div>';

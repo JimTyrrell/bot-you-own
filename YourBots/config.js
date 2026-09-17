@@ -88,7 +88,29 @@ export const CONFIG = {
   // says so in the logs. The admin code (ADMIN_PASSPHRASE) is separate.
   // Under the hood → Settings changes both without a commit (the saved copy wins,
   // then YourBots/settings.json, then this). docs/CUSTOMIZE.md → "Who can use it".
-  access: { default: "key", floor: "open" },
+  access: { default: "email", floor: "open" },
+
+  // ---- 5. THE SIGN-UP GATE (what "email" mode asks for) --------------------------
+  // Out of the box a visitor meets a welcome page: email, a mobile number, and two
+  // opt-in boxes. Everything here can be changed live in Under the hood → Settings
+  // (the saved copy wins). "required" | "optional" | "off" for the two fields.
+  // The number is for texting them; turn it off and nobody is asked. The boxes are
+  // never pre-ticked unless you say so — that is what makes the consent real.
+  // Every sign-up is stored on the person's row (name, phone, what they ticked and
+  // when, the exact words they ticked) and POSTed to signup.webhook if you set one,
+  // so your list tool gets it live. Under the hood → Sign-ups shows them all, with
+  // the abuse marks (same device or address handing out many emails, throwaway
+  // domains) and a CSV. docs/CUSTOMIZE.md → "The sign-up gate".
+  signup: {
+    title: "Try it, free",
+    blurb: "A ChatGPT-style assistant that runs on infrastructure the owner controls. Have a go, then see how it's made.",
+    askName: "optional",           // "required" | "optional" | "off"
+    askPhone: "required",          // "required" | "optional" | "off"   — the texting number
+    marketing: { show: true, required: false, checked: false, text: "Email me the newsletter, workshop dates and the occasional offer. Unsubscribe any time." },
+    sms: { show: true, required: false, checked: false, text: "Text me about this. Message rates may apply; reply STOP to end." },
+    privacyLine: "We keep your email, your number if you give it, and a hashed record of your device and connection to spot abuse. Nothing is sold or shared.",
+    webhook: "",                   // POST every sign-up here (Zapier, Make, your CRM). Empty = off.
+  },
 
   // ---- 5a. IDENTITY: the return window ----------------------------------------
   // A visitor in email/allow mode is remembered per browser (a device key). A

@@ -749,3 +749,47 @@ the email, and the admin code (and the local copy of chats the server holds).
 ## Hide the sidebar for customers
 `singleProject: true` in `YourBots/config.js` shows only the default project, no sidebar. The
 embed widget always behaves this way.
+
+
+## The sign-up gate (what "email" mode asks for)
+
+Out of the box the default access mode is **email**, so a new visitor meets a
+welcome page before the chat: a title and a line of pitch, their email, a mobile
+number, and two opt-in boxes. That page is the funnel. Everything on it lives in
+`YourBots/config.js → signup` and can be changed live in **Under the hood →
+Settings → The sign-up gate** (the saved copy wins, then `YourBots/settings.json`).
+
+| Knob | Values | Notes |
+|---|---|---|
+| `askName` | `required` / `optional` / `off` | |
+| `askPhone` | `required` / `optional` / `off` | The texting number. `off` = nobody is asked. Stored as `+13035550142`. A bare ten-digit number is taken as North American. |
+| `marketing` | `{ show, required, checked, text }` | The email opt-in box. `checked: true` pre-ticks it — don't, unless your lawyer says so. |
+| `sms` | same shape | The text opt-in box. Only shown when a number is asked for. |
+| `privacyLine` | text | The small print under the form. Say what you keep. |
+| `webhook` | URL | Every sign-up is POSTed here as JSON (Zapier, Make, your CRM). Empty = off. |
+
+Email is always required: it is how a person is remembered on their browser
+(docs/IDENTITY.md). The rules only run for a **new** person; someone signed up
+on another device just proves it's them.
+
+**What is stored** on the person's row (`id_users`): name, phone, which boxes
+they ticked, when, and the exact words next to the boxes at the time (the
+consent record). Plus three keyed hashes, sixteen hex characters each, that turn
+back into nothing: the connection (`ip_hash`), the browser (`ua_hash`) and a
+handful of device facts the page sends (`fp_hash`: time zone, screen, cores,
+platform, language). No fingerprinting library, no raw IP.
+
+**Under the hood → Sign-ups** lists everyone, with marks worked out when you
+look, over the last 24 hours across every bot:
+
+- `many-from-ip` — five or more different emails from one connection
+- `many-from-device` — three or more different emails from one device
+- `throwaway` — a disposable-email domain (a built-in list in `Engine/worker/signups.js`)
+- `no-consent` — ticked neither box (fine; just not a lead)
+
+There is deliberately **no cap** on how many addresses one person may type: the
+marks tell you who is handing yours out, and the model calls are rate-limited
+separately. ⬇ CSV gives you the whole table.
+
+**Locking it down:** Settings → Floor → `key`. Every bot then needs the
+passphrase, whatever else says. One click, no deploy.

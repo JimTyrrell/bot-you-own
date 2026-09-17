@@ -1,6 +1,7 @@
 import { CONFIG } from "../../YourBots/config.js";
 import { normaliseProject, normaliseWebsite, savedProjects, saveProject, deleteSavedProject, inFolder, resolveProject, resolveList, pickPublic, hrefFor, exportFiles, KINDS, KIND_LABELS, cleanKind } from "./projects.js";
-import { getSettings, saveSettings, settingsFileContent, cleanBadge, SETTINGS_FILE_VIEW as SETTINGS_FILE } from "./settings.js";
+import { getSettings, saveSettings, settingsFileContent, cleanBadge, cleanSignup, publicSignup, SETTINGS_FILE_VIEW as SETTINGS_FILE } from "./settings.js";
+import { listSignups, signupsCsv } from "./signups.js";
 import { handleIdentity, identify, linkByCode, signInMethods, adminNeedsCode, adminCodeOk, graceMinutesFor } from "../identity/index.js";
 import { ensureIdentitySchema, userByEmail as idUserByEmail } from "../identity/devices.js";
 import { listThreads, putThread, renameThread, deleteThread, usersWithHistory, ensureChatSchema } from "./chats.js";
@@ -141,7 +142,7 @@ export default {
       const bid = String(url.searchParams.get("bot") || (request.method === "POST" ? (await request.clone().json().catch(() => ({})))?.bot : "") || "").toLowerCase();
       const bot = await resolveProject(env, bid);
       if (!bid || bot.id !== bid) return json({ error: "which bot? send { bot }" }, 400);
-      return handleIdentity(request, env, url, { bot, allowed, unlockAllowed, graceMinutes: graceMinutesFor(bot, settings.identity?.graceMinutes) });
+      return handleIdentity(request, env, url, { bot, allowed, unlockAllowed, graceMinutes: graceMinutesFor(bot, settings.identity?.graceMinutes), signup: settings.signup });
     }
 
     if (url.pathname.startsWith("/api/admin/") || url.pathname.startsWith("/engine/")) {
@@ -150,6 +151,8 @@ export default {
       if (url.pathname === "/api/admin/audit") return json(await auditView(env, url.searchParams));
       if (url.pathname === "/api/admin/library" || url.pathname.startsWith("/api/admin/library/")) return handleLibrary(request, env, url);
       if (url.pathname === "/api/admin/leads" || url.pathname.startsWith("/api/admin/leads/")) return handleLeads(request, env, url);
+      if (url.pathname === "/api/admin/signups") return json(await listSignups(env, { project: String(url.searchParams.get("project") || "*").toLowerCase(), limit: url.searchParams.get("limit") }));
+      if (url.pathname === "/api/admin/signups.csv") { await logAdminEvent(env, request, "signups-export", String(url.searchParams.get("project") || "*"), "CSV download"); return signupsCsv(env, { project: String(url.searchParams.get("project") || "*").toLowerCase() }); }
       // The owner links a visitor's second browser: the visitor reads out the 6-character
       // code their screen shows, the owner types it here with the email. Both must match.
       if (url.pathname === "/api/admin/id/link") {
@@ -271,7 +274,8 @@ export default {
         if (ident && !(Number.isFinite(Number(ident.graceMinutes)) && Number(ident.graceMinutes) >= 0)) return json({ error: "identity.graceMinutes must be a number of minutes, 0 or more" }, 400);
         const exp = cleanExpiryConfig(b?.expiry);
         if (b?.expiry && !exp) return json({ error: `expiry.onLapse must be one of: ${LAPSE_MODES.join(", ")}, and the day counts must be numbers` }, 400);
-        await saveSettings(env, { access: next, createYourOwn: badge, identity: ident, expiry: exp });
+        const su = b?.signup ? cleanSignup(b.signup, settings.signup) : null;
+        await saveSettings(env, { access: next, createYourOwn: badge, identity: ident, expiry: exp, signup: su });
         await logAdminEvent(env, request, "settings-save", "access", `default ${settings.default} → ${next.default} · floor ${settings.floor} → ${next.floor}${badge ? ` · badge ${badge.show ? `"${badge.text}"` : "hidden"}` : ""}${ident ? ` · return window ${settings.identity?.graceMinutes} → ${Math.round(Number(ident.graceMinutes))} min` : ""}${exp ? ` · when access lapses ${settings.expiry?.onLapse} → ${exp.onLapse ?? settings.expiry?.onLapse}${exp.graceDays !== undefined ? `, grace ${exp.graceDays}d` : ""}` : ""}`);
         return json(await settingsView(env, await getSettings(env)));
       }
@@ -319,7 +323,7 @@ export default {
       const curId = current.id || CONFIG.defaultProject;
       const view = accessView(current, settings);
       const g = await guard(current);                                        // key / admin / draft — the email step is the chat's
-      if (!g.ok) return json({ locked: true, project: curId, projectName: current.name, access: view, reason: g.error, reply: g.reply, adminEnabled, siteName: CONFIG.siteName, accent: CONFIG.accent });
+      if (!g.ok) return json({ locked: true, project: curId, projectName: current.name, access: view, reason: g.error, reply: g.reply, adminEnabled, siteName: CONFIG.siteName, accent: CONFIG.accent, signup: publicSignup(settings.signup) });
       const all = (await resolveList(env)).map((p) => { const a = effectiveAccess(p, settings); return { ...p, kind: cleanKind(p.kind), href: hrefFor(p), access: a.mode, listed: a.listed }; });
       // Visitors see listed bots that aren't drafts. The admin sees everything, with a badge.
       // "listed" is visibility, not security: an unlisted bot still checks its own door.
@@ -366,6 +370,7 @@ export default {
         owner: CONFIG.owner,
         siteName: CONFIG.siteName,
         createYourOwn: settings.createYourOwn.show ? { text: settings.createYourOwn.text, url: settings.createYourOwn.url } : null,
+        signup: publicSignup(settings.signup),
         accent: CONFIG.accent,
         thinkingWords: Array.isArray(CONFIG.thinkingWords) ? CONFIG.thinkingWords : ["Thinking"],
         model: CONFIG.model,
@@ -1339,6 +1344,7 @@ async function settingsView(env, settings) {
   return {
     access: { default: settings.default, floor: settings.floor },
     createYourOwn: settings.createYourOwn,
+    signup: settings.signup,
     identity: { graceMinutes: settings.identity?.graceMinutes, source: settings.identity?.source },
     allowlist: { keySet: allowlistKeySet(env), counts, global: counts[GLOBAL_SCOPE] || 0 },
     // When access runs out: the policy, everyone who currently has an end date, and
