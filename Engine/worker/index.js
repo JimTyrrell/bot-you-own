@@ -622,7 +622,7 @@ async function handleChat(request, env, ctx, { isAdmin = false, guard, visitorOf
   if (language.unavailable) flags.push("language-unavailable");
 
   // --- LAYER 1: build the prompt --------------------------------------------
-  const prompt = buildSystemPrompt({ config: CONFIG, project, passages, attachments, bookingLive: bookingLive(env, project), language });
+  const prompt = buildSystemPrompt({ config: CONFIG, project, passages, attachments, bookingLive: bookingLive(env, project), language, tour: project.tour && Array.isArray(body.tour) ? body.tour.map((x) => String(x).slice(0, 20)).slice(0, 8) : null });
   const outboundOpts = { allowedLinks: project.allowedLinks, protectedText: prompt.protectedText, config: CONFIG, project };
   // A second, non-streaming call with the same prompt — used only if the first reply came out as garbage (see finish()).
   const retry = () => complete({ env, config: CONFIG, system: prompt.text, messages: history, stream: false });

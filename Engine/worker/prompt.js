@@ -41,7 +41,7 @@ export const ROOT_PROMPT_FILES = {
 
 // `language` comes from Engine/worker/language.js (chooseLanguage): which
 // language to answer in this turn. Omit it and the prompt reads as English.
-export function buildSystemPrompt({ config, project, passages = "", attachments = [], language = null, now = new Date(), bookingLive = false }) {
+export function buildSystemPrompt({ config, project, passages = "", attachments = [], language = null, now = new Date(), bookingLive = false, tour = null }) {
   const strict = project.grounding !== "open";
   const owner = config.owner || "";
   const handoff = [project.handoffText, project.handoffContact].filter(Boolean).join(" ");
@@ -103,11 +103,18 @@ export function buildSystemPrompt({ config, project, passages = "", attachments 
   ].filter(Boolean).join("\n\n");
   const links = `<links>\n${t("8-links.md", linksMd)}\n</links>`;
 
+  // The guide bot (project.tour) is told where THIS visitor is on the tour, from the page's
+  // strip: what's done and what's next. It offers the next stop, never a stop already done.
+  const STOP_NAMES = { try: "try a sample bot", break: "try to break it", hood: "see how it's made", make: "make one yourself", join: "join the community" };
+  const tourBlock = project.tour && Array.isArray(project.tour.stops) && Array.isArray(tour)
+    ? (() => { const done = project.tour.stops.filter((s) => tour.includes(s)); const next = project.tour.stops.find((s) => !tour.includes(s)); return `<tour>\nWhere this visitor is on the tour right now: ${done.length ? "done — " + done.map((s) => STOP_NAMES[s] || s).join(", ") : "nothing done yet"}. ${next ? "Their next stop is: " + (STOP_NAMES[next] || next) + ". When it fits, offer that one." : "They have finished every stop. Congratulate them once, then just be useful."} Never suggest a stop they have already done.\n</tour>`; })()
+    : "";
   const text = [
     identity,
     `<personality>\n${personality}\n</personality>`,
     `<formatting>\n${formatting}\n</formatting>`,
     `<job>\n${job}\n</job>`,
+    tourBlock,
     ownerInstructions,
     knowledge,
     links,

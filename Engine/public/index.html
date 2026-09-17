@@ -74,6 +74,9 @@
   #tourmake a, #tourmake button { font:inherit; font-size:13px; padding:7px 12px; border-radius:10px; border:1px solid var(--edge); background:var(--bg); color:var(--text); text-decoration:none; cursor:pointer; }
   #tourmake a.primary { background:var(--text); color:var(--bg); border-color:transparent; font-weight:600; }
   #tourmake .why { color:var(--muted); }
+  #tourtoast { position:fixed; left:50%; bottom:92px; transform:translate(-50%, 16px); opacity:0; pointer-events:none; z-index:60; background:var(--text); color:var(--bg); border-radius:14px; padding:10px 16px; max-width:min(520px, 92vw); font-size:13.5px; line-height:1.4; box-shadow:0 8px 30px rgba(0,0,0,.18); transition:opacity .25s, transform .25s; display:flex; flex-direction:column; gap:2px; }
+  #tourtoast.show { opacity:1; transform:translate(-50%, 0); }
+  #tourtoast b { font-size:13px; }
   header h1 { font-size:15px; margin:0; font-weight:600; }
   .pill { font-size:11px; padding:2px 8px; border-radius:999px; background:var(--panel); color:var(--muted); }
   .spacer { flex:1; }
@@ -1083,9 +1086,13 @@ const FLAG_LINKS = {
 // The small chips under an answer. Two kinds share the row: firewall flags
 // (what the engine did to this turn) and citations — the documents the answer
 // drew on, as "📄 name". Names only, never a link: the files are admin-only.
+// Chips a VISITOR should see: what the firewall did to their turn, and what happened
+// to their file. The rest — gateway, router, retries, webhooks, intake bookkeeping — is
+// the owner's plumbing and only shows with the admin code. On a tour it read as errors.
+const VISITOR_FLAGS = /^(injection-blocked|link-stripped|leak-blocked|rate-limited|model-error|gateway-blocked|invisible-text-stripped|handoff-appended|secret-detected|degenerate-reply|attachment-used|attachment-injection-blocked|attachment-secret-blocked|guard-blocked|human-requested|booking-)/;
 function flagRow(flags, sources) {
   const row = document.createElement('div'); row.className = 'flags';
-  (flags || []).forEach((f) => {
+  (flags || []).filter((f) => ADMIN || VISITOR_FLAGS.test(f)).forEach((f) => {
     const link = FLAG_LINKS[f];
     const c = document.createElement(link ? 'a' : 'span'); c.className = 'flag' + (/blocked|error/.test(f) ? ' hard' : '') + (link ? ' link' : '');
     if (link) { c.href = link; c.target = '_blank'; c.rel = 'noopener'; c.title = 'Opens the step-by-step in a new tab'; }
@@ -1117,6 +1124,19 @@ const STOP_META = {
   join:  { label: 'Join',            hint: 'The workshop, the help, and the people doing this.' },
 };
 const REPO = 'https://github.com/JimTyrrell/bot-you-own';
+const STOP_DONE = {
+  try: 'You tried a bot. Next: try to break it.',
+  break: 'That chip under the reply is the firewall showing its work. Next: see the code.',
+  hood: 'Everything you saw is in that repo. Next: make one yourself.',
+  make: 'Deploy or import — either way it\'s yours. Last stop: the community.',
+  join: 'That\'s where the workshop and the help live.',
+};
+// A quiet card, bottom centre, that goes away by itself.
+function tourToast(title, body, ms = 5200) {
+  let t = $('tourtoast'); if (!t) { t = document.createElement('div'); t.id = 'tourtoast'; document.body.appendChild(t); }
+  t.innerHTML = '<b></b><span></span>'; t.querySelector('b').textContent = title; t.querySelector('span').textContent = body;
+  t.classList.add('show'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), ms);
+}
 function tourLoad() { try { return JSON.parse(localStorage.getItem('byo:tour') || '{}') || {}; } catch { return {}; } }
 function tourSave() { try { localStorage.setItem('byo:tour', JSON.stringify(TOUR.done)); } catch {} }
 async function initTour() {
@@ -1136,6 +1156,9 @@ function tourSample() { return (state.projects || []).find((p) => p.id === 'tumb
 async function markStop(stop) {
   if (!TOUR.guide || !STOP_META[stop] || TOUR.done[stop]) return;
   TOUR.done[stop] = new Date().toISOString(); tourSave(); renderTour();
+  const n = TOUR.stops.filter((s) => TOUR.done[s]).length;
+  if (n === TOUR.stops.length) tourToast('Tour done 🎉', (TOUR.community?.name ? 'See you in ' + TOUR.community.name + '. ' : '') + 'Every bot here is yours to keep playing with.', 8000);
+  else tourToast('✓ ' + STOP_META[stop].label + ' · ' + n + ' of ' + TOUR.stops.length, STOP_DONE[stop] || '');
   try {
     const r = await fetch('/api/tour', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(TOUR.guide.id) }, body: JSON.stringify({ bot: TOUR.guide.id, stop }) });
     const d = await r.json(); if (r.ok) { TOUR.deploy = d.deploy || TOUR.deploy; TOUR.signedUp = !!d.signedUp; Object.assign(TOUR.done, d.done || {}); tourSave(); renderTour(); }
@@ -1218,7 +1241,7 @@ async function send(text) {
     // a dropped connection, a Worker mid-deploy (502/503/504) or the rate limiter
     // (429) — before the person is told to try again. Only the send is retried;
     // once a reply has started streaming, a break is a break.
-    const payload = JSON.stringify({ project: state.project.id, messages: botTurns(chat).map(({ role, content }) => ({ role, content })), attachments: (chat.attachments || []).map(({ name, text }) => ({ name, text })), voice: spoken ? 'in' : undefined, stream: true });
+    const payload = JSON.stringify({ project: state.project.id, messages: botTurns(chat).map(({ role, content }) => ({ role, content })), attachments: (chat.attachments || []).map(({ name, text }) => ({ name, text })), voice: spoken ? 'in' : undefined, stream: true, tour: TOUR.guide && state.project.id === TOUR.guide.id ? TOUR.stops.filter((s) => TOUR.done[s]) : undefined });
     const waits = [1500, 4000, 9000];
     let res = null;
     for (let attempt = 0; ; attempt++) {
