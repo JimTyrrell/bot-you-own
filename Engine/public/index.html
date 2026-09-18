@@ -97,6 +97,14 @@
   .starters button { text-align:left; padding:12px 14px; border:1px solid var(--edge); background:var(--bg); color:var(--text); border-radius:12px; cursor:pointer; font-size:14px; line-height:1.4; }
   .starters button:hover { background:var(--panel); }
   .empty .nextstop { margin:-4px 0 14px; font-size:14px; color:var(--muted); }
+  .empty .tourlist { list-style:none; margin:0 auto 16px; padding:0; max-width:520px; text-align:left; display:flex; flex-direction:column; gap:6px; }
+  .empty .tourlist li { display:flex; align-items:center; gap:12px; padding:9px 12px; border:1px solid var(--edge); border-radius:12px; background:var(--bg); font-size:14px; }
+  .empty .tourlist li .n { width:24px; height:24px; border-radius:50%; border:1px solid var(--edge); display:inline-flex; align-items:center; justify-content:center; font-size:12px; flex:none; }
+  .empty .tourlist li .t { display:flex; flex-direction:column; flex:1; min-width:0; }
+  .empty .tourlist li .h { color:var(--muted); font-size:12.5px; line-height:1.35; }
+  .empty .tourlist li.done { color:var(--muted); } .empty .tourlist li.done .n { background:var(--accent, #10a37f); color:#fff; border-color:transparent; }
+  .empty .tourlist li.next { border-color:var(--text); background:var(--panel); }
+  .empty .tourlist li button { font:inherit; font-weight:600; color:var(--bg); background:var(--text); border:0; border-radius:999px; padding:6px 12px; cursor:pointer; flex:none; }
   .foot .iconbtn { white-space:nowrap; }
   .empty .nextstop button { font:inherit; font-weight:600; color:var(--text); background:var(--panel); border:1px solid var(--edge); border-radius:999px; padding:5px 12px; cursor:pointer; }
   .empty .nextstop button:hover { background:var(--edge); }
@@ -962,9 +970,18 @@ function renderLog() {
     const greet = p.greeting || 'What can I help with?';
     empty.innerHTML = '<h2>' + esc(hello ? hello + greet.replace(/^(welcome|hello|hi)[.,!]?\s*/i, '') : greet) + '</h2><p>' + esc(p.tagline || '') + '</p>';
     if (isGuide && TOUR.stops.length) {
+      // The stops as a list, mirroring the strip: ticks on the done ones, a button on the next.
+      const ol = document.createElement('ol'); ol.className = 'tourlist';
+      TOUR.stops.forEach((s, i) => {
+        const li = document.createElement('li'); li.className = TOUR.done[s] ? 'done' : s === next ? 'next' : '';
+        li.innerHTML = '<span class="n">' + (TOUR.done[s] ? '✓' : i + 1) + '</span><span class="t"><b>' + esc(STOP_META[s].label) + '</b><span class="h">' + esc(STOP_META[s].hint) + '</span></span>';
+        if (s === next) { const b = document.createElement('button'); b.type = 'button'; b.textContent = 'Go →'; b.onclick = () => tourGo(s); li.appendChild(b); }
+        else if (!TOUR.done[s]) { li.style.cursor = 'pointer'; li.title = 'Jump to this stop'; li.onclick = () => tourGo(s); }
+        ol.appendChild(li);
+      });
+      empty.appendChild(ol);
       const line = document.createElement('p'); line.className = 'nextstop';
-      if (next) { line.innerHTML = (nDone ? esc(nDone + ' of ' + TOUR.stops.length + ' done. ') : '') + 'Your next stop: <button type="button">' + esc((nDone ? '' : 'Stop 1 · ') + STOP_META[next].label) + ' →</button> <span>' + esc(STOP_META[next].hint) + '</span>'; line.querySelector('button').onclick = () => tourGo(next); }
-      else line.textContent = 'You\'ve done every stop. Ask me anything, or go play with the bots.';
+      line.textContent = next ? (nDone ? nDone + ' of ' + TOUR.stops.length + ' done. ' : '') + 'Ask me anything, or tap a starter.' : 'You\'ve done every stop. Ask me anything, or go play with the bots.';
       empty.appendChild(line);
     }
     if (p.starters?.length) {

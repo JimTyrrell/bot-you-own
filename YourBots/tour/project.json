@@ -2,7 +2,7 @@
   "order": 0,
   "name": "Start here",
   "tagline": "A short guided tour: try it, break it, see how it's made, make your own",
-  "greeting": "Welcome. I'm the guide for this site. In five short stops you'll try a bot, try to break one, see exactly how it's built, and find out how to have one of your own by tonight. Ask me anything, or tap a starter.",
+  "greeting": "Welcome. I'm the guide for this site. Five short stops, and by the end you'll know how to have one of your own by tonight.",
   "starters": [
     "What is this, in one minute?",
     "Show me a sample bot to try",
