@@ -402,6 +402,7 @@ document.addEventListener('DOMContentLoaded', function () {
   <input id="adminkey" type="password" placeholder="Admin code" autocomplete="off" hidden /><input id="adminkeycode" inputmode="numeric" placeholder="Authenticator code" autocomplete="one-time-code" hidden />
   <input id="lname" type="text" placeholder="Your name" autocomplete="name" maxlength="80" hidden />
   <input id="email" type="email" placeholder="Your email address" autocomplete="email" />
+  <p id="gateclear" class="lockprivacy" hidden style="margin:-6px 0 0">Filled in from last time. <a href="#" id="gateclearlink">Not you? Clear</a></p>
   <input id="lphone" type="tel" placeholder="Mobile number (for texts)" autocomplete="tel" inputmode="tel" hidden />
   <label class="lockbox" id="lmarketingwrap" hidden><input type="checkbox" id="lmarketing" /><span id="lmarketingtext"></span></label>
   <label class="lockbox" id="lsmswrap" hidden><input type="checkbox" id="lsms" /><span id="lsmstext"></span></label>
@@ -606,8 +607,20 @@ let SIGNUP = { title: '', blurb: '', askName: 'optional', askPhone: 'off', marke
 function browserFacts() {
   try { return [Intl.DateTimeFormat().resolvedOptions().timeZone, screen.width + 'x' + screen.height + 'x' + screen.colorDepth, navigator.hardwareConcurrency || '', navigator.platform || '', navigator.language, navigator.maxTouchPoints || 0, (navigator.deviceMemory || '')].join('|'); } catch { return ''; }
 }
+// What this browser typed at the gate last time (name, email, number, the boxes): kept
+// locally so coming back through is one tap. Not sent anywhere; "Not you? Clear" forgets it.
+function gateMemory() { try { return JSON.parse(localStorage.getItem('byo:gate') || 'null'); } catch { return null; } }
+function rememberGate(v) { try { localStorage.setItem('byo:gate', JSON.stringify(v)); } catch {} }
+function forgetGate() { try { localStorage.removeItem('byo:gate'); } catch {} ['lname', 'email', 'lphone'].forEach((id) => { $(id).value = ''; }); $('lmarketing').checked = false; $('lsms').checked = false; delete $('lmarketing').dataset.touched; delete $('lsms').dataset.touched; $('gateclear').hidden = true; drawSignup(true); $('email').focus(); }
 // The sign-up fields: shown for a fresh email join according to the gate's rules.
 function drawSignup(on) {
+  const mem = on ? gateMemory() : null;
+  if (mem && !$('email').value) {
+    $('lname').value = mem.name || ''; $('email').value = mem.email || ''; $('lphone').value = mem.phone || '';
+    if (typeof mem.marketing === 'boolean') { $('lmarketing').checked = mem.marketing; $('lmarketing').dataset.touched = '1'; }
+    if (typeof mem.sms === 'boolean') { $('lsms').checked = mem.sms; $('lsms').dataset.touched = '1'; }
+  }
+  $('gateclear').hidden = !(on && mem && mem.email);
   const su = SIGNUP;
   $('lname').hidden = !on || su.askName === 'off'; $('lname').required = on && su.askName === 'required'; $('lname').placeholder = 'Your name' + (su.askName === 'optional' ? ' (optional)' : '');
   $('lphone').hidden = !on || su.askPhone === 'off'; $('lphone').required = on && su.askPhone === 'required'; $('lphone').placeholder = 'Mobile number, for texts' + (su.askPhone === 'optional' ? ' (optional)' : '');
@@ -642,6 +655,7 @@ function showLock(msg, l) {
   (needAdmin ? $('adminkey') : needKey ? $('pass') : needEmail ? $('email') : $('lockback')).focus();
 }
 $('lockcfg').onclick = () => { $('lock').classList.remove('show'); openConfigure(lock.project); };
+$('gateclearlink').onclick = (e) => { e.preventDefault(); forgetGate(); };
 $('lockswitch').onclick = () => signOut();
 $('lockback').onclick = () => { if (!(state.projects && state.projects.length)) { location.href = location.pathname; return; } $('lock').classList.remove('show'); const p = state.projects?.find((x) => x.id === state.cfg?.defaultProject) || state.projects?.[0]; if (p && p.id !== state.project?.id) selectProject(p); };
 // A second browser typing a known email: the server hands it a 6-character code instead of
@@ -692,6 +706,7 @@ $('lockform').addEventListener('submit', async (e) => {
       if (!$('lphone').hidden && $('lphone').required && !gate.phone) { $('lockmsg').textContent = 'Please add a mobile number we can text.'; $('lphone').focus(); return; }
       const res = await fetch('/api/id/join', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(lock.project) }, body: JSON.stringify({ bot: lock.project, email: em, ...gate }) });
       const data = await res.json().catch(() => ({}));
+      if (res.ok) rememberGate({ name: gate.name, email: em, phone: gate.phone, marketing: gate.marketing, sms: gate.sms });
       if (!res.ok) { $('lockmsg').textContent = res.status === 429 ? 'Too many tries. Wait a minute.' : (data.reason || 'Could not join. Try again.'); if (data.error === 'phone') $('lphone').focus(); else if (data.error === 'name') $('lname').focus(); else if (data.error === 'email') $('email').focus(); return; }
       if (!data.linked) return showPending(data.code, em.toLowerCase());
       VISITOR = data.email || em.toLowerCase(); VISITOR_NAME = data.name || gate.name || ''; identified[lock.project] = true;
