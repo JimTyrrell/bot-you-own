@@ -83,8 +83,9 @@ export async function userForDeviceAnyBot(env, keyHash) {
 export async function adoptDevice(env, bot, keyHash, graceMinutes = DEFAULT_GRACE_MINUTES) {
   const other = await userForDeviceAnyBot(env, keyHash);
   if (!other || other.bot === bot) return null;
-  const r = await join(env, bot, { email: other.email, keyHash, graceMinutes: 0 });
-  if (!r.linked) return null;                          // that email is already someone else's on this bot: leave it to the code screen
+  // A browser already trusted on one bot is trusted on the others: no waiting, whatever the return window says.
+  const r = await join(env, bot, { email: other.email, keyHash, graceMinutes: ALWAYS });
+  if (!r.linked) return null;
   if (r.fresh) { try { await recordSignup(env, bot, r.user.id, { ...other, consented_at: other.consented_at, source: other.source }); } catch {} }
   console.log(JSON.stringify({ event: "identity-adopt", from: other.bot, to: bot }));
   return userById(env, bot, r.user.id);
