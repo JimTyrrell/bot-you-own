@@ -1,6 +1,6 @@
 import { CONFIG } from "../../YourBots/config.js";
 import { normaliseProject, normaliseWebsite, savedProjects, saveProject, deleteSavedProject, inFolder, resolveProject, resolveList, pickPublic, hrefFor, exportFiles, KINDS, KIND_LABELS, cleanKind } from "./projects.js";
-import { getSettings, saveSettings, settingsFileContent, cleanBadge, cleanSignup, publicSignup, cleanLinks, SETTINGS_FILE_VIEW as SETTINGS_FILE } from "./settings.js";
+import { getSettings, saveSettings, settingsFileContent, cleanBadge, cleanSignup, publicSignup, cleanLinks, cleanBrand, SETTINGS_FILE_VIEW as SETTINGS_FILE } from "./settings.js";
 // The GitHub repo this deploys from: the GITHUB_REPO secret first, config.js second (blank in the template on purpose).
 const repoOf = (env) => String(env?.GITHUB_REPO || CONFIG.github?.repo || "").trim();
 import { listSignups, signupsCsv } from "./signups.js";
@@ -322,7 +322,8 @@ export default {
         if (b?.expiry && !exp) return json({ error: `expiry.onLapse must be one of: ${LAPSE_MODES.join(", ")}, and the day counts must be numbers` }, 400);
         const su = b?.signup ? cleanSignup(b.signup, settings.signup) : null;
         const lk = b?.links ? cleanLinks(b.links) : null;
-        await saveSettings(env, { access: next, createYourOwn: badge, identity: ident, expiry: exp, signup: su, links: lk });
+        const br = b?.brand ? cleanBrand(b.brand) : null;
+        await saveSettings(env, { access: next, createYourOwn: badge, identity: ident, expiry: exp, signup: su, links: lk, brand: br });
         await logAdminEvent(env, request, "settings-save", "access", `default ${settings.default} → ${next.default} · floor ${settings.floor} → ${next.floor}${badge ? ` · badge ${badge.show ? `"${badge.text}"` : "hidden"}` : ""}${ident ? ` · return window ${settings.identity?.graceMinutes} → ${Math.round(Number(ident.graceMinutes))} min` : ""}${exp ? ` · when access lapses ${settings.expiry?.onLapse} → ${exp.onLapse ?? settings.expiry?.onLapse}${exp.graceDays !== undefined ? `, grace ${exp.graceDays}d` : ""}` : ""}`);
         return json(await settingsView(env, await getSettings(env)));
       }
@@ -370,7 +371,7 @@ export default {
       const curId = current.id || CONFIG.defaultProject;
       const view = accessView(current, settings);
       const g = await guard(current);                                        // key / admin / draft — the email step is the chat's
-      if (!g.ok) return json({ locked: true, project: curId, projectName: current.name, access: view, reason: g.error, reply: g.reply, adminEnabled, siteName: CONFIG.siteName, accent: CONFIG.accent, signup: publicSignup(settings.signup) });
+      if (!g.ok) return json({ locked: true, project: curId, projectName: current.name, access: view, reason: g.error, reply: g.reply, adminEnabled, siteName: settings.brand?.siteName || CONFIG.siteName, accent: CONFIG.accent, signup: publicSignup(settings.signup) });
       const all = (await resolveList(env)).map((p) => { const a = effectiveAccess(p, settings); return { ...p, kind: cleanKind(p.kind), href: hrefFor(p), access: a.mode, listed: a.listed }; });
       // Visitors see listed bots that aren't drafts. The admin sees everything, with a badge.
       // "listed" is visibility, not security: an unlisted bot still checks its own door.
@@ -416,8 +417,8 @@ export default {
         access: view,
         current: curId,
         adminEnabled,
-        owner: CONFIG.owner,
-        siteName: CONFIG.siteName,
+        owner: settings.brand?.owner || CONFIG.owner,
+        siteName: settings.brand?.siteName || CONFIG.siteName,
         createYourOwn: settings.createYourOwn.show ? { text: settings.createYourOwn.text, url: settings.createYourOwn.url } : null,
         signup: publicSignup(settings.signup),
         community: CONFIG.community && CONFIG.community.show !== false && CONFIG.community.url ? { name: CONFIG.community.name, url: CONFIG.community.url, pitch: CONFIG.community.pitch } : null,
@@ -532,6 +533,7 @@ async function readJson(request, { max = MAX_JSON, strict = true } = {}) {
 }
 
 async function handleChat(request, env, ctx, { isAdmin = false, guard, visitorOf = async () => "" } = {}) {
+  const settings = await getSettings(env);                                   // brand (run by), cached 10 s
   if (!(await allowed(env, request))) {
     return json({ reply: "You're sending messages faster than I can think. Give me a moment and try again.", flags: ["rate-limited"] }, 429);
   }
@@ -643,7 +645,7 @@ async function handleChat(request, env, ctx, { isAdmin = false, guard, visitorOf
   if (language.unavailable) flags.push("language-unavailable");
 
   // --- LAYER 1: build the prompt --------------------------------------------
-  const prompt = buildSystemPrompt({ config: CONFIG, project, passages, attachments, bookingLive: bookingLive(env, project), language, tour: project.tour && Array.isArray(body.tour) ? body.tour.map((x) => String(x).slice(0, 20)).slice(0, 8) : null });
+  const prompt = buildSystemPrompt({ config: { ...CONFIG, owner: settings.brand?.owner || CONFIG.owner, siteName: settings.brand?.siteName || CONFIG.siteName }, project, passages, attachments, bookingLive: bookingLive(env, project), language, tour: project.tour && Array.isArray(body.tour) ? body.tour.map((x) => String(x).slice(0, 20)).slice(0, 8) : null });
   const outboundOpts = { allowedLinks: project.allowedLinks, protectedText: prompt.protectedText, config: CONFIG, project };
   // A second, non-streaming call with the same prompt — used only if the first reply came out as garbage (see finish()).
   const retry = () => complete({ env, config: CONFIG, system: prompt.text, messages: history, stream: false });
@@ -1398,6 +1400,7 @@ async function settingsView(env, settings) {
     access: { default: settings.default, floor: settings.floor },
     createYourOwn: settings.createYourOwn,
     signup: settings.signup,
+    brand: settings.brand,
     identity: { graceMinutes: settings.identity?.graceMinutes, source: settings.identity?.source },
     allowlist: { keySet: allowlistKeySet(env), counts, global: counts[GLOBAL_SCOPE] || 0 },
     // When access runs out: the policy, everyone who currently has an end date, and
@@ -1591,8 +1594,9 @@ async function versionStamp(env) {
 
 // "Under the hood": everything the admin view shows, for one project.
 async function engineView(env, projectId) {
+  const settings = await getSettings(env);
   const project = await resolveProject(env, String(projectId || ""));
-  const prompt = buildSystemPrompt({ config: CONFIG, project, bookingLive: bookingLive(env, project) });
+  const prompt = buildSystemPrompt({ config: { ...CONFIG, owner: settings.brand?.owner || CONFIG.owner, siteName: settings.brand?.siteName || CONFIG.siteName }, project, bookingLive: bookingLive(env, project) });
   let sources = [];
   try { sources = await (await env.ASSETS.fetch(new Request("https://x/engine/index.json"))).json(); } catch {}
   const { files, instructions, ...meta } = project;

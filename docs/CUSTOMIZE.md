@@ -834,8 +834,8 @@ the workshop and the free group, a box for a code, and the licensed prompts.
 you gave it to, DM it. A code looks like `K7M4-P2QX`. Any number of email
 addresses may use it: every use is logged against the code with the email and
 the time, and the code says who had it, so handing it round is visible rather
-than blocked. Optional cap on uses. Disable one and it stops at once. The guide bot has `identity.graceMinutes: 0`, so a typed email
-carries nothing over from another device.
+than blocked. Optional cap on uses. Disable one and it stops at once. The return window (Settings) decides how long after activity a typed email
+is trusted on a new device; 15 minutes is the demo's setting.
 
 **One sign-up, every bot.** A browser that signed up on any bot of this
 deployment is let into the others in email mode without the form again; the

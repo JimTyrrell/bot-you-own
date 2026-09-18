@@ -25,7 +25,19 @@ import { accessSettings } from "./access.js";
 import { cleanGrace, DEFAULT_GRACE_MINUTES } from "../identity/devices.js";
 import { expirySettings, cleanExpiryConfig, EXPIRY_BUILT_IN } from "./expiry.js";
 
-const KEYS = ["access", "createYourOwn", "identity", "expiry", "signup", "links"];
+const KEYS = ["access", "createYourOwn", "identity", "expiry", "signup", "links", "brand"];
+
+// ---- Who runs this site and what it's called: config.js ships a placeholder; Settings makes it yours.
+export function cleanBrand(b) {
+  if (!b || typeof b !== "object") return null;
+  const owner = String(b.owner || "").trim().slice(0, 80), siteName = String(b.siteName || "").trim().slice(0, 80);
+  return owner || siteName ? { owner, siteName } : null;
+}
+function mergeBrand(c, f, s) {
+  let cur = { owner: String(c?.owner || ""), siteName: String(c?.siteName || "") }, source = "YourBots/config.js";
+  for (const [layer, label] of [[f, "YourBots/settings.json"], [s, "saved (Settings screen)"]]) { const v = cleanBrand(layer); if (v) { cur = { owner: v.owner || cur.owner, siteName: v.siteName || cur.siteName }; source = label; } }
+  return { ...cur, source };
+}
 
 // ---- Links the app hands out but the repo never carries (config.js → links is blank on purpose).
 export function cleanLinks(l) {
@@ -99,7 +111,8 @@ export async function getSettings(env) {
   const expiry = expirySettings(CONFIG, SETTINGS_FILE, rows.expiry ? { expiry: rows.expiry } : null);
   const signup = mergeSignup(CONFIG.signup, SETTINGS_FILE?.signup, rows.signup);
   const links = mergeLinks(CONFIG.links, SETTINGS_FILE?.links, rows.links);
-  return { ...access, createYourOwn: badge, identity, expiry, signup, links };
+  const brand = mergeBrand({ owner: CONFIG.owner, siteName: CONFIG.siteName }, SETTINGS_FILE?.brand, rows.brand);
+  return { ...access, createYourOwn: badge, identity, expiry, signup, links, brand };
 }
 // identity.graceMinutes: the return window, in minutes. 0 = off. Same three places, later wins.
 const graceOf = (i) => (i && typeof i === "object" && i.graceMinutes !== undefined && i.graceMinutes !== null && i.graceMinutes !== "" && Number.isFinite(Number(i.graceMinutes)) && Number(i.graceMinutes) >= 0 ? cleanGrace(i.graceMinutes) : null);
@@ -120,7 +133,7 @@ function mergeBadge(c, f, s) {
 }
 
 // The Settings screen's Save: one row per key, live within 10 s everywhere.
-export async function saveSettings(env, { access, createYourOwn, identity, expiry, signup, links } = {}) {
+export async function saveSettings(env, { access, createYourOwn, identity, expiry, signup, links, brand } = {}) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT)`).run();
   const put = (key, obj) => env.DB.prepare(`INSERT INTO settings (key, json, updated_at, updated_by) VALUES (?, ?, ?, 'admin') ON CONFLICT(key) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at, updated_by = excluded.updated_by`).bind(key, JSON.stringify(obj), new Date().toISOString());
   const ops = [];
@@ -130,6 +143,7 @@ export async function saveSettings(env, { access, createYourOwn, identity, expir
   if (expiry && cleanExpiryConfig(expiry)) ops.push(put("expiry", cleanExpiryConfig(expiry)));
   if (signup && cleanSignup(signup)) ops.push(put("signup", cleanSignup(signup)));
   if (links && cleanLinks(links)) ops.push(put("links", cleanLinks(links)));
+  if (brand && cleanBrand(brand)) ops.push(put("brand", cleanBrand(brand)));
   if (ops.length) await env.DB.batch(ops);
   CACHE = { at: 0, rows: null };
 }
