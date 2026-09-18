@@ -379,12 +379,12 @@ document.addEventListener('DOMContentLoaded', function () {
   <div id="adminmsg" class="lockmsg"></div>
 </form></div>
 <div id="keywrap" class="lockwrap keywrap"><form id="keyform">
-  <h2 id="key_title">This stop needs a key</h2>
-  <p id="key_why">The code, the walkthrough and the deploy button open with a key from the workshop.</p>
+  <h2 id="key_title">🔑 This stop needs a workshop key</h2>
+  <p id="key_why">You're signed in. This one stop opens with a key from the workshop.</p>
   <a class="primary" id="key_workshop" href="#" target="_blank" rel="noopener">Get the workshop</a>
-  <p class="lockprivacy" style="margin:2px 0 -4px">Got a key already?</p>
-  <div style="display:flex;gap:8px"><input id="key_code" placeholder="Code, e.g. K7M4-P2QX" maxlength="9" autocomplete="off" style="flex:1;text-transform:uppercase" /><button type="submit" id="key_go" style="flex:none;padding:10px 16px">Unlock</button></div>
-  <button type="button" id="key_close" style="background:var(--panel);color:var(--text)">Not now</button>
+  <p class="lockprivacy" style="margin:2px 0 -4px">Already have a key? It looks like K7M4-P2QX.</p>
+  <div style="display:flex;gap:8px"><input id="key_code" placeholder="Your key" maxlength="9" autocomplete="off" style="flex:1;text-transform:uppercase" /><button type="submit" id="key_go" style="flex:none;padding:10px 16px">Use my key</button></div>
+  <button type="button" id="key_close" style="background:var(--panel);color:var(--text)">Back to the tour</button>
   <div id="key_msg" class="sbmsg"></div>
 </form></div>
 <div id="sandboxwrap" class="lockwrap"><form id="sandboxform" class="sbform">
@@ -732,7 +732,7 @@ $('lockform').addEventListener('submit', async (e) => {
       VISITOR = data.email || em.toLowerCase(); VISITOR_NAME = data.name || gate.name || ''; identified[lock.project] = true;
       // a key typed at the gate is redeemed right away; a wrong one is just ignored here (the modal will ask again)
       const key = ($('lkey').value || '').trim(); const guide = (state.cfg?.projects || []).find((p) => p.tour) || (state.projects || []).find((p) => p.tour) || (SIGNUP.keys ? { id: lock.project } : null);
-      if (key && guide) { try { const kr = await fetch('/api/tour', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(guide.id) }, body: JSON.stringify({ bot: guide.id, code: key }) }); const kd = await kr.json(); if (kd.redeemed?.ok) { TOUR.deploy = kd.deploy; TOUR.links = kd.links || TOUR.links; setTimeout(() => tourToast('Unlocked 🔑', 'Your key is in: the code, the walkthrough and Build one here are open.'), 800); } } catch {} $('lkey').value = ''; }
+      if (key && guide) { try { const kr = await fetch('/api/tour', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(guide.id) }, body: JSON.stringify({ bot: guide.id, code: key }) }); const kd = await kr.json(); if (kd.redeemed?.ok) { TOUR.deploy = kd.deploy; TOUR.links = kd.links || TOUR.links; setTimeout(() => tourToast('Unlocked 🔑', 'Your key is in: the code, the walkthrough and Build one here are open.'), 800); } else setTimeout(() => tourToast('That key didn\'t take', ((kd.redeemed && kd.redeemed.reason) || 'It isn\'t active.') + ' You\'re in anyway — the tour asks for it again at See the code.', 9000), 800); } catch {} $('lkey').value = ''; }
     }
     $('lock').classList.remove('show'); boot(lock.project);
   } catch { $('lockmsg').textContent = 'Could not reach the server. Try again.'; }
@@ -1495,8 +1495,8 @@ function showBreakBar(on) {
 // The key modal: everything behind it dims; one thing to do. Used by any locked stop.
 function openKeyModal(stop) {
   const c = TOUR.community || {};
-  $('key_title').textContent = stop === 'hood' ? 'See the code needs a key' : 'This stop needs a key';
-  $('key_why').textContent = TOUR.signedUp ? 'The code, the walkthrough and the deploy button open with a key from the workshop.' : 'Sign up first, then a key from the workshop opens the code, the walkthrough and the deploy button.';
+  $('key_title').textContent = stop === 'hood' ? '🔑 See the code needs a workshop key' : '🔑 This stop needs a workshop key';
+  $('key_why').textContent = TOUR.signedUp ? 'You\'re signed in and the rest of the tour is open. This one stop, the code and the deploy walkthrough, opens with a key from the workshop.' : 'Sign up first; then a key from the workshop opens the code and the deploy walkthrough.';
   $('key_workshop').href = c.workshopUrl || c.url || '#'; $('key_workshop').textContent = 'Get ' + (c.workshopName || 'the workshop'); $('key_workshop').hidden = !(c.workshopUrl || c.url);
   $('key_code').value = ''; $('key_msg').textContent = ''; $('key_go').disabled = !TOUR.signedUp; $('key_code').disabled = !TOUR.signedUp;
   $('keywrap').dataset.stop = stop; $('keywrap').classList.add('show'); if (TOUR.signedUp) $('key_code').focus();
@@ -1512,7 +1512,7 @@ $('keyform').addEventListener('submit', async (e) => {
     if (d.redeemed && d.redeemed.ok) { TOUR.deploy = d.deploy; TOUR.links = d.links || TOUR.links; closeKeyModal(); tourToast('Unlocked 🔑', 'The code, the walkthrough and Build one here are open.'); const s = $('keywrap').dataset.stop; if (s) tourGo(s); return; }
     $('key_msg').textContent = (d.redeemed && d.redeemed.reason) || d.error || 'That code didn\'t work.';
   } catch { $('key_msg').textContent = 'Could not reach the server. Try again.'; }
-  $('key_go').disabled = false; $('key_go').textContent = 'Unlock';
+  $('key_go').disabled = false; $('key_go').textContent = 'Use my key';
 });
 $('key_code').addEventListener('input', () => { const v = $('key_code').value.toUpperCase().replace(/[^A-Z0-9]/g, ''); $('key_code').value = v.length > 4 ? v.slice(0, 4) + '-' + v.slice(4, 8) : v; });
 function tourGo(stop) {
