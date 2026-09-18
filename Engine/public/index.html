@@ -854,7 +854,7 @@ function selectProject(p, silent) {
   $('disclaimer').textContent = p.grounding === 'open'
     ? 'Can make mistakes. Check important information.'
     : 'Answers only from what ' + p.name + ' has written down. Can still make mistakes.';
-  syncBreakBar();
+  syncBreakBar(true);
   renderProjects(); newChat(silent);
   renderSandboxBar();
   if ($('hood').classList.contains('show')) openHood();
@@ -977,12 +977,13 @@ function renameChat(row, el, c) {
 function newChat(silent) {
   stopPolling();
   state.chat = { id: Date.now().toString(36), project: state.project.id, title: '', messages: [], attachments: [] };
+  syncBreakBar(true);                                     // an empty chat: the attack bar may be the job now
   renderChats(); renderLog(); renderAttachments(); setComposerMode(); $('input').focus();
   if (!silent) pushUrl(!history.state);           // first load replaces, later switches push
 }
 $('newchat').onclick = () => newChat();
 // A chat that asked for a person carries the handoff id; opening it again picks the polling back up.
-function loadChat(c, silent) { stopPolling(); state.chat = c; renderChats(); renderLog(); renderAttachments(); setComposerMode(); if (!viewAs) startPolling(); if (!silent) pushUrl(); }
+function loadChat(c, silent) { stopPolling(); state.chat = c; syncBreakBar(!(c.messages || []).length); renderChats(); renderLog(); renderAttachments(); setComposerMode(); if (!viewAs) startPolling(); if (!silent) pushUrl(); }
 
 // ---- the paperclip: one file, read for this conversation only ----
 // The server reads the file and hands the TEXT back; it keeps nothing. The text
@@ -1251,6 +1252,7 @@ function nudgeTarget() {
   const next = TOUR.stops.find((s) => !TOUR.done[s]);
   const onGuide = state.project && state.project.id === TOUR.guide.id;
   if (onGuide) { const go = document.querySelector('.empty .tourlist li.next button'); if (go) return { el: go, text: 'Tap Go' }; return null; }
+  if (state.chat?.messages?.length && $('breakbar').hidden) return null;        // mid-conversation: let them finish
   if (next === 'try') { const s = document.querySelector('.empty .starters button'); if (s) return { el: s, text: 'Tap one' }; if (state.chat?.messages?.length === 0) return { el: input, text: 'Say hi' }; return null; }
   if (next === 'break') { const a = document.querySelector('#breakbar .row button:not(.used)'); if (a) return { el: a, text: 'Tap one' }; return null; }
   if (next) { const chip = [...document.querySelectorAll('#tour .stop')].find((b) => b.classList.contains('next')); if (chip) return { el: chip, text: 'Next stop' }; }
@@ -1391,17 +1393,23 @@ async function initTour() {
   TOUR.stops = TOUR.guide.tour.stops.filter((s) => STOP_META[s]);
   TOUR.done = tourLoad();
   renderTour(); armNudge();
+  // Deep links: ?tour=reset wipes the stops (the key stays); ?stop=<name> jumps to that stop.
+  const qs = new URLSearchParams(location.search);
+  const wantReset = qs.get('tour') === 'reset', wantStop = qs.get('stop');
+  if (wantReset) { TOUR.done = {}; tourSave(); renderTour(); try { await fetch('/api/tour', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(TOUR.guide.id) }, body: JSON.stringify({ bot: TOUR.guide.id, reset: true }) }); } catch {} try { sessionStorage.removeItem('byo:breakbar'); localStorage.removeItem('byo:break'); } catch {} BREAK_USED = {}; }
   try {
     const r = await fetch('/api/tour?bot=' + encodeURIComponent(TOUR.guide.id), { headers: authHeaders(TOUR.guide.id) });
     const d = await r.json();
-    if (r.ok) { TOUR.deploy = d.deploy || null; TOUR.links = d.links || null; TOUR.signedUp = !!d.signedUp; if (d.community) TOUR.community = d.community; Object.assign(TOUR.done, d.done || {}); tourSave(); renderTour(); }
+    if (r.ok) { TOUR.deploy = d.deploy || null; TOUR.links = d.links || null; TOUR.signedUp = !!d.signedUp; if (d.community) TOUR.community = d.community; if (!wantReset) Object.assign(TOUR.done, d.done || {}); tourSave(); renderTour(); }
   } catch {}
+  if (wantReset) { const u = new URL(location.href); u.searchParams.delete('tour'); history.replaceState(history.state, '', u); if (state.chat && !state.chat.messages.length) renderLog(); }
+  if (wantStop && STOP_META[wantStop] && !$('lock').classList.contains('show')) setTimeout(() => tourGo(wantStop), 200);
 }
 function tourSample() { return (state.projects || []).find((p) => p.id === 'tumblebrook-dental') || (state.projects || []).find((p) => p.kind === 'chat' && p.id !== TOUR.guide?.id && p.mode !== 'concierge') || null; }
 async function markStop(stop) {
   if (!TOUR.guide || !STOP_META[stop] || TOUR.done[stop]) return;
   TOUR.done[stop] = new Date().toISOString(); tourSave(); renderTour();
-  syncBreakBar(); if (state.chat && !state.chat.messages.length) renderLog();
+  if (state.chat && !state.chat.messages.length) { syncBreakBar(true); renderLog(); }
   const n = TOUR.stops.filter((s) => TOUR.done[s]).length;
   if (n === TOUR.stops.length) tourToast('Tour done 🎉', (TOUR.community?.name ? 'See you in ' + TOUR.community.name + '. ' : '') + 'Every bot here is yours to keep playing with.', 8000);
   else tourToast('✓ ' + STOP_META[stop].label + ' · ' + n + ' of ' + TOUR.stops.length, STOP_DONE[stop] || '');
@@ -1439,16 +1447,18 @@ const BREAK_PROMPTS = [
 let BREAK_USED = {}; try { BREAK_USED = JSON.parse(localStorage.getItem('byo:break') || '{}') || {}; } catch {}
 // Is the attack bar the job right now? On a sample bot, once the first stop is done and until
 // the person hides it. Decided before the chat draws, so the starters step aside.
-function syncBreakBar() {
+function syncBreakBar(chatEmpty) {
   const p = state.project; if (!p) return;
-  let off = ''; try { off = sessionStorage.getItem('byo:breakbar') || ''; } catch {}
-  showBreakBar(Boolean(TOUR.guide) && p.id !== TOUR.guide.id && p.kind !== 'food' && !p.sandbox && off !== 'off' && (TOUR.done.try || TOUR.done.break || Object.keys(BREAK_USED).length > 0));
+  let mode = ''; try { mode = sessionStorage.getItem('byo:breakbar') || ''; } catch {}
+  const empty = chatEmpty === undefined ? !(state.chat?.messages?.length) : chatEmpty;
+  // a conversation in progress is never interrupted: the bar waits for a new chat, or for Break it in the strip
+  showBreakBar(Boolean(TOUR.guide) && p.id !== TOUR.guide.id && p.kind !== 'food' && !p.sandbox && mode !== 'off' && (mode === 'on' || empty) && (TOUR.done.try || TOUR.done.break || Object.keys(BREAK_USED).length > 0));
 }
 function showBreakBar(on) {
   const bar = $('breakbar'); if (!on) { bar.hidden = true; return; }
   bar.innerHTML = '';
   const h = document.createElement('div'); h.className = 'h'; h.innerHTML = '<b>Try to break it.</b> Tap one, watch the chip under the reply. Do them all.<button type="button" class="x" title="Hide">✕</button>';
-  h.querySelector('.x').onclick = () => { bar.hidden = true; try { sessionStorage.setItem('byo:breakbar', 'off'); } catch {} };
+  h.querySelector('.x').onclick = () => { bar.hidden = true; try { sessionStorage.setItem('byo:breakbar', 'off'); } catch {} renderLog(); };
   const row = document.createElement('div'); row.className = 'row';
   BREAK_PROMPTS.forEach((p) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = p.t; b.title = p.why; if (BREAK_USED[p.t]) b.classList.add('used'); b.onclick = () => { BREAK_USED[p.t] = 1; try { localStorage.setItem('byo:break', JSON.stringify(BREAK_USED)); } catch {} b.classList.add('used'); send(p.t); }; row.appendChild(b); });
   const own = document.createElement('button'); own.type = 'button'; own.className = 'own'; own.textContent = '✍️ Now write your own'; own.title = 'Your turn: think of something it should refuse, and see if it does.';
@@ -1457,8 +1467,9 @@ function showBreakBar(on) {
 }
 function tourGo(stop) {
   $('tourmake').hidden = true;
+  try { const u = new URL(location.href); u.searchParams.set('stop', stop); history.replaceState(history.state, '', u); } catch {}
   if (stop === 'try') { const p = tourSample(); if (p) { selectProject(p); $('side').classList.remove('open'); input.focus(); } return; }
-  if (stop === 'break') { const p = tourSample(); if (p) { selectProject(p); $('side').classList.remove('open'); } try { sessionStorage.removeItem('byo:breakbar'); } catch {} showBreakBar(true); input.focus(); return; }
+  if (stop === 'break') { try { sessionStorage.setItem('byo:breakbar', 'on'); } catch {} const p = tourSample(); if (p) { selectProject(p); $('side').classList.remove('open'); } showBreakBar(true); renderLog(); input.focus(); return; }
   if (stop === 'hood') {
     if (!TOUR.links?.code) {
       if (!TOUR.signedUp) tourToast('Sign up first', 'Then the code opens with a key from the workshop.');

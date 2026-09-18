@@ -168,9 +168,9 @@ export default {
       const bid = String(url.searchParams.get("bot") || (request.method === "POST" ? (await request.clone().json().catch(() => ({})))?.bot : "") || "").toLowerCase();
       const guide = await resolveProject(env, bid);
       if (!bid || guide.id !== bid || !guide.tour) return json({ error: "which guide? send { bot }" }, 400);
-      let stop = "", code = "";
-      if (request.method === "POST") { if (!(await allowed(env, request))) return json({ error: "rate-limited" }, 429); const b = (await request.clone().json().catch(() => ({}))) || {}; stop = String(b.stop || "").slice(0, 20); code = String(b.code || "").slice(0, 20); }
-      return json(await tourState(env, request, guide, { stop, code, links: settings.links }));
+      let stop = "", code = "", reset = false;
+      if (request.method === "POST") { if (!(await allowed(env, request))) return json({ error: "rate-limited" }, 429); const b = (await request.clone().json().catch(() => ({}))) || {}; stop = String(b.stop || "").slice(0, 20); code = String(b.code || "").slice(0, 20); reset = b.reset === true; }
+      return json(await tourState(env, request, guide, { stop, code, reset, links: settings.links }));
     }
 
     if (url.pathname.startsWith("/api/admin/") || url.pathname.startsWith("/engine/")) {

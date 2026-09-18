@@ -82,7 +82,7 @@ export const deployUrl = (env, links) => {
   return code ? `https://deploy.workers.cloudflare.com/?url=${code}` : "";
 };
 
-export async function tourState(env, request, guide, { stop = "", code = "", links = null } = {}) {
+export async function tourState(env, request, guide, { stop = "", code = "", links = null, reset = false } = {}) {
   const stops = Array.isArray(guide?.tour?.stops) ? guide.tour.stops : [];
   let done = {}, user = null, redeemed = null;
   if (env.DB) {
@@ -92,6 +92,7 @@ export async function tourState(env, request, guide, { stop = "", code = "", lin
       const row = await env.DB.prepare(`SELECT json FROM tour_progress WHERE user_id = ? AND bot = ?`).bind(user.id, guide.id).first();
       try { done = row ? JSON.parse(row.json) || {} : {}; } catch { done = {}; }
       let changed = false;
+      if (reset) { const keep = done.unlocked ? { unlocked: done.unlocked } : {}; done = keep; changed = true; }   // start the tour over; the key stays
       if (stop && stops.includes(stop) && !done[stop]) { done[stop] = new Date().toISOString(); changed = true; }
       if (code) {
         redeemed = await redeemCode(env, request, guide, user, code);
