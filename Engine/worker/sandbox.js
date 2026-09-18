@@ -86,9 +86,10 @@ export async function handleSandbox(request, env, url, { isAdmin, allowed, setti
   const email = isAdmin ? "" : await sandboxOwnerOf(env, request);
   const guideId = String(url.searchParams.get("bot") || "").toLowerCase();
 
-  // Does this person hold a key? Same answer as the tour's deploy gate, asked of the guide bot.
+  // Building here is for anyone who signed up — the key gates the code and the deploy button, not this.
   const keyed = async () => {
     if (isAdmin) return true;
+    if (email) return true;
     let guide = guideId ? await resolveProject(env, guideId) : null;
     if (!guide || !guide.tour) { const gid = Object.entries(PROJECTS).find(([, p]) => p.tour)?.[0]; guide = gid ? await resolveProject(env, gid) : null; }
     if (!guide || !guide.tour) return false;
@@ -105,7 +106,7 @@ export async function handleSandbox(request, env, url, { isAdmin, allowed, setti
     if (request.method !== "POST") return json({ error: "POST only" }, 405);
     if (!(await allowed(env, request))) return json({ error: "rate-limited", reason: "Slow down a little." }, 429);
     if (!email && !isAdmin) return json({ error: "sign-up", reason: "Sign up first." }, 401);
-    if (!(await keyed())) return json({ error: "key", reason: "Building here opens with a workshop key. Enter it under Make your own." }, 403);
+    if (!(await keyed())) return json({ error: "sign-up", reason: "Sign up first, then build here." }, 403);
     const body = (await request.json().catch(() => ({}))) || {};
     const owner = email || "admin";
     if (!isAdmin && (await mine(env, email)).length >= MAX_PER_PERSON) return json({ error: "limit", reason: `You can have ${MAX_PER_PERSON} sandbox bots at a time. Delete one to make room.` }, 400);

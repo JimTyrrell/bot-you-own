@@ -38,10 +38,12 @@ async function ensureSchema(env) {
   ]);
   SCHEMA_OK = true;
 }
-// Codes people can read out loud: no 0/O, 1/I/L. "K7M4-P2QX".
+// A key: PREFIX-1234-5678 — the prefix is the owner's (Settings → Workshop keys), the digits are
+// random. Easy to read out, easy to type on a phone. Older KXXX-XXXX keys still work.
 const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-export function newCode() { const b = crypto.getRandomValues(new Uint8Array(8)); const s = [...b].map((x) => ALPHABET[x % ALPHABET.length]).join(""); return s.slice(0, 4) + "-" + s.slice(4); }
-export const cleanCode = (c) => String(c || "").toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/^(.{4})(.{4})$/, "$1-$2");
+export function newCode(prefix = "SO") { const p = String(prefix || "SO").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 6) || "SO"; const d = [...crypto.getRandomValues(new Uint8Array(8))].map((x) => x % 10).join(""); return `${p}-${d.slice(0, 4)}-${d.slice(4)}`; }
+export const cleanCode = (c) => { const s = String(c || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); const m = s.match(/^([A-Z]{1,6})(\d{4})(\d{4})$/); if (m) return `${m[1]}-${m[2]}-${m[3]}`; return s.replace(/^(.{4})(.{4})$/, "$1-$2"); };
+const CODE_SHAPE = /^([A-Z]{1,6}-\d{4}-\d{4}|[A-Z2-9]{4}-[A-Z2-9]{4})$/;
 export async function listCodes(env) {
   if (!env.DB) return [];
   await ensureSchema(env);
@@ -54,16 +56,16 @@ export async function codeUses(env, code) {
   await ensureSchema(env);
   return (await env.DB.prepare(`SELECT email, bot, ip_hash, created_at FROM deploy_code_uses WHERE code = ? ORDER BY id DESC LIMIT 200`).bind(cleanCode(code)).all()).results || [];
 }
-export async function createCode(env, { issuedTo = "", note = "", maxUses = null } = {}) {
+export async function createCode(env, { issuedTo = "", note = "", maxUses = null, prefix = "SO" } = {}) {
   await ensureSchema(env);
-  const code = newCode();
+  const code = newCode(prefix);
   await env.DB.prepare(`INSERT INTO deploy_codes (code, issued_to, note, max_uses, created_at, created_by) VALUES (?, ?, ?, ?, ?, 'admin')`).bind(code, String(issuedTo).slice(0, 120), String(note).slice(0, 300), Number.isFinite(Number(maxUses)) && Number(maxUses) > 0 ? Math.round(Number(maxUses)) : null, new Date().toISOString()).run();
   return code;
 }
 // A key on its own: active and under its cap? Used by the join route to let a second device in.
 export async function keyIsActive(env, raw) {
   await ensureSchema(env);
-  const code = cleanCode(raw); if (!/^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(code)) return null;
+  const code = cleanCode(raw); if (!CODE_SHAPE.test(code)) return null;
   const row = await env.DB.prepare(`SELECT * FROM deploy_codes WHERE code = ?`).bind(code).first();
   if (!row || row.disabled) return null;
   if (row.max_uses) { const n = (await env.DB.prepare(`SELECT COUNT(*) n FROM deploy_code_uses WHERE code = ?`).bind(code).first())?.n || 0; if (n >= row.max_uses) return null; }
@@ -78,7 +80,7 @@ export async function disableCode(env, code, on = true) { await ensureSchema(env
 async function redeemCode(env, request, guide, user, raw) {
   const code = cleanCode(raw);
   if (!user) return { ok: false, reason: "Sign up first, then enter the code." };
-  if (!/^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(code)) return { ok: false, reason: "That doesn't look like a code. It's eight letters and numbers, like K7M4-P2QX." };
+  if (!CODE_SHAPE.test(code)) return { ok: false, reason: "That doesn't look like a key. It looks like SO-1234-5678." };
   const row = await env.DB.prepare(`SELECT * FROM deploy_codes WHERE code = ?`).bind(code).first();
   if (!row || row.disabled) return { ok: false, reason: "That code isn't active." };
   if (row.max_uses) { const n = (await env.DB.prepare(`SELECT COUNT(*) n FROM deploy_code_uses WHERE code = ?`).bind(code).first())?.n || 0; if (n >= row.max_uses) return { ok: false, reason: "That code has been used up." }; }

@@ -1,6 +1,6 @@
 import { CONFIG } from "../../YourBots/config.js";
 import { normaliseProject, normaliseWebsite, savedProjects, saveProject, deleteSavedProject, inFolder, resolveProject, resolveList, pickPublic, hrefFor, exportFiles, KINDS, KIND_LABELS, cleanKind } from "./projects.js";
-import { getSettings, saveSettings, settingsFileContent, cleanBadge, cleanSignup, publicSignup, cleanLinks, cleanBrand, SETTINGS_FILE_VIEW as SETTINGS_FILE } from "./settings.js";
+import { getSettings, saveSettings, settingsFileContent, cleanBadge, cleanSignup, publicSignup, cleanLinks, cleanBrand, cleanKeys, SETTINGS_FILE_VIEW as SETTINGS_FILE } from "./settings.js";
 // The GitHub repo this deploys from: the GITHUB_REPO secret first, config.js second (blank in the template on purpose).
 const repoOf = (env) => String(env?.GITHUB_REPO || CONFIG.github?.repo || "").trim();
 import { listSignups, signupsCsv } from "./signups.js";
@@ -189,11 +189,11 @@ export default {
         if (request.method !== "POST") return json({ error: "POST only" }, 405);
         if (!env.DB) return json({ error: "Deploy codes need the D1 database." }, 400);
         const { body: b, error } = await readJson(request); if (error) return error;
-        const code = await createCode(env, { issuedTo: b?.issuedTo, note: b?.note, maxUses: b?.maxUses });
+        const code = await createCode(env, { issuedTo: b?.issuedTo, note: b?.note, maxUses: b?.maxUses, prefix: settings.keys?.prefix });
         await logAdminEvent(env, request, "deploy-code-make", code, `for ${String(b?.issuedTo || "").slice(0, 80) || "(unnamed)"}`, String(b?.issuedTo || "").slice(0, 120));
         return json({ ok: true, code });
       }
-      const dc = url.pathname.match(/^\/api\/admin\/deploy-codes\/([A-Za-z0-9-]{4,12})\/(disable|enable|uses)$/);
+      const dc = url.pathname.match(/^\/api\/admin\/deploy-codes\/([A-Za-z0-9-]{4,20})\/(disable|enable|uses)$/);
       if (dc) {
         if (dc[2] === "uses") return json({ uses: await codeUses(env, dc[1]) });
         if (request.method !== "POST") return json({ error: "POST only" }, 405);
@@ -327,7 +327,8 @@ export default {
         const su = b?.signup ? cleanSignup(b.signup, settings.signup) : null;
         const lk = b?.links ? cleanLinks(b.links) : null;
         const br = b?.brand ? cleanBrand(b.brand) : null;
-        await saveSettings(env, { access: next, createYourOwn: badge, identity: ident, expiry: exp, signup: su, links: lk, brand: br });
+        const ky = b?.keys ? cleanKeys(b.keys) : null;
+        await saveSettings(env, { access: next, createYourOwn: badge, identity: ident, expiry: exp, signup: su, links: lk, brand: br, keys: ky });
         await logAdminEvent(env, request, "settings-save", "access", `default ${settings.default} → ${next.default} · floor ${settings.floor} → ${next.floor}${badge ? ` · badge ${badge.show ? `"${badge.text}"` : "hidden"}` : ""}${ident ? ` · return window ${settings.identity?.graceMinutes} → ${Math.round(Number(ident.graceMinutes))} min` : ""}${exp ? ` · when access lapses ${settings.expiry?.onLapse} → ${exp.onLapse ?? settings.expiry?.onLapse}${exp.graceDays !== undefined ? `, grace ${exp.graceDays}d` : ""}` : ""}`);
         return json(await settingsView(env, await getSettings(env)));
       }
@@ -1405,6 +1406,7 @@ async function settingsView(env, settings) {
     createYourOwn: settings.createYourOwn,
     signup: settings.signup,
     brand: settings.brand,
+    keys: settings.keys,
     identity: { graceMinutes: settings.identity?.graceMinutes, source: settings.identity?.source },
     allowlist: { keySet: allowlistKeySet(env), counts, global: counts[GLOBAL_SCOPE] || 0 },
     // When access runs out: the policy, everyone who currently has an end date, and

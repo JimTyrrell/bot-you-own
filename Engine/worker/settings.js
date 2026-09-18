@@ -25,7 +25,10 @@ import { accessSettings } from "./access.js";
 import { cleanGrace, DEFAULT_GRACE_MINUTES } from "../identity/devices.js";
 import { expirySettings, cleanExpiryConfig, EXPIRY_BUILT_IN } from "./expiry.js";
 
-const KEYS = ["access", "createYourOwn", "identity", "expiry", "signup", "links", "brand"];
+const KEYS = ["access", "createYourOwn", "identity", "expiry", "signup", "links", "brand", "keys"];
+// ---- Workshop keys look like PREFIX-1234-5678. The prefix is yours (letters, up to 6).
+export function cleanKeys(k) { if (!k || typeof k !== "object") return null; const p = String(k.prefix || "").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 6); return p ? { prefix: p } : null; }
+function mergeKeys(c, f, s) { let cur = { prefix: "SO" }, source = "built-in"; for (const [layer, label] of [[c, "YourBots/config.js"], [f, "YourBots/settings.json"], [s, "saved (Settings screen)"]]) { const v = cleanKeys(layer); if (v) { cur = v; source = label; } } return { ...cur, source }; }
 
 // ---- Who runs this site and what it's called: config.js ships a placeholder; Settings makes it yours.
 export function cleanBrand(b) {
@@ -112,7 +115,8 @@ export async function getSettings(env) {
   const signup = mergeSignup(CONFIG.signup, SETTINGS_FILE?.signup, rows.signup);
   const links = mergeLinks(CONFIG.links, SETTINGS_FILE?.links, rows.links);
   const brand = mergeBrand({ owner: CONFIG.owner, siteName: CONFIG.siteName }, SETTINGS_FILE?.brand, rows.brand);
-  return { ...access, createYourOwn: badge, identity, expiry, signup, links, brand };
+  const keys = mergeKeys(CONFIG.keys, SETTINGS_FILE?.keys, rows.keys);
+  return { ...access, createYourOwn: badge, identity, expiry, signup, links, brand, keys };
 }
 // identity.graceMinutes: the return window, in minutes. 0 = off. Same three places, later wins.
 const graceOf = (i) => (i && typeof i === "object" && i.graceMinutes !== undefined && i.graceMinutes !== null && i.graceMinutes !== "" && Number.isFinite(Number(i.graceMinutes)) && Number(i.graceMinutes) >= -1 ? cleanGrace(i.graceMinutes) : null);
@@ -133,7 +137,7 @@ function mergeBadge(c, f, s) {
 }
 
 // The Settings screen's Save: one row per key, live within 10 s everywhere.
-export async function saveSettings(env, { access, createYourOwn, identity, expiry, signup, links, brand } = {}) {
+export async function saveSettings(env, { access, createYourOwn, identity, expiry, signup, links, brand, keys } = {}) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT)`).run();
   const put = (key, obj) => env.DB.prepare(`INSERT INTO settings (key, json, updated_at, updated_by) VALUES (?, ?, ?, 'admin') ON CONFLICT(key) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at, updated_by = excluded.updated_by`).bind(key, JSON.stringify(obj), new Date().toISOString());
   const ops = [];
@@ -144,6 +148,7 @@ export async function saveSettings(env, { access, createYourOwn, identity, expir
   if (signup && cleanSignup(signup)) ops.push(put("signup", cleanSignup(signup)));
   if (links && cleanLinks(links)) ops.push(put("links", cleanLinks(links)));
   if (brand && cleanBrand(brand)) ops.push(put("brand", cleanBrand(brand)));
+  if (keys && cleanKeys(keys)) ops.push(put("keys", cleanKeys(keys)));
   if (ops.length) await env.DB.batch(ops);
   CACHE = { at: 0, rows: null };
 }

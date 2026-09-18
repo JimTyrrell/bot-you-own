@@ -312,6 +312,9 @@ export const CONFIG = {
   // finds nothing; a bot reading the page finds nothing.
   links: { code: "", checklist: "", prompts: "" },
 
+  // ---- 6e. WORKSHOP KEYS: PREFIX-1234-5678. Make yours in Under the hood → Sign-ups. ------
+  keys: { prefix: "SO" },   // letters only, up to 6 — the prefix says whose key it is
+
   // ---- 6c. THE FOOD LOG: /food — snap a plate, get the numbers ----------------
   // A photo food log a coach deploys for their clients. Not a chat bot: a page
   // with a camera button. People type their email once and are remembered on
