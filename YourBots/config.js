@@ -103,8 +103,6 @@ export const CONFIG = {
   // Under the hood → Settings changes both without a commit (the saved copy wins,
   // then YourBots/settings.json, then this). docs/CUSTOMIZE.md → "Who can use it".
   access: { default: "email", floor: "open" },
-  // -1 = never block a second device: a known email on a new browser is simply let in (the demo's setting).
-  identity: { graceMinutes: -1 },
 
   // ---- 5. THE SIGN-UP GATE (what "email" mode asks for) --------------------------
   // Out of the box a visitor meets a welcome page: email, a mobile number, and two
@@ -141,7 +139,7 @@ export const CONFIG = {
   // own in project.json → "identity": { "graceMinutes": 15 }. Passkeys and
   // Google/Microsoft/Apple sign-in are trusted on any device regardless.
   // Under the hood → Settings edits this without a commit, like access above.
-  identity: { graceMinutes: 60 },
+  identity: { graceMinutes: -1 },   // -1 = never block a second device (the demo's choice); 0 = always wait for the owner; N = minutes
 
   // ---- 5b. WHEN ACCESS RUNS OUT -----------------------------------------------
   // An email, an invitation or a passphrase can have an END DATE. Nothing does by
