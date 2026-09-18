@@ -73,6 +73,7 @@
   @keyframes nextpulse { 0%, 100% { box-shadow:0 0 0 0 rgba(16,163,127,0); } 50% { box-shadow:0 0 0 5px rgba(16,163,127,.28); } }
   @media (prefers-reduced-motion: reduce) { #tour .stop.next { animation:none; } }
   #tour .arrow { color:var(--muted); flex:none; }
+  .paid { display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; border-radius:50%; background:#f5c542; color:#3a2a00; font-size:10.5px; font-weight:800; margin-left:6px; flex:none; box-shadow:0 1px 2px rgba(0,0,0,.2); }
   #tour .sum { margin-left:auto; color:var(--muted); white-space:nowrap; padding-left:8px; }
   #tourmake { padding:10px 16px; border-bottom:1px solid var(--edge); background:var(--side); font-size:13px; display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
   #tourmake[hidden] { display:none; }
@@ -1094,7 +1095,8 @@ function renderLog() {
       const ol = document.createElement('ol'); ol.className = 'tourlist';
       TOUR.stops.forEach((s, i) => {
         const li = document.createElement('li'); li.className = TOUR.done[s] ? 'done' : s === next ? 'next' : '';
-        li.innerHTML = '<span class="n">' + (TOUR.done[s] ? '✓' : i + 1) + '</span><span class="t"><b>' + esc(STOP_META[s].label) + '</b><span class="h">' + esc(STOP_META[s].hint) + '</span></span>';
+        const paid = s === 'hood' && !TOUR.done[s] && !(TOUR.deploy && TOUR.deploy.allowed);
+        li.innerHTML = '<span class="n">' + (TOUR.done[s] ? '✓' : i + 1) + '</span><span class="t"><b>' + esc(STOP_META[s].label) + (paid ? '<span class="paid" title="Opens with a workshop key">$</span>' : '') + '</b><span class="h">' + esc(STOP_META[s].hint) + '</span></span>';
         if (s === next) { const b = document.createElement('button'); b.type = 'button'; b.textContent = 'Go →'; b.onclick = () => tourGo(s); li.appendChild(b); }
         else if (!TOUR.done[s]) { li.style.cursor = 'pointer'; li.title = 'Jump to this stop'; li.onclick = () => tourGo(s); }
         ol.appendChild(li);
@@ -1502,7 +1504,8 @@ function renderTour() {
   TOUR.stops.forEach((s, i) => {
     if (i) { const a = document.createElement('span'); a.className = 'arrow'; a.textContent = '›'; el.appendChild(a); }
     const b = document.createElement('button'); b.type = 'button'; b.className = 'stop' + (TOUR.done[s] ? ' done' : '') + (s === next ? ' next' : '');
-    b.title = STOP_META[s].hint; b.innerHTML = '<span class="n">' + (TOUR.done[s] ? '✓' : i + 1) + '</span>' + esc(STOP_META[s].label);
+    const paid = s === 'hood' && !TOUR.done[s] && !(TOUR.deploy && TOUR.deploy.allowed);
+    b.title = STOP_META[s].hint + (paid ? ' (the paid part)' : ''); b.innerHTML = '<span class="n">' + (TOUR.done[s] ? '✓' : i + 1) + '</span>' + esc(STOP_META[s].label) + (paid ? '<span class="paid" title="Opens with a workshop key">$</span>' : '');
     b.onclick = () => tourGo(s); el.appendChild(b);
   });
   const n = TOUR.stops.filter((s) => TOUR.done[s]).length;
@@ -1592,7 +1595,7 @@ function tourGo(stop) {
     const d = TOUR.deploy || {}; const c = TOUR.community; const box = $('tourmake'); box.innerHTML = '';
     if (!TOUR.signedUp) { openKeyModal('make'); return; }
     const add = (html) => { const w = document.createElement('span'); w.innerHTML = html; while (w.firstChild) box.appendChild(w.firstChild); };
-    add('<button type="button" class="primary" data-mk="build">🧪 Build one here</button>' + (d.allowed && d.url ? '<a href="' + esc(d.url) + '" target="_blank" rel="noopener" data-mk="deploy">🚀 Deploy your own</a>' : '<button type="button" data-mk="locked" title="Needs a workshop key">🔑 Deploy your own</button>') + (d.allowed && d.checklist ? '<a href="' + esc(d.checklist) + '" target="_blank" rel="noopener" data-mk="deploy">the owner walkthrough</a>' : ''));
+    add('<button type="button" class="primary" data-mk="build">🧪 Build one here</button>' + (d.allowed && d.url ? '<a href="' + esc(d.url) + '" target="_blank" rel="noopener" data-mk="deploy">🚀 Deploy your own</a>' : '<button type="button" data-mk="locked" title="Opens with a workshop key">🔒 Deploy your own <span class="paid">$</span></button>') + (d.allowed && d.checklist ? '<a href="' + esc(d.checklist) + '" target="_blank" rel="noopener" data-mk="deploy">the owner walkthrough</a>' : ''));
     // (the locked case is the 🔑 button above, which opens the key modal)
     add((TOUR.links?.prompts ? '<a href="' + esc(TOUR.links.prompts) + '" target="_blank" rel="noopener" data-mk="import">📄 Import a ready-made prompt</a>' : '') + '<button type="button" data-mk="close">Close</button>');
     box.hidden = false;
