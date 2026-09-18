@@ -1313,7 +1313,7 @@ async function sandboxInfo() {
 }
 async function openSandbox() {
   const d = await sandboxInfo();
-  if (!d.allowed) { tourToast('Needs a key', 'Building here opens with a workshop key. Enter it under Make your own.'); tourGo('make'); return; }
+  if (!d.allowed) { tourToast('Sign up first', 'Then you can build one here.'); return; }
   const sel = $('sb_lib'); sel.innerHTML = '<option value="">Paste my own instructions</option>' + (SB.library || []).map((l) => '<option value="' + esc(l.id) + '">' + esc(l.name) + ' — ' + esc(l.source) + '</option>').join('');
   sel.onchange = () => { const l = (SB.library || []).find((x) => x.id === sel.value); $('sb_libhint').hidden = !l; $('sb_libhint').textContent = l ? l.blurb + ' (' + l.licence + ' licence, credit kept in the instructions.)' : ''; $('sb_instrwrap').hidden = !!l; };
   sel.onchange();
@@ -1395,7 +1395,7 @@ const STOP_META = {
   try:   { label: 'Try a bot',       hint: 'Chat with one of the sample bots in the sidebar.' },
   break: { label: 'Break it',        hint: 'Tell a bot to ignore its instructions, ask for its rules, paste a link. Watch the chip under the answer.' },
   hood:  { label: 'See the code',    hint: 'The prompts, the files and the firewall, as they really are. Opens with your workshop key.' },
-  make:  { label: 'Make your own',   hint: 'Deploy your own, or import a ready-made prompt.' },
+  make:  { label: 'Make your own',   hint: 'Paste your GPT or pick a ready-made prompt and see it work here. Deploying your own needs a key.' },
   join:  { label: 'Join',            hint: 'The workshop, the help, and the people doing this.' },
 };
 const STOP_DONE = {
@@ -1539,16 +1539,17 @@ function tourGo(stop) {
   if (stop === 'join') { if (TOUR.community?.url) window.open(TOUR.community.url, '_blank', 'noopener'); markStop('join'); return; }
   if (stop === 'make') {
     const d = TOUR.deploy || {}; const c = TOUR.community; const box = $('tourmake'); box.innerHTML = '';
-    if (!d.allowed) { openKeyModal('make'); return; }
+    if (!TOUR.signedUp) { openKeyModal('make'); return; }
     const add = (html) => { const w = document.createElement('span'); w.innerHTML = html; while (w.firstChild) box.appendChild(w.firstChild); };
-    if (d.allowed) add('<button type="button" class="primary" data-mk="build">🧪 Build one here</button>' + (d.url ? '<a href="' + esc(d.url) + '" target="_blank" rel="noopener" data-mk="deploy">🚀 Deploy your own</a>' : '') + (d.checklist ? '<a href="' + esc(d.checklist) + '" target="_blank" rel="noopener" data-mk="deploy">the owner walkthrough</a>' : ''));
-    else add('<span class="why">' + esc(d.why || 'The deploy walkthrough is the paid workshop.') + '</span>' + (c?.workshopUrl ? '<a class="primary" href="' + esc(c.workshopUrl) + '" target="_blank" rel="noopener" data-mk="workshop" title="' + esc(c.workshopPitch || '') + '">Get ' + esc(c.workshopName || 'the workshop') + '</a>' : '') + (c?.url ? '<a href="' + esc(c.url) + '" target="_blank" rel="noopener" data-mk="join">Join ' + esc(c.name || 'the community') + ' (free)</a>' : '') + (TOUR.signedUp ? '<input id="tourcode" placeholder="Key, e.g. SO-1234-5678" maxlength="16" style="font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--edge);border-radius:10px;background:var(--bg);color:var(--text);width:150px;text-transform:uppercase" /><button type="button" data-mk="code">Unlock</button>' : ''));
+    add('<button type="button" class="primary" data-mk="build">🧪 Build one here</button>' + (d.allowed && d.url ? '<a href="' + esc(d.url) + '" target="_blank" rel="noopener" data-mk="deploy">🚀 Deploy your own</a>' : '<button type="button" data-mk="locked" title="Needs a workshop key">🔑 Deploy your own</button>') + (d.allowed && d.checklist ? '<a href="' + esc(d.checklist) + '" target="_blank" rel="noopener" data-mk="deploy">the owner walkthrough</a>' : ''));
+    // (the locked case is the 🔑 button above, which opens the key modal)
     add((TOUR.links?.prompts ? '<a href="' + esc(TOUR.links.prompts) + '" target="_blank" rel="noopener" data-mk="import">📄 Import a ready-made prompt</a>' : '') + '<button type="button" data-mk="close">Close</button>');
     box.hidden = false;
     box.onclick = async (e) => {
       const t = e.target.closest('[data-mk]'); if (!t) return;
       if (t.dataset.mk === 'close') { box.hidden = true; return; }
       if (t.dataset.mk === 'build') { box.hidden = true; openSandbox(); return; }
+      if (t.dataset.mk === 'locked') { openKeyModal('make'); return; }
       if (t.dataset.mk === 'code') {
         const v = ($('tourcode')?.value || '').trim(); if (!v) return $('tourcode')?.focus();
         t.disabled = true; t.textContent = 'Checking…';
