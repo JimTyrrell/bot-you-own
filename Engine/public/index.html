@@ -138,8 +138,8 @@
   .nudge .nlabel { background:var(--text); color:var(--bg); font-size:12.5px; font-weight:600; padding:5px 10px; border-radius:999px; box-shadow:0 6px 20px rgba(0,0,0,.2); white-space:nowrap; }
   .nudge .narrow { font-size:26px; line-height:1; filter:drop-shadow(0 3px 6px rgba(0,0,0,.25)); }
   @keyframes nudgebob { 0%, 100% { transform:translateY(0); } 50% { transform:translateY(-8px); } }
-  .nudged { animation:nudgepulse 1.1s ease-in-out infinite; outline:2px solid var(--text); outline-offset:2px; border-radius:12px; }
-  @keyframes nudgepulse { 0%, 100% { box-shadow:0 0 0 0 rgba(16,163,127,.0); } 50% { box-shadow:0 0 0 6px rgba(16,163,127,.25); } }
+  .nudged { animation:nudgepulse 1.1s ease-in-out infinite; outline:2px solid var(--accent, #10a37f); outline-offset:3px; border-radius:12px; }
+  @keyframes nudgepulse { 0%, 100% { box-shadow:0 0 0 0 rgba(16,163,127,0); outline-color:rgba(16,163,127,.5); } 50% { box-shadow:0 0 0 7px rgba(16,163,127,.3); outline-color:#10a37f; } }
   @media (prefers-reduced-motion: reduce) { .nudge, .nudged { animation:none; } }
   header h1 { font-size:15px; margin:0; font-weight:600; }
   .pill { font-size:11px; padding:2px 8px; border-radius:999px; background:var(--panel); color:var(--muted); }
@@ -420,7 +420,7 @@ document.addEventListener('DOMContentLoaded', function () {
     <div><span class="n">👇</span><span>A finger shows the one thing to tap next. Follow it and you can't get lost.</span></div>
     <div><span class="n">🛡</span><span>The bots are real. Trying to break them is stop two, and it's the fun part.</span></div>
   </div>
-  <button type="submit" id="intro_go">Start the tour</button>
+  <button type="submit" id="intro_go" style="margin-top:44px">Start the tour</button>
 </form></div>
 <div id="keywrap" class="lockwrap keywrap"><form id="keyform">
   <button type="button" class="modalx" data-x="keywrap" title="Close">✕</button>
