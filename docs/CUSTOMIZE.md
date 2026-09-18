@@ -881,3 +881,17 @@ what they say.
 `config.js → attachments.retentionDays` (30): an attached file's text is dropped
 from server-side chat copies after that many days, on the hour, the next time
 anyone lists their chats. The chat itself stays until the person deletes it.
+
+## Real-ish emails and numbers at the gate
+
+Every sign-up is checked on the server before a row is written:
+
+- **Email**: the shape, a domain that looks like a domain, no `test@test.com`
+  junk, a typo of a big provider gets "Did you mean…", throwaway domains are
+  refused (Settings → switch), and the domain has to accept mail: an MX or A
+  lookup over Cloudflare DNS, two seconds, cached six hours, **fails open** so a
+  DNS hiccup never keeps a real person out (Settings → switch).
+- **Number**: North American numbers need a real area code and exchange
+  (2-9…), `555-01xx` is refused as fiction, straight runs and repeated digits are
+  refused; international numbers need a `+` or `00` and 8 to 15 digits. Stored
+  as `+digits`. Nobody is texted to verify; that needs a texting provider.

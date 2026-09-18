@@ -173,9 +173,28 @@ export async function recordSignup(env, bot, userId, f) {
 }
 // A phone number as digits with a leading +. Accepts what people type: (303) 555-0142,
 // 303.555.0142, +44 20 7946 0958. A bare 10-digit number is taken as North American.
+// Returns "+digits" for a number that could be real, or "" for one that can't be:
+//   - 10 digits, or 11 starting with 1 → North American: area code and exchange must start
+//     2-9, and 555-01xx is the block reserved for fiction
+//   - otherwise 8-15 digits with a leading + or 00 → international, country code not 0
+//   - never all one digit, never a straight run (1234567890), never a well-known fake
 export function cleanPhone(v) {
   const raw = String(v || "").trim(); if (!raw) return "";
-  const digits = raw.replace(/[^\d]/g, "");
-  if (digits.length < 10 || digits.length > 15) return "";
-  return "+" + (digits.length === 10 ? "1" + digits : digits);
+  const intl = /^\s*(\+|00)/.test(raw);
+  const digits = raw.replace(/[^\d]/g, "").replace(/^00/, "");
+  if (digits.length < 8 || digits.length > 15) return "";
+  if (/^(\d)\1+$/.test(digits)) return "";                                       // 0000000000, 5555555555
+  if ("01234567890123456789".includes(digits) || "98765432109876543210".includes(digits)) return "";
+  if (["1234567890", "0123456789", "1111111111", "1112223333", "1231231234", "2125551212", "8005551212"].includes(digits.replace(/^1(?=\d{10}$)/, ""))) return "";
+  const nanp = !intl && (digits.length === 10 || (digits.length === 11 && digits[0] === "1"));
+  if (nanp) {
+    const n = digits.length === 11 ? digits.slice(1) : digits;
+    if (!/^[2-9]\d{2}[2-9]\d{6}$/.test(n)) return "";                            // area code / exchange can't start 0 or 1
+    if (/^\d{3}55501\d{2}$/.test(n)) return "";                                  // 555-0100..0199: fiction
+    if (/^\d{3}(\d)\1{6}$/.test(n)) return "";                                   // 303 7777777
+    return "+1" + n;
+  }
+  if (!intl && digits.length !== 10) return "";                                   // a bare 12-digit string is not a number
+  if (digits[0] === "0") return "";                                               // no country code starts with 0
+  return "+" + digits;
 }

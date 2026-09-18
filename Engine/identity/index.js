@@ -29,6 +29,37 @@
 
 import { deviceHash, userForDevice, userById, userByEmail, pendingFor, bindDevice, cleanEmail, ensureIdentitySchema, nowIso, deviceCount, join as joinDevice, linkByCode, touch, cleanGrace, DEFAULT_GRACE_MINUTES, recordSignup, cleanPhone, pepperOf, adoptDevice } from "./devices.js";
 import { SIGNUP_BUILT_IN } from "../worker/settings.js";
+import { DISPOSABLE } from "../worker/signups.js";
+
+// Is this an email someone actually reads? Three checks, cheapest first:
+//   1. the domain looks like a domain and isn't a throwaway (if the gate says so)
+//   2. a typo of a big provider → say what they probably meant
+//   3. the domain accepts mail: an MX (or A) lookup over DNS-over-HTTPS, two seconds, fails OPEN —
+//      a DNS hiccup must never keep a real person out
+const TYPOS = { "gmial.com": "gmail.com", "gmal.com": "gmail.com", "gamil.com": "gmail.com", "gmail.co": "gmail.com", "gmail.cm": "gmail.com", "gnail.com": "gmail.com", "gmaill.com": "gmail.com", "hotmal.com": "hotmail.com", "hotmial.com": "hotmail.com", "hotmail.co": "hotmail.com", "yaho.com": "yahoo.com", "yahooo.com": "yahoo.com", "yahoo.co": "yahoo.com", "outlok.com": "outlook.com", "outllok.com": "outlook.com", "iclod.com": "icloud.com", "icloud.co": "icloud.com", "protonmai.com": "protonmail.com" };
+const MX_CACHE = new Map();
+async function domainAcceptsMail(domain) {
+  const hit = MX_CACHE.get(domain); if (hit && Date.now() - hit.at < 6 * 3600 * 1000) return hit.ok;
+  let ok = true;
+  try {
+    const q = async (type) => { const r = await fetch(`https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(domain)}&type=${type}`, { headers: { accept: "application/dns-json" }, signal: AbortSignal.timeout(2000) }); const j = await r.json(); return { status: j.Status, answers: (j.Answer || []).length }; };
+    const mx = await q("MX");
+    if (mx.status === 3) ok = false;                                            // NXDOMAIN: the domain doesn't exist
+    else if (mx.status === 0 && mx.answers === 0) { const a = await q("A"); ok = !(a.status === 0 && a.answers === 0 && (await q("AAAA")).answers === 0); }   // no MX: mail may still land on the A record
+  } catch { ok = true; }
+  MX_CACHE.set(domain, { ok, at: Date.now() });
+  return ok;
+}
+async function checkEmailReal(email, su) {
+  const domain = email.split("@")[1] || "";
+  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain) || domain.includes("..")) return { ok: false, reason: "That doesn't look like a real email address." };
+  const local = email.split("@")[0];
+  if (/^(test|asdf|qwerty|abc|xyz|aaa|none|no|fake|spam|nope)\d*$/.test(local) && /^(test|example|fake|asdf|abc|xyz|email|mail|domain)\.(com|net|org)$/.test(domain)) return { ok: false, reason: "Please use an email you actually read — that's where the good stuff goes." };
+  if (TYPOS[domain]) return { ok: false, reason: `Did you mean ${local}@${TYPOS[domain]}?` };
+  if (su.blockThrowaway && DISPOSABLE.has(domain)) return { ok: false, reason: "Throwaway addresses don't work here. Use one you'll keep." };
+  if (su.checkMx && !(await domainAcceptsMail(domain))) return { ok: false, reason: `${domain} doesn't seem to accept email. Check the spelling.` };
+  return { ok: true };
+}
 
 // A short keyed hash: sixteen hex characters of SHA-256 over the pepper and the value.
 // Enough to group repeats in the Sign-ups view, not enough to get the value back.
@@ -179,6 +210,7 @@ export async function handleIdentity(request, env, url, { bot, allowed = async (
       const fresh = !(await userByEmail(env, bot.id, email));
       const gate = fresh ? checkSignup(signup, body) : { ok: true };
       if (!gate.ok) return json({ error: gate.error, reason: gate.reason }, 400);
+      if (fresh) { const real = await checkEmailReal(email, signup); if (!real.ok) return json({ error: "email", reason: real.reason }, 400); }
       const r = await joinDevice(env, bot.id, { email, keyHash, graceMinutes });
       if (r.linked && r.fresh) {
         const now = nowIso();

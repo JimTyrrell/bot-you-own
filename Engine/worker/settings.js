@@ -47,6 +47,8 @@ export const SIGNUP_BUILT_IN = {
   sms: { show: false, required: false, checked: false, text: "Text me about this. Message rates may apply; reply STOP to end." },
   privacyLine: "We keep your email and a hashed record of your device and connection to spot abuse. Shared only with the tools we use to email or text you. Delete it any time.",
   webhook: "",
+  blockThrowaway: true,          // refuse disposable-email domains at the gate
+  checkMx: true,                 // refuse an email whose domain doesn't accept mail (a DNS lookup, 2 s, fails open)
 };
 const ASK = ["required", "optional", "off"];
 const askOf = (v, d) => (ASK.includes(String(v || "")) ? String(v) : d);
@@ -61,6 +63,8 @@ export function cleanSignup(s, base = SIGNUP_BUILT_IN) {
     marketing: boxOf(s.marketing, base.marketing), sms: boxOf(s.sms, base.sms),
     privacyLine: String(s.privacyLine ?? base.privacyLine).slice(0, 400),
     webhook: /^https?:\/\//.test(url) ? url : "",
+    blockThrowaway: s.blockThrowaway === undefined ? base.blockThrowaway : Boolean(s.blockThrowaway),
+    checkMx: s.checkMx === undefined ? base.checkMx : Boolean(s.checkMx),
   };
 }
 function mergeSignup(c, f, s) {
