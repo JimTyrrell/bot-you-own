@@ -742,7 +742,7 @@ async function finish(raw, { env, fw, flags, handoff, outboundOpts, retry = null
     // so the code can tell a decline in any language. Take the line out, then make
     // sure the owner's contact is there — appended, verbatim, if the model dropped it.
     const hm = stripHandoffMarker(reply);
-    if (hm.found) reply = hm.text;
+    if (hm.found) { reply = hm.text; f.push("declined"); }          // the bot said no by its rules: worth a chip
     const h = ensureHandoff(reply, outboundOpts.project, { declined: hm.found });
     if (h.added) { reply = h.text; f.push("handoff-appended"); }
     // An intake bot ends its final summary with "[INTAKE COMPLETE]" (YourBots/_prompt/jobs/intake.md).
@@ -1628,6 +1628,7 @@ async function engineView(env, projectId) {
         "handoff-appended": "a decline in a strict project was missing the contact; added",
         "intake-complete": "an intake bot collected everything (the [INTAKE COMPLETE] line was found and removed)",
         "intake-trimmed": "an intake bot asked several questions in one reply; the code kept only the first (one question at a time)",
+        "declined": "the bot refused by its own rules (not in its files, or out of bounds) and handed the person to a human — the [HANDOFF] marker was found and removed",
         "booking-slots-offered": "a booking bot asked the calendar for free times and listed them (the [BOOKING: OFFER] line was found and removed)",
         "booking-created": "the call was booked on the calendar (the [BOOKING: CONFIRM …] line was found, the time re-checked, the booking made)",
         "booking-failed": "the chosen time was no longer free (or didn't match an offered one); fresh times were offered",

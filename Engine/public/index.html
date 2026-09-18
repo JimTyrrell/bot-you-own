@@ -78,6 +78,12 @@
   #tourmake a.primary { background:var(--text); color:var(--bg); border-color:transparent; font-weight:600; }
   #tourmake .why { color:var(--muted); }
   .lockwrap form.sbform { width:min(560px,100%); max-height:92vh; overflow:auto; gap:10px; }
+  .lockwrap.keywrap { background:rgba(0,0,0,.55); backdrop-filter:blur(2px); }
+  .keywrap form { width:min(420px,100%); box-shadow:0 20px 60px rgba(0,0,0,.35); }
+  .keywrap form a { display:block; text-align:center; padding:11px; border-radius:10px; border:1px solid var(--edge); background:var(--bg); color:var(--text); text-decoration:none; font-weight:600; }
+  .keywrap form a.primary { background:var(--text); color:var(--bg); border-color:transparent; }
+  .keywrap .sbmsg { font-size:13px; color:var(--danger, #b42318); min-height:1em; }
+  #key_code::placeholder, #tourcode::placeholder { text-transform:none; }
   .sbform label { display:flex; flex-direction:column; gap:4px; font-size:13px; font-weight:600; }
   .sbform label .muted { font-weight:400; color:var(--muted); }
   .sbform textarea, .sbform select { padding:10px 12px; border:1px solid var(--edge); border-radius:10px; background:var(--bg); color:var(--text); font:inherit; font-weight:400; resize:vertical; }
@@ -124,6 +130,7 @@
   .starters { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
   .starters button { text-align:left; padding:12px 14px; border:1px solid var(--edge); background:var(--bg); color:var(--text); border-radius:12px; cursor:pointer; font-size:14px; line-height:1.4; }
   .starters button:hover { background:var(--panel); }
+  .starters button:disabled { opacity:.5; cursor:wait; }
   .empty .nextstop { margin:-4px 0 14px; font-size:14px; color:var(--muted); }
   .empty .tourlist { list-style:none; margin:0 auto 16px; padding:0; max-width:520px; text-align:left; display:flex; flex-direction:column; gap:6px; }
   .empty .tourlist li { display:flex; align-items:center; gap:12px; padding:9px 12px; border:1px solid var(--edge); border-radius:12px; background:var(--bg); font-size:14px; }
@@ -146,6 +153,7 @@
   #breakbar .row button { font:inherit; font-size:12.5px; padding:6px 10px; border-radius:999px; border:1px solid var(--edge); background:var(--bg); color:var(--text); cursor:pointer; text-align:left; }
   #breakbar .row button:hover { background:var(--panel); }
   #breakbar .row button.used { border-color:var(--accent, #10a37f); }
+  #breakbar .row button:disabled { opacity:.5; cursor:wait; }
   #breakbar .row button.used::before { content:'✓ '; color:var(--accent, #10a37f); }
   #breakbar .row button.own { border-style:dashed; }
 
@@ -369,6 +377,15 @@ document.addEventListener('DOMContentLoaded', function () {
   <input id="adminpass" type="password" placeholder="Admin code" autocomplete="off" /><input id="admincode" inputmode="numeric" placeholder="Authenticator code" autocomplete="one-time-code" style="margin-top:6px" hidden /><p id="admincodehint" class="lockhint" hidden>The six digits from the owner's authenticator app.</p>
   <div style="display:flex;gap:8px"><button type="submit" style="flex:1">Open</button><button type="button" id="admincancel" style="flex:1;background:var(--panel);color:var(--text)">Cancel</button></div>
   <div id="adminmsg" class="lockmsg"></div>
+</form></div>
+<div id="keywrap" class="lockwrap keywrap"><form id="keyform">
+  <h2 id="key_title">This stop needs a key</h2>
+  <p id="key_why">The code, the walkthrough and the deploy button open with a key from the workshop.</p>
+  <a class="primary" id="key_workshop" href="#" target="_blank" rel="noopener">Get the workshop</a>
+  <p class="lockprivacy" style="margin:2px 0 -4px">Got a key already?</p>
+  <div style="display:flex;gap:8px"><input id="key_code" placeholder="Code, e.g. K7M4-P2QX" maxlength="9" autocomplete="off" style="flex:1;text-transform:uppercase" /><button type="submit" id="key_go" style="flex:none;padding:10px 16px">Unlock</button></div>
+  <button type="button" id="key_close" style="background:var(--panel);color:var(--text)">Not now</button>
+  <div id="key_msg" class="sbmsg"></div>
 </form></div>
 <div id="sandboxwrap" class="lockwrap"><form id="sandboxform" class="sbform">
   <h2>🧪 Build one here</h2>
@@ -1194,7 +1211,7 @@ const FLAG_LABELS = {
   'invisible-text-stripped': '👁 hidden characters removed', 'handoff-appended': '📇 contact added by the firewall', 'secret-detected': '🔑 looks like a secret was pasted',
   'library-used': '📚 answered with the document library', 'degenerate-reply': '🛡 the model glitched twice; handed off instead', 'degenerate-retried': '🔁 the model glitched; asked again',
   'attachment-used': '📎 read your attached file', 'attachment-injection-blocked': '🛡 attachment refused: it contained instructions for the bot', 'attachment-secret-blocked': '🔑 attachment refused: looks like a card number or a key',
-  'library-used': '📚 answered with the document library', 'intake-complete': '📋 intake complete', 'intake-trimmed': '✂ intake: the model asked several things; kept the first question',
+  'library-used': '📚 answered with the document library', 'intake-complete': '📋 intake complete', 'declined': '🚫 refused by its rules — not in its files, handed to a person', 'intake-trimmed': '✂ intake: the model asked several things; kept the first question',
   'handoff-webhook-sent': '📣 webhook sent', 'handoff-webhook-failed': '📣 webhook failed', 'handoff-email-sent': '✉ email sent', 'handoff-email-failed': '✉ email failed', 'handoff-email-skipped': '✉ email skipped (no binding)',
   'website-used': '🌐 answered from the website',
   'voice-in': '🎤 spoken, not typed',
@@ -1212,7 +1229,7 @@ const FLAG_LINKS = { 'gateway-direct': () => (state.cfg?.links?.checklist ? stat
 // Chips a VISITOR should see: what the firewall did to their turn, and what happened
 // to their file. The rest — gateway, router, retries, webhooks, intake bookkeeping — is
 // the owner's plumbing and only shows with the admin code. On a tour it read as errors.
-const VISITOR_FLAGS = /^(injection-blocked|link-stripped|leak-blocked|rate-limited|model-error|gateway-blocked|invisible-text-stripped|handoff-appended|secret-detected|degenerate-reply|attachment-used|attachment-injection-blocked|attachment-secret-blocked|guard-blocked|human-requested|booking-)/;
+const VISITOR_FLAGS = /^(declined|injection-blocked|link-stripped|leak-blocked|rate-limited|model-error|gateway-blocked|invisible-text-stripped|handoff-appended|secret-detected|degenerate-reply|attachment-used|attachment-injection-blocked|attachment-secret-blocked|guard-blocked|human-requested|booking-)/;
 function flagRow(flags, sources) {
   const row = document.createElement('div'); row.className = 'flags';
   (flags || []).filter((f) => ADMIN || VISITOR_FLAGS.test(f)).forEach((f) => {
@@ -1248,6 +1265,7 @@ function nudgeTarget() {
   if (!TOUR.guide || ADMIN || viewAs) return null;
   if ($('lock').classList.contains('show')) return { el: $('lockgo'), text: 'Start here' };
   if ($('sandboxwrap').classList.contains('show')) return { el: $('sb_go'), text: 'Create it' };
+  if ($('keywrap').classList.contains('show')) return { el: $('key_workshop').hidden ? $('key_go') : $('key_workshop'), text: 'This one' };
   if (!$('tourmake').hidden) { const b = $('tourmake').querySelector('.primary, [data-mk="code"]'); if (b) return { el: b, text: 'This one' }; }
   const next = TOUR.stops.find((s) => !TOUR.done[s]);
   const onGuide = state.project && state.project.id === TOUR.guide.id;
@@ -1419,7 +1437,9 @@ async function markStop(stop) {
   } catch {}
 }
 function tourOnSend() { if (TOUR.guide && state.project && state.project.id !== TOUR.guide.id) markStop('try'); }
-function tourAfterReply(flags) { if (TOUR.guide && (flags || []).some((f) => /blocked|stripped|withheld|handoff-appended|guard|leak/.test(f))) markStop('break'); }
+function tourAfterReply(flags) { setBreakBusy(false); if (TOUR.guide && (flags || []).some((f) => /blocked|stripped|withheld|handoff-appended|guard|leak|declined/.test(f))) markStop('break'); }
+// One attack at a time: the chips lock while a reply is in flight, and a tap meanwhile isn't counted.
+function setBreakBusy(on) { document.querySelectorAll('#breakbar .row button, .starters button').forEach((b) => { b.disabled = on; }); }
 function renderTour() {
   const el = $('tour'); if (!TOUR.guide) { el.hidden = true; return; }
   el.hidden = false; el.innerHTML = '';
@@ -1460,11 +1480,34 @@ function showBreakBar(on) {
   const h = document.createElement('div'); h.className = 'h'; h.innerHTML = '<b>Try to break it.</b> Tap one, watch the chip under the reply. Do them all.<button type="button" class="x" title="Hide">✕</button>';
   h.querySelector('.x').onclick = () => { bar.hidden = true; try { sessionStorage.setItem('byo:breakbar', 'off'); } catch {} renderLog(); };
   const row = document.createElement('div'); row.className = 'row';
-  BREAK_PROMPTS.forEach((p) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = p.t; b.title = p.why; if (BREAK_USED[p.t]) b.classList.add('used'); b.onclick = () => { BREAK_USED[p.t] = 1; try { localStorage.setItem('byo:break', JSON.stringify(BREAK_USED)); } catch {} b.classList.add('used'); send(p.t); }; row.appendChild(b); });
+  BREAK_PROMPTS.forEach((p) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = p.t; b.title = p.why; if (BREAK_USED[p.t]) b.classList.add('used'); b.onclick = () => { if (state.busy) { tourToast('One at a time', 'Wait for the reply, then tap the next.', 2500); return; } BREAK_USED[p.t] = 1; try { localStorage.setItem('byo:break', JSON.stringify(BREAK_USED)); } catch {} b.classList.add('used'); setBreakBusy(true); send(p.t); }; row.appendChild(b); });
   const own = document.createElement('button'); own.type = 'button'; own.className = 'own'; own.textContent = '✍️ Now write your own'; own.title = 'Your turn: think of something it should refuse, and see if it does.';
   own.onclick = () => { input.value = ''; input.placeholder = 'Your turn: try to make it misbehave…'; input.focus(); };
   row.appendChild(own); bar.append(h, row); bar.hidden = false;
 }
+// The key modal: everything behind it dims; one thing to do. Used by any locked stop.
+function openKeyModal(stop) {
+  const c = TOUR.community || {};
+  $('key_title').textContent = stop === 'hood' ? 'See the code needs a key' : 'This stop needs a key';
+  $('key_why').textContent = TOUR.signedUp ? 'The code, the walkthrough and the deploy button open with a key from the workshop.' : 'Sign up first, then a key from the workshop opens the code, the walkthrough and the deploy button.';
+  $('key_workshop').href = c.workshopUrl || c.url || '#'; $('key_workshop').textContent = 'Get ' + (c.workshopName || 'the workshop'); $('key_workshop').hidden = !(c.workshopUrl || c.url);
+  $('key_code').value = ''; $('key_msg').textContent = ''; $('key_go').disabled = !TOUR.signedUp; $('key_code').disabled = !TOUR.signedUp;
+  $('keywrap').dataset.stop = stop; $('keywrap').classList.add('show'); if (TOUR.signedUp) $('key_code').focus();
+}
+function closeKeyModal() { $('keywrap').classList.remove('show'); }
+$('key_close').onclick = closeKeyModal;
+$('keyform').addEventListener('submit', async (e) => {
+  e.preventDefault(); const v = $('key_code').value.trim(); if (!v) return $('key_code').focus();
+  $('key_go').disabled = true; $('key_go').textContent = 'Checking…'; $('key_msg').textContent = '';
+  try {
+    const r = await fetch('/api/tour', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(TOUR.guide.id) }, body: JSON.stringify({ bot: TOUR.guide.id, code: v }) });
+    const d = await r.json();
+    if (d.redeemed && d.redeemed.ok) { TOUR.deploy = d.deploy; TOUR.links = d.links || TOUR.links; closeKeyModal(); tourToast('Unlocked 🔑', 'The code, the walkthrough and Build one here are open.'); const s = $('keywrap').dataset.stop; if (s) tourGo(s); return; }
+    $('key_msg').textContent = (d.redeemed && d.redeemed.reason) || d.error || 'That code didn\'t work.';
+  } catch { $('key_msg').textContent = 'Could not reach the server. Try again.'; }
+  $('key_go').disabled = false; $('key_go').textContent = 'Unlock';
+});
+$('key_code').addEventListener('input', () => { const v = $('key_code').value.toUpperCase().replace(/[^A-Z0-9]/g, ''); $('key_code').value = v.length > 4 ? v.slice(0, 4) + '-' + v.slice(4, 8) : v; });
 function tourGo(stop) {
   $('tourmake').hidden = true;
   try { const u = new URL(location.href); u.searchParams.set('stop', stop); history.replaceState(history.state, '', u); } catch {}
@@ -1472,9 +1515,7 @@ function tourGo(stop) {
   if (stop === 'break') { try { sessionStorage.setItem('byo:breakbar', 'on'); } catch {} const p = tourSample(); if (p) { selectProject(p); $('side').classList.remove('open'); } showBreakBar(true); renderLog(); input.focus(); return; }
   if (stop === 'hood') {
     if (!TOUR.links?.code) {
-      if (!TOUR.signedUp) tourToast('Sign up first', 'Then the code opens with a key from the workshop.');
-      else if (TOUR.deploy?.allowed) tourToast('Almost', 'The owner hasn\'t set the code link yet.');
-      else { tourToast('Needs a key', 'The code opens with a key from the workshop. Got one? Enter it under Make your own.'); tourGo('make'); }
+      if (TOUR.deploy?.allowed) tourToast('Almost', 'The owner hasn\'t set the code link yet.'); else openKeyModal('hood');
       return;
     }
     window.open(TOUR.links.code, '_blank', 'noopener'); markStop('hood'); return;
@@ -1482,6 +1523,7 @@ function tourGo(stop) {
   if (stop === 'join') { if (TOUR.community?.url) window.open(TOUR.community.url, '_blank', 'noopener'); markStop('join'); return; }
   if (stop === 'make') {
     const d = TOUR.deploy || {}; const c = TOUR.community; const box = $('tourmake'); box.innerHTML = '';
+    if (!d.allowed) { openKeyModal('make'); return; }
     const add = (html) => { const w = document.createElement('span'); w.innerHTML = html; while (w.firstChild) box.appendChild(w.firstChild); };
     if (d.allowed) add('<button type="button" class="primary" data-mk="build">🧪 Build one here</button>' + (d.url ? '<a href="' + esc(d.url) + '" target="_blank" rel="noopener" data-mk="deploy">🚀 Deploy your own</a>' : '') + (d.checklist ? '<a href="' + esc(d.checklist) + '" target="_blank" rel="noopener" data-mk="deploy">the owner walkthrough</a>' : ''));
     else add('<span class="why">' + esc(d.why || 'The deploy walkthrough is the paid workshop.') + '</span>' + (c?.workshopUrl ? '<a class="primary" href="' + esc(c.workshopUrl) + '" target="_blank" rel="noopener" data-mk="workshop" title="' + esc(c.workshopPitch || '') + '">Get ' + esc(c.workshopName || 'the workshop') + '</a>' : '') + (c?.url ? '<a href="' + esc(c.url) + '" target="_blank" rel="noopener" data-mk="join">Join ' + esc(c.name || 'the community') + ' (free)</a>' : '') + (TOUR.signedUp ? '<input id="tourcode" placeholder="Code, e.g. K7M4-P2QX" maxlength="9" style="font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--edge);border-radius:10px;background:var(--bg);color:var(--text);width:150px;text-transform:uppercase" /><button type="button" data-mk="code">Unlock</button>' : ''));
@@ -1529,7 +1571,7 @@ async function send(text) {
   const stopThinking = () => { if (ticker) clearInterval(ticker); body.className = 'body cursor'; };
   scrollDown();
 
-  state.busy = true; sendBtn.classList.add('stop'); sendBtn.textContent = '■'; sendBtn.title = 'Stop';
+  state.busy = true; sendBtn.classList.add('stop'); sendBtn.textContent = '■'; sendBtn.title = 'Stop'; setBreakBusy(true);
   state.abort = new AbortController();
   let full = '', finalText = null, flags = [], sources = [];
   try {
@@ -1588,7 +1630,7 @@ async function send(text) {
   addSpeaker(body.parentElement, reply);
   if (autoSpeak && state.voice?.out && reply && !(finalText === null && !full)) { const b = body.parentElement.querySelector('.speak'); if (b) speak(reply, b); }
   store.upsert(chat); renderChats();
-  state.busy = false; sendBtn.classList.remove('stop'); sendBtn.textContent = '↑'; sendBtn.title = 'Send';
+  state.busy = false; sendBtn.classList.remove('stop'); sendBtn.textContent = '↑'; sendBtn.title = 'Send'; setBreakBusy(false);
   scrollDown(); input.focus();
 }
 
