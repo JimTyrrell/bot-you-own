@@ -78,7 +78,7 @@
   #tourmake a.primary { background:var(--text); color:var(--bg); border-color:transparent; font-weight:600; }
   #tourmake .why { color:var(--muted); }
   .lockwrap form.sbform { width:min(560px,100%); max-height:92vh; overflow:auto; gap:10px; }
-  .lockwrap.keywrap { background:rgba(0,0,0,.55); backdrop-filter:blur(2px); }
+  .lockwrap.keywrap, .lockwrap.modal { background:rgba(0,0,0,.55); backdrop-filter:blur(2px); }
   .keywrap form { width:min(420px,100%); box-shadow:0 20px 60px rgba(0,0,0,.35); }
   .keywrap form a { display:block; text-align:center; padding:11px; border-radius:10px; border:1px solid var(--edge); background:var(--bg); color:var(--text); text-decoration:none; font-weight:600; }
   .keywrap form a.primary { background:var(--text); color:var(--bg); border-color:transparent; }
@@ -389,7 +389,7 @@ document.addEventListener('DOMContentLoaded', function () {
   <button type="button" id="key_close" style="background:var(--panel);color:var(--text)">Back to the tour</button>
   <div id="key_msg" class="sbmsg"></div>
 </form></div>
-<div id="sandboxwrap" class="lockwrap"><form id="sandboxform" class="sbform">
+<div id="sandboxwrap" class="lockwrap modal"><form id="sandboxform" class="sbform">
   <h2>🧪 Build one here</h2>
   <p>Paste the Instructions from your custom GPT, or start from a licensed prompt. Add its files. It's yours to chat with for two weeks, and you can take the files with you.</p>
   <details class="sbhow"><summary>Bringing a ChatGPT custom GPT over? Where each piece lives</summary>
@@ -865,6 +865,7 @@ function pushUrl(replace) {
   try { replace ? history.replaceState(st, '', u) : history.pushState(st, '', u); } catch {}
 }
 window.addEventListener('popstate', (e) => {
+  if (closeOpenOverlays()) return;                         // Back closed a modal; the page underneath is untouched
   const st = e.state || {}; const pid = st.project || new URLSearchParams(location.search).get('project');
   const p = state.projects.find((x) => x.id === pid) || state.projects[0];
   if (!p) return;
@@ -1321,9 +1322,9 @@ async function openSandbox() {
   mine.hidden = !(SB.bots || []).length;
   mine.innerHTML = (SB.bots || []).length ? '<b>Your sandbox bots (' + SB.bots.length + ' of ' + (SB.limits?.perPerson || 3) + ')</b>' + SB.bots.map((b) => '<div><span style="flex:1">' + esc(b.name) + ' <span class="muted">· ' + b.files + ' file' + (b.files === 1 ? '' : 's') + ' · ' + daysLeft(b.expires_at) + '</span></span><button type="button" data-sbopen="' + esc(b.id) + '">Open</button><button type="button" data-sbdel="' + esc(b.id) + '">Delete</button></div>').join('') : '';
   mine.onclick = async (e) => { const o = e.target.closest('[data-sbopen]'); if (o) { closeSandbox(); const p = state.projects.find((x) => x.id === o.dataset.sbopen); if (p) selectProject(p); return; } const dl = e.target.closest('[data-sbdel]'); if (dl) { dl.disabled = true; await fetch('/api/sandbox/' + encodeURIComponent(dl.dataset.sbdel), { method: 'DELETE', headers: authHeaders() }); await refreshProjects(); openSandbox(); } };
-  $('sb_msg').textContent = ''; $('sandboxwrap').classList.add('show'); $('sb_name').focus();
+  $('sb_msg').textContent = ''; overlayOpen('sandboxwrap'); $('sb_name').focus();
 }
-function closeSandbox() { $('sandboxwrap').classList.remove('show'); }
+function closeSandbox() { overlayClose('sandboxwrap'); }
 $('sb_close').onclick = closeSandbox;
 const daysLeft = (iso) => { const d = Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000); return d <= 0 ? 'expires today' : d + ' day' + (d === 1 ? '' : 's') + ' left'; };
 // Re-read the bot list from the server so a new sandbox bot appears in the sidebar.
@@ -1500,6 +1501,13 @@ function showBreakBar(on) {
   own.onclick = () => { input.value = ''; input.placeholder = 'Your turn: try to make it misbehave…'; input.focus(); };
   row.appendChild(own); bar.append(h, row); bar.hidden = false;
 }
+// Overlays are a history step: Back closes them (and only them), so does Escape, so does a tap outside.
+const OVERLAYS = ['keywrap', 'sandboxwrap'];
+function overlayOpen(id) { const el = $(id); if (el.classList.contains('show')) return; el.classList.add('show'); try { history.pushState({ ...(history.state || {}), overlay: id }, '', location.href); } catch {} }
+function overlayClose(id, viaHistory) { const el = $(id); if (!el.classList.contains('show')) return; el.classList.remove('show'); if (!viaHistory && history.state && history.state.overlay === id) { try { history.back(); } catch {} } }
+function closeOpenOverlays() { let any = false; OVERLAYS.forEach((id) => { if ($(id).classList.contains('show')) { $(id).classList.remove('show'); any = true; } }); return any; }
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') OVERLAYS.forEach((id) => overlayClose(id)); });
+OVERLAYS.forEach((id) => $(id).addEventListener('pointerdown', (e) => { if (e.target === $(id)) overlayClose(id); }));
 // The key modal: everything behind it dims; one thing to do. Used by any locked stop.
 function openKeyModal(stop) {
   const c = TOUR.community || {};
@@ -1508,9 +1516,9 @@ function openKeyModal(stop) {
   $('key_workshop').href = c.workshopUrl || c.url || '#'; $('key_workshop').textContent = 'Get ' + (c.workshopName || 'the workshop'); $('key_workshop').hidden = !(c.workshopUrl || c.url);
   $('key_code').value = ''; $('key_msg').textContent = ''; $('key_go').disabled = !TOUR.signedUp; $('key_code').disabled = !TOUR.signedUp;
   $('key_dm').hidden = !c.dmUrl; if (c.dmUrl) { $('key_dmlink').href = c.dmUrl; $('key_dmlink').textContent = 'DM ' + (c.dmName || 'the owner') + (c.name ? ' in ' + c.name : ''); }
-  $('keywrap').dataset.stop = stop; $('keywrap').classList.add('show'); if (TOUR.signedUp) $('key_code').focus();
+  $('keywrap').dataset.stop = stop; overlayOpen('keywrap'); if (TOUR.signedUp) $('key_code').focus();
 }
-function closeKeyModal() { $('keywrap').classList.remove('show'); }
+function closeKeyModal() { overlayClose('keywrap'); }
 $('key_close').onclick = closeKeyModal;
 $('keyform').addEventListener('submit', async (e) => {
   e.preventDefault(); const v = $('key_code').value.trim(); if (!v) return $('key_code').focus();
