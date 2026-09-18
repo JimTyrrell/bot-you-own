@@ -682,8 +682,9 @@ $('lockback').onclick = () => { if (!(state.projects && state.projects.length)) 
 // every ten seconds, opens the moment that happens. Nothing is emailed.
 let pendingPoll = null;
 function showPending(code, email) {
-  $('lockhint').textContent = 'That email is already signed up on another device. Use that device, or a different email here. If you\'ve lost that device, the owner can approve this one — this page opens by itself the moment they do.';
+  $('lockhint').textContent = 'That email is already signed up on another device. Use that device, or a different email here. Got a workshop key? Type it below and this device is in. Otherwise the owner can approve it — this page opens by itself the moment they do.';
   $('lockmsg').textContent = 'Waiting for approval…';
+  $('lkey').hidden = false; $('lkey').placeholder = 'Workshop key — opens this device'; $('lockgo').hidden = false; $('lockgo').textContent = 'Unlock';
   clearInterval(pendingPoll);
   pendingPoll = setInterval(async () => {
     try {
@@ -723,11 +724,11 @@ $('lockform').addEventListener('submit', async (e) => {
       const gate = { name: $('lname').hidden ? '' : $('lname').value.trim(), phone: $('lphone').hidden ? '' : $('lphone').value.trim(), marketing: !$('lmarketingwrap').hidden && $('lmarketing').checked, sms: !$('lsmswrap').hidden && $('lsms').checked, fp: browserFacts(), source: document.referrer ? new URL(document.referrer).hostname : 'direct' };
       if (!$('lname').hidden && $('lname').required && !gate.name) { $('lockmsg').textContent = 'Please add your name.'; $('lname').focus(); return; }
       if (!$('lphone').hidden && $('lphone').required && !gate.phone) { $('lockmsg').textContent = 'Please add a mobile number we can text.'; $('lphone').focus(); return; }
-      const res = await fetch('/api/id/join', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(lock.project) }, body: JSON.stringify({ bot: lock.project, email: em, ...gate }) });
+      const res = await fetch('/api/id/join', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(lock.project) }, body: JSON.stringify({ bot: lock.project, email: em, ...gate, key: ($('lkey').value || '').trim() || undefined }) });
       const data = await res.json().catch(() => ({}));
       if (res.ok) rememberGate({ name: gate.name, email: em, phone: gate.phone, marketing: gate.marketing, sms: gate.sms });
       if (!res.ok) { $('lockmsg').textContent = res.status === 429 ? 'Too many tries. Wait a minute.' : (data.reason || 'Could not join. Try again.'); if (data.error === 'phone') $('lphone').focus(); else if (data.error === 'name') $('lname').focus(); else if (data.error === 'email') $('email').focus(); return; }
-      if (!data.linked) return showPending(data.code, em.toLowerCase());
+      if (!data.linked) { showPending(data.code, em.toLowerCase()); if (data.keyRejected) $('lockmsg').textContent = data.reason; return; }
       VISITOR = data.email || em.toLowerCase(); VISITOR_NAME = data.name || gate.name || ''; identified[lock.project] = true;
       // a key typed at the gate is redeemed right away; a wrong one is just ignored here (the modal will ask again)
       const key = ($('lkey').value || '').trim(); const guide = (state.cfg?.projects || []).find((p) => p.tour);

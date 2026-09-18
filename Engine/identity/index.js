@@ -30,6 +30,7 @@
 import { deviceHash, userForDevice, userById, userByEmail, pendingFor, bindDevice, cleanEmail, ensureIdentitySchema, nowIso, deviceCount, join as joinDevice, linkByCode, touch, cleanGrace, DEFAULT_GRACE_MINUTES, recordSignup, cleanPhone, pepperOf, adoptDevice } from "./devices.js";
 import { SIGNUP_BUILT_IN } from "../worker/settings.js";
 import { DISPOSABLE } from "../worker/signups.js";
+import { keyIsActive, noteKeyUse } from "../worker/tour.js";
 
 // Is this an email someone actually reads? Three checks, cheapest first:
 //   1. the domain looks like a domain and isn't a throwaway (if the gate says so)
@@ -225,6 +226,16 @@ export async function handleIdentity(request, env, url, { bot, allowed = async (
         await signupWebhook(signup.webhook, { event: "signup", bot: { id: bot.id, name: bot.name }, when: now, email, name: rec.name, phone: rec.phone, marketing: rec.marketing, sms: rec.sms, consent_text: rec.consent_text, source: rec.source, ip_hash: rec.ip_hash, fp_hash: rec.fp_hash, country: request.headers.get("cf-ipcountry") || "" });
       }
       if (r.linked) return json({ ok: true, linked: true, email: r.user.email, name: (r.fresh ? gate.name : r.user.name) || "", fresh: Boolean(r.fresh), ...(r.grace ? { grace: true } : {}) });
+      // A second device holding a live workshop key: the key is proof enough. Link it now, no owner needed.
+      if (body.key) {
+        const k = await keyIsActive(env, String(body.key));
+        if (!k) return json({ ok: true, linked: false, code: r.code, email: r.email, keyRejected: true, reason: "That key isn't active. Wait for the owner, or use a different email." });
+        const existing = await userByEmail(env, bot.id, email);
+        const user = await bindDevice(env, bot.id, { userId: existing.id, email, keyHash, label: "workshop key" });
+        try { await noteKeyUse(env, k.code, user, bot.id); } catch {}
+        console.log(JSON.stringify({ event: "identity-join-key", bot: bot.id, code: k.code, issuedTo: k.issued_to }));
+        return json({ ok: true, linked: true, email: user.email, name: user.name || "", byKey: true });
+      }
       return json({ ok: true, linked: false, code: r.code, email: r.email, reason: "This email is already in use on another device. The owner can link this one with the code." });
     }
 

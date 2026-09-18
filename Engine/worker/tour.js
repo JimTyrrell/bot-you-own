@@ -60,6 +60,18 @@ export async function createCode(env, { issuedTo = "", note = "", maxUses = null
   await env.DB.prepare(`INSERT INTO deploy_codes (code, issued_to, note, max_uses, created_at, created_by) VALUES (?, ?, ?, ?, ?, 'admin')`).bind(code, String(issuedTo).slice(0, 120), String(note).slice(0, 300), Number.isFinite(Number(maxUses)) && Number(maxUses) > 0 ? Math.round(Number(maxUses)) : null, new Date().toISOString()).run();
   return code;
 }
+// A key on its own: active and under its cap? Used by the join route to let a second device in.
+export async function keyIsActive(env, raw) {
+  await ensureSchema(env);
+  const code = cleanCode(raw); if (!/^[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(code)) return null;
+  const row = await env.DB.prepare(`SELECT * FROM deploy_codes WHERE code = ?`).bind(code).first();
+  if (!row || row.disabled) return null;
+  if (row.max_uses) { const n = (await env.DB.prepare(`SELECT COUNT(*) n FROM deploy_code_uses WHERE code = ?`).bind(code).first())?.n || 0; if (n >= row.max_uses) return null; }
+  return row;
+}
+export async function noteKeyUse(env, code, user, bot) {
+  await env.DB.prepare(`INSERT INTO deploy_code_uses (code, user_id, bot, email, ip_hash, created_at) VALUES (?, ?, ?, ?, '', ?)`).bind(cleanCode(code), user.id, bot, user.email, new Date().toISOString()).run();
+}
 export async function disableCode(env, code, on = true) { await ensureSchema(env); await env.DB.prepare(`UPDATE deploy_codes SET disabled = ? WHERE code = ?`).bind(on ? 1 : 0, cleanCode(code)).run(); }
 // A visitor redeems a code: it has to exist, be on, and be under its cap. Every attempt that
 // succeeds is logged with who used it; the unlock is written onto their tour row.
