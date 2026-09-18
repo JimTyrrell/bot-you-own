@@ -1390,7 +1390,7 @@ const STOP_META = {
   join:  { label: 'Join',            hint: 'The workshop, the help, and the people doing this.' },
 };
 const STOP_DONE = {
-  try: 'You tried a bot. Next: try to break it.',
+  try: 'You got a real answer. Now the fun part: tap Break it in the strip above.',
   break: 'That chip under the reply is the firewall showing its work. Next: see the code.',
   hood: 'Everything you saw is in that repo. Next: make one yourself.',
   make: 'Deploy or import — either way it\'s yours. Last stop: the community.',
@@ -1471,13 +1471,14 @@ function syncBreakBar(chatEmpty) {
   const p = state.project; if (!p) return;
   let mode = ''; try { mode = sessionStorage.getItem('byo:breakbar') || ''; } catch {}
   const empty = chatEmpty === undefined ? !(state.chat?.messages?.length) : chatEmpty;
-  // a conversation in progress is never interrupted: the bar waits for a new chat, or for Break it in the strip
-  showBreakBar(Boolean(TOUR.guide) && p.id !== TOUR.guide.id && p.kind !== 'food' && !p.sandbox && mode !== 'off' && (mode === 'on' || empty) && (TOUR.done.try || TOUR.done.break || Object.keys(BREAK_USED).length > 0));
+  // the bar never appears on its own: only after Break it in the strip was pressed (mode 'on'),
+  // and then it stays on this sample bot until hidden. A conversation in progress is never interrupted.
+  showBreakBar(Boolean(TOUR.guide) && p.id !== TOUR.guide.id && p.kind !== 'food' && !p.sandbox && mode === 'on' && (empty || TOUR.done.break || Object.keys(BREAK_USED).length > 0));
 }
 function showBreakBar(on) {
   const bar = $('breakbar'); if (!on) { bar.hidden = true; return; }
   bar.innerHTML = '';
-  const h = document.createElement('div'); h.className = 'h'; h.innerHTML = '<b>Try to break it.</b> Tap one, watch the chip under the reply. Do them all.<button type="button" class="x" title="Hide">✕</button>';
+  const h = document.createElement('div'); h.className = 'h'; h.innerHTML = '<b>Now try to break it.</b> These are the tricks people use. Tap one, watch the chip under the reply. Do as many as you like.<button type="button" class="x" title="Hide">✕</button>';
   h.querySelector('.x').onclick = () => { bar.hidden = true; try { sessionStorage.setItem('byo:breakbar', 'off'); } catch {} renderLog(); };
   const row = document.createElement('div'); row.className = 'row';
   BREAK_PROMPTS.forEach((p) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = p.t; b.title = p.why; if (BREAK_USED[p.t]) b.classList.add('used'); b.onclick = () => { if (state.busy) { tourToast('One at a time', 'Wait for the reply, then tap the next.', 2500); return; } BREAK_USED[p.t] = 1; try { localStorage.setItem('byo:break', JSON.stringify(BREAK_USED)); } catch {} b.classList.add('used'); setBreakBusy(true); send(p.t); }; row.appendChild(b); });
