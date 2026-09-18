@@ -82,6 +82,9 @@
   #tourmake .why { color:var(--muted); }
   .lockwrap form.sbform { width:min(560px,100%); max-height:92vh; overflow:auto; gap:10px; }
   .lockwrap.keywrap, .lockwrap.modal { background:rgba(0,0,0,.55); backdrop-filter:blur(2px); }
+  .lockwrap.keywrap form, .lockwrap.modal form { position:relative; }
+  .modalx { position:absolute; top:10px; right:10px; width:30px; height:30px; padding:0; border-radius:50%; background:var(--panel); color:var(--muted); font-size:14px; line-height:30px; text-align:center; }
+  .modalx:hover { color:var(--text); }
   .keywrap form { width:min(420px,100%); box-shadow:0 20px 60px rgba(0,0,0,.35); }
   .keywrap form a { display:block; text-align:center; padding:11px; border-radius:10px; border:1px solid var(--edge); background:var(--bg); color:var(--text); text-decoration:none; font-weight:600; }
   .keywrap form a.primary { background:var(--text); color:var(--bg); border-color:transparent; }
@@ -392,6 +395,7 @@ document.addEventListener('DOMContentLoaded', function () {
   <div id="adminmsg" class="lockmsg"></div>
 </form></div>
 <div id="keywrap" class="lockwrap keywrap"><form id="keyform">
+  <button type="button" class="modalx" data-x="keywrap" title="Close">✕</button>
   <h2 id="key_title">🔑 This stop needs a workshop key</h2>
   <p id="key_why">You're signed in. This one stop opens with a key from the workshop.</p>
   <a class="primary" id="key_workshop" href="#" target="_blank" rel="noopener">Get the workshop</a>
@@ -402,6 +406,7 @@ document.addEventListener('DOMContentLoaded', function () {
   <div id="key_msg" class="sbmsg"></div>
 </form></div>
 <div id="sandboxwrap" class="lockwrap modal"><form id="sandboxform" class="sbform">
+  <button type="button" class="modalx" data-x="sandboxwrap" title="Close">✕</button>
   <h2>🧪 Build one here</h2>
   <div id="sb_doors">
     <p>Two ways in. Either way it's yours to chat with for two weeks, and you can take the files with you.</p>
@@ -1553,6 +1558,7 @@ function closeOpenOverlays() { let any = false; OVERLAYS.forEach((id) => { if ($
 // A panel named in the URL opens on load (after the tour knows who this is).
 function openPanelFromUrl() { const p = new URLSearchParams(location.search).get('panel'); if (!p) return; const u = new URL(location.href); u.searchParams.delete('panel'); history.replaceState(history.state, '', u); if (p === 'build') openSandbox(); else if (p === 'key') openKeyModal('make'); }
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') OVERLAYS.forEach((id) => overlayClose(id)); });
+document.querySelectorAll('.modalx').forEach((b) => { b.onclick = () => overlayClose(b.dataset.x); });
 OVERLAYS.forEach((id) => $(id).addEventListener('pointerdown', (e) => { if (e.target === $(id)) overlayClose(id); }));
 // The key modal: everything behind it dims; one thing to do. Used by any locked stop.
 function openKeyModal(stop) {
