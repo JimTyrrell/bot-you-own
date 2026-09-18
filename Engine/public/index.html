@@ -1343,7 +1343,7 @@ function nudgeTarget() {
   if ($('lock').classList.contains('show')) return { el: $('lockgo'), text: 'Start here' };
   if ($('introwrap').classList.contains('show')) return { el: $('intro_go'), text: 'Tap here' };
   if (FRESH_ID) { const row = document.querySelector('#projects .item.fresh'); if (row && state.project?.id !== FRESH_ID) return { el: row, text: 'Your bot' }; }
-  if ($('sandboxwrap').classList.contains('show')) return { el: $('sb_go'), text: 'Create it' };
+  if ($('sandboxwrap').classList.contains('show')) { if (!$('sb_picks').hidden) { const pk = document.querySelector('#sb_picks [data-pick]'); if (pk) return { el: pk, text: 'Pick one' }; } if (!$('sb_fields').hidden) return { el: $('sb_go'), text: 'Create it' }; const door = document.querySelector('.sbdoors button'); return door ? { el: door, text: 'Pick a door' } : null; }
   if ($('keywrap').classList.contains('show')) return { el: $('key_workshop').hidden ? $('key_go') : $('key_workshop'), text: 'This one' };
   if (!$('tourmake').hidden) { const b = $('tourmake').querySelector('.primary, [data-mk="code"]'); if (b) return { el: b, text: 'This one' }; }
   const next = TOUR.stops.find((s) => !TOUR.done[s]);
@@ -1516,7 +1516,8 @@ async function initTour() {
     if (r.ok) { TOUR.deploy = d.deploy || null; TOUR.links = d.links || null; TOUR.signedUp = !!d.signedUp; if (d.community) TOUR.community = d.community; if (!wantReset) Object.assign(TOUR.done, d.done || {}); tourSave(); renderTour(); }
   } catch {}
   if (wantReset) { const u = new URL(location.href); u.searchParams.delete('tour'); history.replaceState(history.state, '', u); if (state.chat && !state.chat.messages.length) renderLog(); }
-  if (wantStop && STOP_META[wantStop] && !$('lock').classList.contains('show')) setTimeout(() => tourGo(wantStop), 200);
+  if (wantStop) { const u = new URL(location.href); u.searchParams.delete('stop'); history.replaceState(history.state, '', u); }
+  if (wantStop && STOP_META[wantStop] && !$('lock').classList.contains('show')) setTimeout(() => { tourGo(wantStop); const u = new URL(location.href); u.searchParams.delete('stop'); history.replaceState(history.state, '', u); }, 200);
   if (!$('lock').classList.contains('show')) setTimeout(openPanelFromUrl, 300);
   if (!$('lock').classList.contains('show')) setTimeout(maybeIntro, 400);
 }
@@ -1605,8 +1606,8 @@ const PANEL_NAME = { introwrap: 'intro', keywrap: 'key', sandboxwrap: 'build' };
 function maybeIntro() { let seen = ''; try { seen = localStorage.getItem('byo:intro') || ''; } catch {} if (seen || !TOUR.guide || ADMIN) return; overlayOpen('introwrap'); }
 $('introform').addEventListener('submit', (e) => { e.preventDefault(); try { localStorage.setItem('byo:intro', '1'); } catch {} overlayClose('introwrap'); armNudge(); });            // …and each has a URL: ?panel=key, ?panel=build
 function overlayOpen(id) { const el = $(id); if (el.classList.contains('show')) return; el.classList.add('show'); try { const u = new URL(location.href); u.searchParams.set('panel', PANEL_NAME[id]); history.pushState({ ...(history.state || {}), overlay: id }, '', u); } catch {} }
-function overlayClose(id, viaHistory) { const el = $(id); if (!el.classList.contains('show')) return; el.classList.remove('show'); if (!viaHistory && history.state && history.state.overlay === id) { try { history.back(); } catch {} } }
-function closeOpenOverlays() { let any = false; OVERLAYS.forEach((id) => { if ($(id).classList.contains('show')) { $(id).classList.remove('show'); any = true; } }); return any; }
+function overlayClose(id, viaHistory) { const el = $(id); if (!el.classList.contains('show')) return; el.classList.remove('show'); if (id === 'introwrap') { try { localStorage.setItem('byo:intro', '1'); } catch {} } if (!viaHistory && history.state && history.state.overlay === id) { try { history.back(); } catch {} } }
+function closeOpenOverlays() { let any = false; OVERLAYS.forEach((id) => { if ($(id).classList.contains('show')) { $(id).classList.remove('show'); any = true; if (id === 'introwrap') { try { localStorage.setItem('byo:intro', '1'); } catch {} } } }); return any; }
 // A panel named in the URL opens on load (after the tour knows who this is).
 function openPanelFromUrl() { const p = new URLSearchParams(location.search).get('panel'); if (!p) return; const u = new URL(location.href); u.searchParams.delete('panel'); history.replaceState(history.state, '', u); if (p === 'build') openSandbox(); else if (p === 'key') openKeyModal('make'); }
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') OVERLAYS.forEach((id) => overlayClose(id)); });
@@ -1638,7 +1639,7 @@ $('keyform').addEventListener('submit', async (e) => {
 $('key_code').addEventListener('input', () => { const v = $('key_code').value.toUpperCase().replace(/[^A-Z0-9]/g, ''); const m = v.match(/^([A-Z]{1,6})(\d{0,4})(\d{0,4})$/); $('key_code').value = m ? [m[1], m[2], m[3]].filter(Boolean).join('-') : (v.length > 4 ? v.slice(0, 4) + '-' + v.slice(4, 8) : v); });
 function tourGo(stop) {
   $('tourmake').hidden = true;
-  try { const u = new URL(location.href); u.searchParams.set('stop', stop); history.replaceState(history.state, '', u); } catch {}
+
   if (stop === 'try') { const p = tourSample(); if (p) { selectProject(p); $('side').classList.remove('open'); input.focus(); } return; }
   if (stop === 'break') { try { sessionStorage.setItem('byo:breakbar', 'on'); } catch {} const p = tourSample(); if (p) { selectProject(p); $('side').classList.remove('open'); } showBreakBar(true); renderLog(); input.focus(); return; }
   if (stop === 'hood') {
