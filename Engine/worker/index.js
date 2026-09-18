@@ -318,7 +318,7 @@ export default {
         if (!next.default || !next.floor) return json({ error: `default and floor must each be one of: ${ACCESS_MODES.join(", ")}` }, 400);
         const badge = cleanBadge(b?.createYourOwn);
         const ident = b?.identity && typeof b.identity === "object" && b.identity.graceMinutes !== undefined ? { graceMinutes: b.identity.graceMinutes } : null;
-        if (ident && !(Number.isFinite(Number(ident.graceMinutes)) && Number(ident.graceMinutes) >= 0)) return json({ error: "identity.graceMinutes must be a number of minutes, 0 or more" }, 400);
+        if (ident && !(Number.isFinite(Number(ident.graceMinutes)) && Number(ident.graceMinutes) >= -1)) return json({ error: "identity.graceMinutes must be a number of minutes, 0 or more (or -1: never block a second device)" }, 400);
         const exp = cleanExpiryConfig(b?.expiry);
         if (b?.expiry && !exp) return json({ error: `expiry.onLapse must be one of: ${LAPSE_MODES.join(", ")}, and the day counts must be numbers` }, 400);
         const su = b?.signup ? cleanSignup(b.signup, settings.signup) : null;

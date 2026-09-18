@@ -115,7 +115,7 @@ export async function getSettings(env) {
   return { ...access, createYourOwn: badge, identity, expiry, signup, links, brand };
 }
 // identity.graceMinutes: the return window, in minutes. 0 = off. Same three places, later wins.
-const graceOf = (i) => (i && typeof i === "object" && i.graceMinutes !== undefined && i.graceMinutes !== null && i.graceMinutes !== "" && Number.isFinite(Number(i.graceMinutes)) && Number(i.graceMinutes) >= 0 ? cleanGrace(i.graceMinutes) : null);
+const graceOf = (i) => (i && typeof i === "object" && i.graceMinutes !== undefined && i.graceMinutes !== null && i.graceMinutes !== "" && Number.isFinite(Number(i.graceMinutes)) && Number(i.graceMinutes) >= -1 ? cleanGrace(i.graceMinutes) : null);
 function mergeIdentity(c, f, s) {
   const pick = [graceOf(s), graceOf(f), graceOf(c)].find((v) => v !== null);
   const source = graceOf(s) !== null ? "saved (Settings screen)" : graceOf(f) !== null ? "YourBots/settings.json" : graceOf(c) !== null ? "YourBots/config.js" : "built-in";

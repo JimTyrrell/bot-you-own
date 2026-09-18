@@ -117,7 +117,9 @@ export async function bindDevice(env, bot, { userId, email, keyHash, label }) {
 //     case the new device is bound at once. ---
 //   → { linked: true, user, fresh }  ·  { linked: true, user, grace: true }  ·  { linked: false, code, email }
 export const DEFAULT_GRACE_MINUTES = 60;
-export function cleanGrace(v, fallback = DEFAULT_GRACE_MINUTES) { const n = Number(v); return Number.isFinite(n) && n >= 0 ? Math.min(Math.round(n), 7 * 24 * 60) : fallback; }
+// 0 = a second device always waits for the owner; up to a week in minutes; ALWAYS (-1) = never block a second device.
+export const ALWAYS = -1;
+export function cleanGrace(v, fallback = DEFAULT_GRACE_MINUTES) { const n = Number(v); if (n === ALWAYS || v === "always") return ALWAYS; return Number.isFinite(n) && n >= 0 ? Math.min(Math.round(n), 7 * 24 * 60) : fallback; }
 export async function join(env, bot, { email, keyHash, graceMinutes = DEFAULT_GRACE_MINUTES }) {
   const known = await userForDevice(env, bot, keyHash);
   if (known) return { linked: true, user: known };                          // reload of a known browser
@@ -131,7 +133,7 @@ export async function join(env, bot, { email, keyHash, graceMinutes = DEFAULT_GR
   // The return window: last seen within N minutes → this is them, on another machine.
   const grace = cleanGrace(graceMinutes);
   const seen = Date.parse(exists.last_seen || exists.created_at || "") || 0;
-  if (grace > 0 && seen && Date.now() - seen < grace * 60 * 1000) {
+  if (grace === ALWAYS || (grace > 0 && seen && Date.now() - seen < grace * 60 * 1000)) {
     const user = await bindDevice(env, bot, { userId, email, keyHash, label: "return window" });
     console.log(JSON.stringify({ event: "identity-join-grace", bot, userId: userId.slice(0, 8), minutesSinceSeen: Math.round((Date.now() - seen) / 60000) }));
     return { linked: true, user, grace: true };
