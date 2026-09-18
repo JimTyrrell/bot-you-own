@@ -39,6 +39,10 @@
   .item:hover { background:var(--panel); }
   a.item { text-decoration:none; }
   .item.active { background:var(--panel); font-weight:600; }
+  .item.fresh { animation:freshpulse 1.2s ease-in-out infinite; }
+  @keyframes freshpulse { 0%, 100% { background:rgba(16,163,127,.12); box-shadow:0 0 0 0 rgba(16,163,127,0); } 50% { background:rgba(16,163,127,.32); box-shadow:0 0 0 4px rgba(16,163,127,.25); } }
+  .item.dragging { opacity:.5; } .item.over { outline:2px dashed var(--accent); outline-offset:-2px; }
+  .item { cursor:grab; } .item:active { cursor:grabbing; }
   .item small { color:var(--muted); font-weight:400; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .chats { flex:1 1 0; min-height:90px; }
   .chat-row { display:flex; align-items:center; }
@@ -993,16 +997,25 @@ function accessBadge(p) {
 // browser's: the rows are real links, so those open a new tab or window with
 // the same ?project=…&chat=… the row stands for. A plain click stays in-page.
 const wantsNewTab = (e) => e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1;
+let FRESH_ID = '';                                       // a sandbox bot just made: pulses at the top until tapped
+function sideOrder() { try { return JSON.parse(localStorage.getItem('byo:order') || '[]') || []; } catch { return []; } }
+function orderedProjects() { const o = sideOrder(); const rank = (p) => { const i = o.indexOf(p.id); return i < 0 ? 1e6 + (p.order ?? 100) : i; }; return [...state.projects].sort((a, b) => rank(a) - rank(b)); }
 function renderProjects() {
   $('projects').innerHTML = '';
-  state.projects.forEach((p) => {
+  orderedProjects().forEach((p) => {
     const el = document.createElement('a');
-    el.className = 'item' + (p.id === state.project?.id ? ' active' : '');
+    el.className = 'item' + (p.id === state.project?.id ? ' active' : '') + (p.id === FRESH_ID ? ' fresh' : '');
+    el.draggable = true; el.dataset.id = p.id;
+    el.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/plain', p.id); el.classList.add('dragging'); });
+    el.addEventListener('dragend', () => el.classList.remove('dragging'));
+    el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('over'); });
+    el.addEventListener('dragleave', () => el.classList.remove('over'));
+    el.addEventListener('drop', (e) => { e.preventDefault(); el.classList.remove('over'); const from = e.dataTransfer.getData('text/plain'); if (!from || from === p.id) return; const ids = orderedProjects().map((x) => x.id); ids.splice(ids.indexOf(from), 1); ids.splice(ids.indexOf(p.id), 0, from); try { localStorage.setItem('byo:order', JSON.stringify(ids)); } catch {} renderProjects(); });
     const isApp = p.kind && p.kind !== 'chat';
     // An app-shaped bot (the food log) lives on its own page: /apps/<id>. Chat bots stay here.
     el.href = isApp ? (p.href || ('/apps/' + encodeURIComponent(p.id))) : (location.pathname + '?project=' + encodeURIComponent(p.id));
     el.innerHTML = '<span>' + (isApp ? '📷 ' : '') + esc(p.name) + accessBadge(p) + (isApp ? ' <span class="pill" style="vertical-align:1px">app</span>' : '') + (p.sandbox ? ' <span class="pill" style="vertical-align:1px" title="' + esc(p.sandbox.email ? 'sandbox of ' + p.sandbox.email : 'your sandbox bot') + '">🧪 ' + (p.sandbox.email ? 'sandbox' : 'yours') + '</span>' : '') + '</span><small>' + esc(p.tagline || '') + '</small>';
-    el.onclick = (e) => { if (wantsNewTab(e)) return; e.preventDefault(); if (isApp) { location.href = el.href; return; } selectProject(p); $('side').classList.remove('open'); };
+    el.onclick = (e) => { if (wantsNewTab(e)) return; e.preventDefault(); if (isApp) { location.href = el.href; return; } if (p.id === FRESH_ID) FRESH_ID = ''; selectProject(p); $('side').classList.remove('open'); };
     $('projects').appendChild(el);
   });
 }
@@ -1329,6 +1342,7 @@ function nudgeTarget() {
   if (!TOUR.guide || ADMIN || viewAs) return null;
   if ($('lock').classList.contains('show')) return { el: $('lockgo'), text: 'Start here' };
   if ($('introwrap').classList.contains('show')) return { el: $('intro_go'), text: 'Tap here' };
+  if (FRESH_ID) { const row = document.querySelector('#projects .item.fresh'); if (row && state.project?.id !== FRESH_ID) return { el: row, text: 'Your bot' }; }
   if ($('sandboxwrap').classList.contains('show')) return { el: $('sb_go'), text: 'Create it' };
   if ($('keywrap').classList.contains('show')) return { el: $('key_workshop').hidden ? $('key_go') : $('key_workshop'), text: 'This one' };
   if (!$('tourmake').hidden) { const b = $('tourmake').querySelector('.primary, [data-mk="code"]'); if (b) return { el: b, text: 'This one' }; }
@@ -1412,7 +1426,9 @@ $('sandboxform').addEventListener('submit', async (e) => {
     markStop('make');
     await refreshProjects();
     closeSandbox(); $('sb_name').value = ''; $('sb_instr').value = ''; $('sb_greet').value = ''; $('sb_starters').value = ''; $('sb_files').value = ''; $('sb_lib').value = '';
+    FRESH_ID = d.bot.id; try { const o = sideOrder().filter((x) => x !== d.bot.id); o.unshift(d.bot.id); localStorage.setItem('byo:order', JSON.stringify(o)); } catch {}
     const p = state.projects.find((x) => x.id === d.bot.id); if (p) selectProject(p);
+    setTimeout(() => { FRESH_ID = ''; renderProjects(); }, 12000);
     tourToast('🧪 ' + d.bot.name + ' is live', (notes.length ? notes.join(' · ') + '. ' : '') + 'Yours for ' + (SB.limits?.days || 14) + ' days. Take it with you any time from the bar above the chat.', 7000);
   } catch (err) { $('sb_msg').textContent = err.message; }
   go.disabled = false; go.textContent = 'Create my bot';

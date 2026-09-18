@@ -117,7 +117,7 @@ export async function handleSandbox(request, env, url, { isAdmin, allowed, setti
     const bid = newId();
     const name = String(body.name || "").trim().slice(0, 60) || "My bot";
     const p = await saveProject(env, bid, {
-      kind: "chat", order: 200, name, tagline: "Your sandbox bot · expires in " + SANDBOX_DAYS + " days",
+      kind: "chat", order: -1, name, tagline: "Your sandbox bot · expires in " + SANDBOX_DAYS + " days",
       greeting: String(body.greeting || "").trim().slice(0, 400) || `Hi — I'm ${name}. What can I do for you?`,
       starters, mode: "imported", grounding: "open", instructions, files: {},
       handoffText: "", handoffContact: "", allowedLinks: [], access: "open", listed: false,
