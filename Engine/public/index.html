@@ -162,6 +162,10 @@
   /* the break-it bar: ready-made attacks above the composer; they stay after use */
   #breakbar { max-width:760px; margin:0 auto 6px; padding:8px 10px; border:1px solid var(--edge); border-radius:14px; background:var(--side); font-size:12.5px; }
   #breakbar[hidden] { display:none; }
+  #typebar { max-width:760px; margin:0 auto 6px; padding:8px 10px; border:1px solid var(--edge); border-radius:14px; background:var(--side); font-size:12.5px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  #typebar[hidden] { display:none; }
+  #typebar span { color:var(--muted); } #typebar b { color:var(--text); }
+  #typebar button { font:inherit; font-size:12.5px; padding:6px 10px; border-radius:999px; border:1px solid var(--edge); background:var(--bg); color:var(--text); cursor:pointer; }
   #breakbar .h { display:flex; align-items:center; gap:8px; margin-bottom:6px; color:var(--muted); }
   #breakbar .h b { color:var(--text); }
   #breakbar .h button.x { margin-left:auto; border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:14px; }
@@ -525,6 +529,7 @@ document.addEventListener('DOMContentLoaded', function () {
       <!-- The visitor's own access window: a countdown, or "your access ended".
            Filled from /api/config → identity.access (Engine/worker/expiry.js). -->
       <div id="accessnote" hidden></div>
+      <div id="typebar" hidden><span><b>Now type one.</b> Tap it, it lands in the box, you press send.</span><button type="button" id="typechip">📋 Do you take United Healthcare?</button></div>
       <div id="breakbar" hidden></div>
       <div class="attachrow" id="attachrow" hidden></div>
       <form id="form" autocomplete="off">
@@ -774,7 +779,7 @@ function signOut() {
   TOKEN = ''; VISITOR = ''; ADMIN = ''; TOKENS = {};
   // byo:device goes too: the next load makes a fresh key, so this browser is nobody again.
   // the tour and the attacks belong to the person, not the browser: they go too (the gate's prefill stays — that's convenience, not identity)
-  try { ['byo:token', 'byo:tokens', 'byo:visitor', 'byo:admin', 'byo:device', 'byo:tour', 'byo:break'].forEach((k) => localStorage.removeItem(k)); sessionStorage.removeItem('byo:breakbar'); } catch {}
+  try { ['byo:token', 'byo:tokens', 'byo:visitor', 'byo:admin', 'byo:device', 'byo:tour', 'byo:break'].forEach((k) => localStorage.removeItem(k)); sessionStorage.removeItem('byo:breakbar'); sessionStorage.removeItem('byo:typed'); } catch {}
   $('hood').classList.remove('show'); location.href = location.pathname;
 }
 $('signoutbtn').onclick = signOut;
@@ -909,7 +914,7 @@ function selectProject(p, silent) {
   $('disclaimer').textContent = p.grounding === 'open'
     ? 'Can make mistakes. Check important information.'
     : 'Answers only from what ' + p.name + ' has written down. Can still make mistakes.';
-  syncBreakBar(true);
+  syncBreakBar(true); $('typebar').hidden = true;
   renderProjects(); newChat(silent);
   renderSandboxBar();
   if ($('hood').classList.contains('show')) openHood();
@@ -1309,8 +1314,9 @@ function nudgeTarget() {
   const next = TOUR.stops.find((s) => !TOUR.done[s]);
   const onGuide = state.project && state.project.id === TOUR.guide.id;
   if (onGuide) { const go = document.querySelector('.empty .tourlist li.next button'); if (go) return { el: go, text: 'Tap Go' }; return null; }
-  if (state.chat?.messages?.length && $('breakbar').hidden) return null;        // mid-conversation: let them finish
+  if (state.chat?.messages?.length && $('breakbar').hidden && $('typebar').hidden) return null;        // mid-conversation: let them finish
   if (next === 'try') { const s = document.querySelector('.empty .starters button'); if (s) return { el: s, text: 'Tap one' }; if (state.chat?.messages?.length === 0) return { el: input, text: 'Say hi' }; return null; }
+  if (!$('typebar').hidden) { return input.value.trim() ? { el: sendBtn, text: 'Send it' } : { el: $('typechip'), text: 'Tap this' }; }
   if (next === 'break') { const a = document.querySelector('#breakbar .row button:not(.used)'); if (a) return { el: a, text: 'Tap one' }; return null; }
   if (next) { const chip = [...document.querySelectorAll('#tour .stop')].find((b) => b.classList.contains('next')); if (chip) return { el: chip, text: 'Next stop' }; }
   return null;
@@ -1442,7 +1448,7 @@ const STOP_META = {
   join:  { label: 'Join',            hint: 'The workshop, the help, and the people doing this.' },
 };
 const STOP_DONE = {
-  try: 'You got a real answer. Now the fun part: tap Break it in the strip above.',
+  try: 'You got a real answer. Now type one yourself — tap the chip under the chat.',
   break: 'That chip under the reply is the firewall showing its work. Next: see the code.',
   make: 'It\'s in your sidebar. Next: deploy one for real.',
   hood: 'The code, the walkthrough and the deploy button are yours. Last stop: the community.',
@@ -1490,12 +1496,17 @@ async function markStop(stop) {
   } catch {}
 }
 function tourOnSend() { /* the stop is earned when the answer lands (tourAfterReply), so the card never covers it */ }
+let TYPED = false; try { TYPED = sessionStorage.getItem('byo:typed') === '1'; } catch {}
 function tourAfterReply(flags) {
   setBreakBusy(false); LAST_REPLY_AT = Date.now();
   if (!TOUR.guide || !state.project || state.project.id === TOUR.guide.id) return;
-  if ((flags || []).some((f) => /blocked|stripped|withheld|handoff-appended|guard|leak|declined/.test(f))) markStop('break');
-  else markStop('try');
+  if ((flags || []).some((f) => /blocked|stripped|withheld|handoff-appended|guard|leak|declined/.test(f))) { markStop('break'); return; }
+  const first = !TOUR.done.try;
+  markStop('try');
+  if (first && !TYPED) { $('typebar').hidden = false; return; }
+  if (!TYPED && !$('typebar').hidden) { TYPED = true; try { sessionStorage.setItem('byo:typed', '1'); } catch {} $('typebar').hidden = true; tourToast('✓ You typed, it answered', 'Now the fun part: tap Break it in the strip above.'); }
 }
+$('typechip').onclick = () => { input.value = 'Do you take United Healthcare?'; input.dispatchEvent(new Event('input')); input.focus(); $('typechip').textContent = '✓ In the box — press send ↑'; };
 // One attack at a time: the chips lock while a reply is in flight, and a tap meanwhile isn't counted.
 function setBreakBusy(on) { document.querySelectorAll('#breakbar .row button, .starters button').forEach((b) => { b.disabled = on; }); }
 let LAST_REPLY_AT = 0, tourRedraw = null;
