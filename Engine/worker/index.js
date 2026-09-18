@@ -7,7 +7,7 @@ import { listSignups, signupsCsv } from "./signups.js";
 import { tourState, listCodes, codeUses, createCode, disableCode } from "./tour.js";
 import { handleSandbox, sandboxOwnerOf, visibleSandboxes } from "./sandbox.js";
 import { handleIdentity, identify, linkByCode, signInMethods, adminNeedsCode, adminCodeOk, graceMinutesFor } from "../identity/index.js";
-import { ensureIdentitySchema, userByEmail as idUserByEmail } from "../identity/devices.js";
+import { ensureIdentitySchema, userByEmail as idUserByEmail, listPending as idListPending } from "../identity/devices.js";
 import { listThreads, putThread, renameThread, deleteThread, usersWithHistory, ensureChatSchema } from "./chats.js";
 import { addToList, removeFromList, listFor as allowlistFor, listCounts as allowlistCounts, hasKey as allowlistKeySet, isAllowed, blindFor, GLOBAL_SCOPE } from "./allowlist.js";
 import { ensureExpirySchema, cleanUntil, asDateInput, setPersonUntil, setKeyUntil, keyRows, timelineFor, datedPeople, resolve as resolveExpiry, expiryFor, stateOf, noticeFor, LAPSE_MODES, LAPSE_LINES, cleanExpiryConfig, EXPIRY_BUILT_IN } from "./expiry.js";
@@ -201,6 +201,7 @@ export default {
       if (url.pathname === "/api/admin/signups.csv") { await logAdminEvent(env, request, "signups-export", String(url.searchParams.get("project") || "*"), "CSV download"); return signupsCsv(env, { project: String(url.searchParams.get("project") || "*").toLowerCase() }); }
       // The owner links a visitor's second browser: the visitor reads out the 6-character
       // code their screen shows, the owner types it here with the email. Both must match.
+      if (url.pathname === "/api/admin/id/pending") { if (!env.DB) return json({ pending: [] }); await ensureIdentitySchema(env); return json({ pending: await idListPending(env) }); }
       if (url.pathname === "/api/admin/id/link") {
         if (request.method !== "POST") return json({ error: "POST only" }, 405);
         if (!env.DB) return json({ error: "Identity needs the D1 database (wrangler.jsonc → d1_databases)." }, 503);

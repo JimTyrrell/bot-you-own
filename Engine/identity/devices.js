@@ -151,6 +151,8 @@ export async function pendingCode(env, bot, { email, keyHash }) {
 export async function pendingFor(env, bot, keyHash) {
   return keyHash ? (await env.DB.prepare(`SELECT code, email FROM id_pending WHERE key_hash = ? AND bot = ?`).bind(keyHash, bot).first()) || null : null;
 }
+// Everyone waiting for the owner's approval, newest first (the code stays server-side; the page shows email + when).
+export async function listPending(env) { return (await env.DB.prepare(`SELECT code, bot, email, created_at FROM id_pending ORDER BY created_at DESC LIMIT 100`).all()).results || []; }
 export async function pendingByEmail(env, bot, email) { return (await env.DB.prepare(`SELECT code, created_at FROM id_pending WHERE bot = ? AND email = ?`).bind(bot, email).all()).results || []; }
 
 // --- THE OWNER LINKS A DEVICE (the coach's button): the code AND the email must match. ---
