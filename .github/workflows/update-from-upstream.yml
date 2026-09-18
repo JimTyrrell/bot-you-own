@@ -1,0 +1,77 @@
+# ============================================================================
+#  STAY UP TO DATE — pulls the latest engine from the original project into
+#  this copy. Runs every Monday and whenever you press "Run workflow" on the
+#  Actions tab. Your own files (YourBots/, settings.json) are never touched by
+#  the merge unless the same lines changed upstream, and then it opens a pull
+#  request instead of guessing.
+#
+#  What happens:
+#    clean merge  → pushed to main → Cloudflare rebuilds your site in about a minute
+#    conflict     → a pull request called "Update from upstream" appears; look, resolve, merge
+#    nothing new  → nothing happens
+#
+#  To stop it: delete this file, or Actions → this workflow → "…" → Disable.
+#  To change where it pulls from: UPSTREAM below.
+# ============================================================================
+name: Update from upstream
+
+on:
+  schedule:
+    - cron: "17 9 * * 1"        # Mondays, 09:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  UPSTREAM: https://github.com/JimTyrrell/bot-you-own.git
+  UPSTREAM_BRANCH: main
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fetch upstream
+        run: |
+          git config user.name "bot-you-own updater"
+          git config user.email "updater@users.noreply.github.com"
+          git remote add upstream "$UPSTREAM"
+          git fetch upstream "$UPSTREAM_BRANCH"
+          echo "BEHIND=$(git rev-list --count HEAD..upstream/$UPSTREAM_BRANCH)" >> "$GITHUB_ENV"
+
+      - name: Nothing new
+        if: env.BEHIND == '0'
+        run: echo "Already up to date."
+
+      - name: Try a clean merge
+        id: merge
+        if: env.BEHIND != '0'
+        run: |
+          if git merge --no-edit "upstream/$UPSTREAM_BRANCH"; then
+            echo "clean=true" >> "$GITHUB_OUTPUT"
+          else
+            git merge --abort
+            echo "clean=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push (clean merge)
+        if: env.BEHIND != '0' && steps.merge.outputs.clean == 'true'
+        run: git push origin HEAD:${{ github.ref_name }}
+
+      - name: Open a pull request (conflict)
+        if: env.BEHIND != '0' && steps.merge.outputs.clean == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git checkout -B update-from-upstream "upstream/$UPSTREAM_BRANCH"
+          git push -f origin update-from-upstream
+          gh pr create --base "${{ github.ref_name }}" --head update-from-upstream \
+            --title "Update from upstream" \
+            --body "The original project changed the same lines you changed, so this needs a look. Resolve the conflicts here, then merge. Your site rebuilds on merge." \
+            || echo "PR already open"

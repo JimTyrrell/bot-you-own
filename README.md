@@ -89,6 +89,25 @@ secret from your authenticator app) and the admin code also asks for six digits
 — do this before the sign-up gate collects real people's numbers.
 `docs/OWNER-CHECKLIST.md` §1b has all three first-day secrets.
 
+## Staying up to date
+
+Your copy is yours: the button makes a new repo, not a link. Two ways to keep
+getting improvements to the engine without losing your own bots:
+
+- **Automatic (already in your copy).** `.github/workflows/update-from-upstream.yml`
+  runs every Monday and pulls the latest from the original project. A clean
+  merge is pushed and your site rebuilds; if the same lines changed on both
+  sides, it opens a pull request called "Update from upstream" for you to look
+  at. Run it any time from the **Actions** tab → "Run workflow". Delete the file
+  to opt out. (GitHub pauses scheduled runs on a repo with no activity for 60
+  days; the Actions tab shows a button to re-enable.)
+- **Fork, if you're comfortable with GitHub.** Fork the original instead of
+  using the button, deploy the fork with the same button, and GitHub's own
+  **Sync fork** button pulls updates in one click.
+
+Both work because of the two-folder rule: your edits live in `YourBots/` and
+the engine lives in `Engine/`. Keep it that way and updates never fight you.
+
 ## Make it yours — four steps
 
 ### 1. Make a project · `YourBots/`
