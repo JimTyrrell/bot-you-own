@@ -101,7 +101,8 @@ export async function handleSandbox(request, env, url, { isAdmin, allowed, setti
     if (request.method === "GET") {
       const ok = email || isAdmin ? await keyed() : false;
       const bots = isAdmin ? [] : email ? (await mine(env, email)).map((p) => ({ id: p.id, name: p.name, expires_at: p.sandbox.expires_at, files: Object.keys(p.files || {}).length, source: p.sandbox.source })) : [];
-      return json({ allowed: ok, signedUp: Boolean(email) || isAdmin, bots, library: LIBRARY.map(({ url, ...l }) => l), limits: { days: SANDBOX_DAYS, perPerson: MAX_PER_PERSON, files: MAX_FILES, fileChars: MAX_FILE_CHARS, instructions: MAX_INSTRUCTIONS } });
+      // the page gets a readable source page per prompt (the raw URL stays server-side)
+      return json({ allowed: ok, signedUp: Boolean(email) || isAdmin, bots, library: LIBRARY.map(({ url, ...l }) => ({ ...l, page: url.replace("https://raw.githubusercontent.com/", "https://github.com/").replace(/\/main\//, "/blob/main/") })), limits: { days: SANDBOX_DAYS, perPerson: MAX_PER_PERSON, files: MAX_FILES, fileChars: MAX_FILE_CHARS, instructions: MAX_INSTRUCTIONS } });
     }
     if (request.method !== "POST") return json({ error: "POST only" }, 405);
     if (!(await allowed(env, request))) return json({ error: "rate-limited", reason: "Slow down a little." }, 429);
