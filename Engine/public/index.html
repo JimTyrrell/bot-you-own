@@ -110,6 +110,9 @@
   .lockwrap .sbpicks button { padding:8px 12px; } .lockwrap .sbmine button { padding:4px 10px; }
   .lockwrap .modalx { display:flex; align-items:center; justify-content:center; width:30px; height:30px; padding:0; line-height:1; border-radius:50%; background:var(--panel); color:var(--muted); font-weight:400; }
   .lockwrap .modalx:hover { color:var(--text); }
+  .intro { display:flex; flex-direction:column; gap:10px; font-size:14px; }
+  .intro div { display:flex; gap:12px; align-items:center; }
+  .intro .n { width:32px; height:32px; border-radius:50%; background:var(--panel); display:inline-flex; align-items:center; justify-content:center; font-weight:700; flex:none; font-size:15px; }
   .sbform .sbhow { font-size:12.5px; color:var(--muted); border:1px solid var(--edge); border-radius:10px; padding:8px 12px; }
   .sbform .sbhow summary { cursor:pointer; color:var(--text); font-weight:600; }
   .sbform .sbhow ul { padding-left:18px; margin:6px 0; } .sbform .sbhow li { margin:3px 0; } .sbform .sbhow p { margin:6px 0; }
@@ -125,7 +128,8 @@
   #tourtoast.show { opacity:1; transform:translate(-50%, 0); }
   @media (max-width: 760px) { #tourtoast { top:auto; bottom:92px; } }
   #tourtoast b { font-size:13px; }
-  .nudge { position:fixed; z-index:70; display:flex; flex-direction:column; align-items:center; gap:0; pointer-events:auto; cursor:pointer; animation:nudgebob 1.1s ease-in-out infinite; }
+  .nudge { position:fixed; z-index:70; display:flex; flex-direction:column; align-items:center; gap:0; pointer-events:auto; cursor:pointer; animation:nudgefly .45s cubic-bezier(.2,.8,.2,1) both, nudgebob 1.1s ease-in-out .45s infinite; }
+  @keyframes nudgefly { from { opacity:0; transform:translate(40px, -40px) scale(.6); } to { opacity:1; transform:translate(0, 0) scale(1); } }
   .nudge.below { flex-direction:column-reverse; }
   .nudge .nlabel { background:var(--text); color:var(--bg); font-size:12.5px; font-weight:600; padding:5px 10px; border-radius:999px; box-shadow:0 6px 20px rgba(0,0,0,.2); white-space:nowrap; }
   .nudge .narrow { font-size:26px; line-height:1; filter:drop-shadow(0 3px 6px rgba(0,0,0,.25)); }
@@ -403,6 +407,16 @@ document.addEventListener('DOMContentLoaded', function () {
   <input id="adminpass" type="password" placeholder="Admin code" autocomplete="off" /><input id="admincode" inputmode="numeric" placeholder="Authenticator code" autocomplete="one-time-code" style="margin-top:6px" hidden /><p id="admincodehint" class="lockhint" hidden>The six digits from the owner's authenticator app.</p>
   <div style="display:flex;gap:8px"><button type="submit" style="flex:1">Open</button><button type="button" id="admincancel" style="flex:1;background:var(--panel);color:var(--text)">Cancel</button></div>
   <div id="adminmsg" class="lockmsg"></div>
+</form></div>
+<div id="introwrap" class="lockwrap keywrap"><form id="introform">
+  <button type="button" class="modalx" data-x="introwrap" title="Close">✕</button>
+  <h2>👋 How this works</h2>
+  <div class="intro">
+    <div><span class="n">1</span><span>Five stops, along the top. Tap any of them, any time.</span></div>
+    <div><span class="n">👇</span><span>A finger shows the one thing to tap next. Follow it and you can't get lost.</span></div>
+    <div><span class="n">🛡</span><span>The bots are real. Trying to break them is stop two, and it's the fun part.</span></div>
+  </div>
+  <button type="submit" id="intro_go">Start the tour</button>
 </form></div>
 <div id="keywrap" class="lockwrap keywrap"><form id="keyform">
   <button type="button" class="modalx" data-x="keywrap" title="Close">✕</button>
@@ -775,7 +789,7 @@ $('lockform').addEventListener('submit', async (e) => {
       const key = ($('lkey').value || '').trim(); const guide = (state.cfg?.projects || []).find((p) => p.tour) || (state.projects || []).find((p) => p.tour) || (SIGNUP.keys ? { id: lock.project } : null);
       if (key && guide) { try { const kr = await fetch('/api/tour', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(guide.id) }, body: JSON.stringify({ bot: guide.id, code: key }) }); const kd = await kr.json(); if (kd.redeemed?.ok) { TOUR.deploy = kd.deploy; TOUR.links = kd.links || TOUR.links; setTimeout(() => tourToast('Unlocked 🔑', 'Your key is in: the code, the walkthrough and Build one here are open.'), 800); } else setTimeout(() => tourToast('That key didn\'t take', ((kd.redeemed && kd.redeemed.reason) || 'It isn\'t active.') + ' You\'re in anyway — the tour asks for it again at See the code.', 9000), 800); } catch {} $('lkey').value = ''; }
     }
-    $('lock').classList.remove('show'); boot(lock.project);
+    $('lock').classList.remove('show'); boot(lock.project); setTimeout(maybeIntro, 900);
   } catch { $('lockmsg').textContent = 'Could not reach the server. Try again.'; }
   finally { go.disabled = false; go.textContent = 'Continue'; }
 });
@@ -785,7 +799,7 @@ function signOut() {
   TOKEN = ''; VISITOR = ''; ADMIN = ''; TOKENS = {};
   // byo:device goes too: the next load makes a fresh key, so this browser is nobody again.
   // the tour and the attacks belong to the person, not the browser: they go too (the gate's prefill stays — that's convenience, not identity)
-  try { ['byo:token', 'byo:tokens', 'byo:visitor', 'byo:admin', 'byo:device', 'byo:tour', 'byo:break'].forEach((k) => localStorage.removeItem(k)); sessionStorage.removeItem('byo:breakbar'); sessionStorage.removeItem('byo:typed'); } catch {}
+  try { ['byo:token', 'byo:tokens', 'byo:visitor', 'byo:admin', 'byo:device', 'byo:tour', 'byo:break'].forEach((k) => localStorage.removeItem(k)); sessionStorage.removeItem('byo:breakbar'); sessionStorage.removeItem('byo:typed'); localStorage.removeItem('byo:intro'); } catch {}
   $('hood').classList.remove('show'); location.href = location.pathname;
 }
 $('signoutbtn').onclick = signOut;
@@ -1309,11 +1323,12 @@ form.addEventListener('submit', (e) => { e.preventDefault(); if (state.busy) { s
 //  Every screen on the tour has exactly one call to action. If the visitor doesn't touch it,
 //  this points at it. Any click, key or scroll resets the clock; it never shows twice in a row
 //  for the same target without a pause.
-const NUDGE_AFTER = 6000;
+const NUDGE_AFTER = 1400;                                  // the finger arrives fast and keeps coming back until the thing is tapped
 let nudgeTimer = null, nudgeEl = null;
 function nudgeTarget() {
   if (!TOUR.guide || ADMIN || viewAs) return null;
   if ($('lock').classList.contains('show')) return { el: $('lockgo'), text: 'Start here' };
+  if ($('introwrap').classList.contains('show')) return { el: $('intro_go'), text: 'Tap here' };
   if ($('sandboxwrap').classList.contains('show')) return { el: $('sb_go'), text: 'Create it' };
   if ($('keywrap').classList.contains('show')) return { el: $('key_workshop').hidden ? $('key_go') : $('key_workshop'), text: 'This one' };
   if (!$('tourmake').hidden) { const b = $('tourmake').querySelector('.primary, [data-mk="code"]'); if (b) return { el: b, text: 'This one' }; }
@@ -1487,6 +1502,7 @@ async function initTour() {
   if (wantReset) { const u = new URL(location.href); u.searchParams.delete('tour'); history.replaceState(history.state, '', u); if (state.chat && !state.chat.messages.length) renderLog(); }
   if (wantStop && STOP_META[wantStop] && !$('lock').classList.contains('show')) setTimeout(() => tourGo(wantStop), 200);
   if (!$('lock').classList.contains('show')) setTimeout(openPanelFromUrl, 300);
+  if (!$('lock').classList.contains('show')) setTimeout(maybeIntro, 400);
 }
 function tourSample() { return (state.projects || []).find((p) => p.id === 'tumblebrook-dental') || (state.projects || []).find((p) => p.kind === 'chat' && p.id !== TOUR.guide?.id && p.mode !== 'concierge') || null; }
 async function markStop(stop) {
@@ -1567,8 +1583,11 @@ function showBreakBar(on) {
   row.appendChild(own); bar.append(h, row); bar.hidden = false;
 }
 // Overlays are a history step: Back closes them (and only them), so does Escape, so does a tap outside.
-const OVERLAYS = ['keywrap', 'sandboxwrap'];
-const PANEL_NAME = { keywrap: 'key', sandboxwrap: 'build' };            // …and each has a URL: ?panel=key, ?panel=build
+const OVERLAYS = ['introwrap', 'keywrap', 'sandboxwrap'];
+const PANEL_NAME = { introwrap: 'intro', keywrap: 'key', sandboxwrap: 'build' };
+// The intro: once per person, right after the gate, before the tour.
+function maybeIntro() { let seen = ''; try { seen = localStorage.getItem('byo:intro') || ''; } catch {} if (seen || !TOUR.guide || ADMIN) return; overlayOpen('introwrap'); }
+$('introform').addEventListener('submit', (e) => { e.preventDefault(); try { localStorage.setItem('byo:intro', '1'); } catch {} overlayClose('introwrap'); armNudge(); });            // …and each has a URL: ?panel=key, ?panel=build
 function overlayOpen(id) { const el = $(id); if (el.classList.contains('show')) return; el.classList.add('show'); try { const u = new URL(location.href); u.searchParams.set('panel', PANEL_NAME[id]); history.pushState({ ...(history.state || {}), overlay: id }, '', u); } catch {} }
 function overlayClose(id, viaHistory) { const el = $(id); if (!el.classList.contains('show')) return; el.classList.remove('show'); if (!viaHistory && history.state && history.state.overlay === id) { try { history.back(); } catch {} } }
 function closeOpenOverlays() { let any = false; OVERLAYS.forEach((id) => { if ($(id).classList.contains('show')) { $(id).classList.remove('show'); any = true; } }); return any; }
