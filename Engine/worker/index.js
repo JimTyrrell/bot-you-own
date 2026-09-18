@@ -6,6 +6,9 @@ const repoOf = (env) => String(env?.GITHUB_REPO || CONFIG.github?.repo || "").tr
 import { listSignups, signupsCsv } from "./signups.js";
 import { tourState, listCodes, codeUses, createCode, disableCode } from "./tour.js";
 import { handleSandbox, sandboxOwnerOf, visibleSandboxes } from "./sandbox.js";
+import { PROJECTS as FOLDER_PROJECTS } from "../../YourBots/index.js";
+// Does this site have a guide bot (and so workshop keys)? Decides whether the gate shows the key field.
+const HAS_GUIDE = Object.values(FOLDER_PROJECTS).some((p) => p && p.tour);
 import { handleIdentity, identify, linkByCode, signInMethods, adminNeedsCode, adminCodeOk, graceMinutesFor } from "../identity/index.js";
 import { ensureIdentitySchema, userByEmail as idUserByEmail, listPending as idListPending } from "../identity/devices.js";
 import { listThreads, putThread, renameThread, deleteThread, usersWithHistory, ensureChatSchema } from "./chats.js";
@@ -372,7 +375,7 @@ export default {
       const curId = current.id || CONFIG.defaultProject;
       const view = accessView(current, settings);
       const g = await guard(current);                                        // key / admin / draft — the email step is the chat's
-      if (!g.ok) return json({ locked: true, project: curId, projectName: current.name, access: view, reason: g.error, reply: g.reply, adminEnabled, siteName: settings.brand?.siteName || CONFIG.siteName, accent: CONFIG.accent, signup: publicSignup(settings.signup) });
+      if (!g.ok) return json({ locked: true, project: curId, projectName: current.name, access: view, reason: g.error, reply: g.reply, adminEnabled, siteName: settings.brand?.siteName || CONFIG.siteName, accent: CONFIG.accent, signup: { ...publicSignup(settings.signup), keys: HAS_GUIDE } });
       const all = (await resolveList(env)).map((p) => { const a = effectiveAccess(p, settings); return { ...p, kind: cleanKind(p.kind), href: hrefFor(p), access: a.mode, listed: a.listed }; });
       // Visitors see listed bots that aren't drafts. The admin sees everything, with a badge.
       // "listed" is visibility, not security: an unlisted bot still checks its own door.
@@ -421,7 +424,7 @@ export default {
         owner: settings.brand?.owner || CONFIG.owner,
         siteName: settings.brand?.siteName || CONFIG.siteName,
         createYourOwn: settings.createYourOwn.show ? { text: settings.createYourOwn.text, url: settings.createYourOwn.url } : null,
-        signup: publicSignup(settings.signup),
+        signup: { ...publicSignup(settings.signup), keys: HAS_GUIDE },
         community: CONFIG.community && CONFIG.community.show !== false && CONFIG.community.url ? { name: CONFIG.community.name, url: CONFIG.community.url, pitch: CONFIG.community.pitch } : null,
         ...(isAdmin ? { links: settings.links } : {}),           // the owner's page may show them; a visitor asks /api/tour
         accent: CONFIG.accent,

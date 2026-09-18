@@ -644,7 +644,7 @@ function drawSignup(on) {
   $('lphone').hidden = !on || su.askPhone === 'off'; $('lphone').required = on && su.askPhone === 'required'; $('lphone').placeholder = 'Mobile number, for texts' + (su.askPhone === 'optional' ? ' (optional)' : '');
   $('lmarketingwrap').hidden = !on || !su.marketing.show; $('lmarketingtext').textContent = su.marketing.text + (su.marketing.required ? ' (required)' : ''); if (on && !$('lmarketing').dataset.touched) $('lmarketing').checked = !!su.marketing.checked;
   $('lsmswrap').hidden = !on || !su.sms.show || su.askPhone === 'off'; $('lsmstext').textContent = su.sms.text + (su.sms.required ? ' (required)' : ''); if (on && !$('lsms').dataset.touched) $('lsms').checked = !!su.sms.checked;
-  $('lkey').hidden = !on || !(state.cfg?.projects || []).some((p) => p.tour);      // only a site with a tour has keys
+  $('lkey').hidden = !on || !SIGNUP.keys;      // only a site with a guide bot has keys (the server says)
   $('lprivacy').hidden = !on; $('lprivacy').textContent = su.privacyLine || ''; $('lprivacy').appendChild(document.createTextNode(su.privacyLine ? ' ' : ''));
   const pl = document.createElement('a'); pl.href = '/privacy'; pl.target = '_blank'; pl.rel = 'noopener'; pl.textContent = 'Privacy'; const tl = document.createElement('a'); tl.href = '/terms'; tl.target = '_blank'; tl.rel = 'noopener'; tl.textContent = 'Terms';
   $('lprivacy').append(pl, document.createTextNode(' · '), tl);
@@ -731,7 +731,7 @@ $('lockform').addEventListener('submit', async (e) => {
       if (!data.linked) { showPending(data.code, em.toLowerCase()); if (data.keyRejected) $('lockmsg').textContent = data.reason; return; }
       VISITOR = data.email || em.toLowerCase(); VISITOR_NAME = data.name || gate.name || ''; identified[lock.project] = true;
       // a key typed at the gate is redeemed right away; a wrong one is just ignored here (the modal will ask again)
-      const key = ($('lkey').value || '').trim(); const guide = (state.cfg?.projects || []).find((p) => p.tour);
+      const key = ($('lkey').value || '').trim(); const guide = (state.cfg?.projects || []).find((p) => p.tour) || (state.projects || []).find((p) => p.tour) || (SIGNUP.keys ? { id: lock.project } : null);
       if (key && guide) { try { const kr = await fetch('/api/tour', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(guide.id) }, body: JSON.stringify({ bot: guide.id, code: key }) }); const kd = await kr.json(); if (kd.redeemed?.ok) { TOUR.deploy = kd.deploy; TOUR.links = kd.links || TOUR.links; setTimeout(() => tourToast('Unlocked 🔑', 'Your key is in: the code, the walkthrough and Build one here are open.'), 800); } } catch {} $('lkey').value = ''; }
     }
     $('lock').classList.remove('show'); boot(lock.project);
