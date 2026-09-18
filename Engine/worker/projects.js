@@ -45,6 +45,9 @@ export function normaliseProject(p, id) {
     access: cleanMode(p.access), listed: p.listed !== false, accessKey: cleanKeyName(p.accessKey),
     // this bot's own identity knobs (Engine/identity/): graceMinutes = the return window; "" = the deployment's
     identity: normaliseIdentity(p.identity),
+    // A visitor's own sandbox bot (Engine/worker/sandbox.js): who owns it and when it goes.
+    // Only that person (by device identity) and the admin can see or use it.
+    sandbox: p.sandbox && typeof p.sandbox === "object" && p.sandbox.email ? { email: String(p.sandbox.email).slice(0, 254), userId: String(p.sandbox.userId || "").slice(0, 64), expires_at: String(p.sandbox.expires_at || "").slice(0, 30), source: String(p.sandbox.source || "").slice(0, 120) } : null,
   };
   return { ...common, ...KINDS[kind](p, id) };
 }
@@ -174,7 +177,7 @@ export async function resolveList(env) {
 }
 // What a bot shows to the page. `access` is what the bot SAYS ("" = default); the effective mode is per request. Never the secret's name.
 export function pickPublic(p) {
-  return { kind: cleanKind(p.kind), name: p.name, tagline: p.tagline, greeting: p.greeting, starters: p.starters, mode: p.mode, grounding: p.grounding, thinkingWords: (p.thinkingWords || []).length ? p.thinkingWords : undefined, order: p.order, access: cleanMode(p.access), listed: p.listed !== false, ...(p.tour ? { tour: p.tour } : {}) };
+  return { kind: cleanKind(p.kind), name: p.name, tagline: p.tagline, greeting: p.greeting, starters: p.starters, mode: p.mode, grounding: p.grounding, thinkingWords: (p.thinkingWords || []).length ? p.thinkingWords : undefined, order: p.order, access: cleanMode(p.access), listed: p.listed !== false, ...(p.tour ? { tour: p.tour } : {}), ...(p.sandbox ? { sandbox: { expires_at: p.sandbox.expires_at, source: p.sandbox.source } } : {}) };
 }
 // Where a bot lives on the page: chat bots on the chat page, apps at /apps/<id>.
 export function hrefFor(p) { return cleanKind(p.kind) === "chat" ? `/?project=${encodeURIComponent(p.id)}` : `/apps/${encodeURIComponent(p.id)}`; }

@@ -5,6 +5,7 @@ import { getSettings, saveSettings, settingsFileContent, cleanBadge, cleanSignup
 const repoOf = (env) => String(env?.GITHUB_REPO || CONFIG.github?.repo || "").trim();
 import { listSignups, signupsCsv } from "./signups.js";
 import { tourState, listCodes, codeUses, createCode, disableCode } from "./tour.js";
+import { handleSandbox, sandboxOwnerOf, visibleSandboxes } from "./sandbox.js";
 import { handleIdentity, identify, linkByCode, signInMethods, adminNeedsCode, adminCodeOk, graceMinutesFor } from "../identity/index.js";
 import { ensureIdentitySchema, userByEmail as idUserByEmail } from "../identity/devices.js";
 import { listThreads, putThread, renameThread, deleteThread, usersWithHistory, ensureChatSchema } from "./chats.js";
@@ -87,7 +88,16 @@ export default {
     //     `settings` = the default and the floor (config.js < settings.json < the
     //     Settings screen). `guard(project)` = is THIS request allowed in?
     const settings = await getSettings(env);
-    const guard = (project, opts = {}) => accessGate(request, env, project, settings, { isAdmin, ...opts });
+    const guard = async (project, opts = {}) => {
+      // A sandbox bot answers to its owner (this browser's identity, on any bot) and the admin. Nobody else.
+      if (project?.sandbox && !isAdmin) {
+        const owner = await sandboxOwnerOf(env, request);
+        if (!owner || owner !== project.sandbox.email) return { ok: false, error: "sandbox", reply: "That bot belongs to someone else." };
+        if (project.sandbox.expires_at && project.sandbox.expires_at < new Date().toISOString()) return { ok: false, error: "sandbox", reply: "That sandbox bot has expired." };
+        return { ok: true, mode: "open", wantKey: false, wantEmail: false };
+      }
+      return accessGate(request, env, project, settings, { isAdmin, ...opts });
+    };
     // Email mode for a CHAT bot: WHO the visitor is comes from the device identity
     // (Engine/identity/ — the same email + device key Plate uses), never from a field
     // in the request body. An unknown browser gives "" and the gate answers 401 "email";
@@ -146,6 +156,11 @@ export default {
       const bot = await resolveProject(env, bid);
       if (!bid || bot.id !== bid) return json({ error: "which bot? send { bot }" }, 400);
       return handleIdentity(request, env, url, { bot, allowed, unlockAllowed, graceMinutes: graceMinutesFor(bot, settings.identity?.graceMinutes), signup: settings.signup });
+    }
+
+    // A keyed visitor's own bots: paste a GPT, pick a licensed prompt, add files, chat, take it with you.
+    if (url.pathname === "/api/sandbox" || url.pathname.startsWith("/api/sandbox/")) {
+      return handleSandbox(request, env, url, { isAdmin, allowed, settings, resolveProject, guard });
     }
 
     // The tour strip: where this visitor is, and whether deploy is open to them (Engine/worker/tour.js).
@@ -359,7 +374,9 @@ export default {
       const all = (await resolveList(env)).map((p) => { const a = effectiveAccess(p, settings); return { ...p, kind: cleanKind(p.kind), href: hrefFor(p), access: a.mode, listed: a.listed }; });
       // Visitors see listed bots that aren't drafts. The admin sees everything, with a badge.
       // "listed" is visibility, not security: an unlisted bot still checks its own door.
-      let projects = (CONFIG.singleProject ? all.filter((p) => p.id === CONFIG.defaultProject) : all).filter((p) => isAdmin || (p.listed && p.access !== "draft"));
+      let projects = (CONFIG.singleProject ? all.filter((p) => p.id === CONFIG.defaultProject) : all).filter((p) => !p.sandbox && (isAdmin || (p.listed && p.access !== "draft")));
+      // …plus this visitor's own sandbox bots (Engine/worker/sandbox.js), and every sandbox for the admin.
+      for (const sb of await visibleSandboxes(env, request, { isAdmin, all })) projects.push(sb);
       if (!projects.some((p) => p.id === curId)) projects.push({ ...pickPublic({ ...current, thinkingWords: current.thinkingWords || [] }), id: curId, href: hrefFor({ ...current, id: curId }), access: view.mode, listed: view.listed, source: "direct link" });
       // handoffText rides along so the page can offer "Talk to a person" under a
       // reply that contains it. It is said to visitors word for word anyway.

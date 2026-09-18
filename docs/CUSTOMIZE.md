@@ -896,3 +896,19 @@ Every sign-up is checked on the server before a row is written:
   (2-9…), `555-01xx` is refused as fiction, straight runs and repeated digits are
   refused; international numbers need a `+` or `00` and 8 to 15 digits. Stored
   as `+digits`. Nobody is texted to verify; that needs a texting provider.
+
+## The sandbox — "Build one here"
+
+A visitor with a key (allowlist or a redeemed deploy code) gets **🧪 Build one
+here** under Make your own. They paste the Instructions from their custom GPT or
+pick a licensed prompt from the library (`Engine/worker/sandbox.js → LIBRARY`,
+fetched at import time with the credit line kept), add up to four knowledge
+files (PDF, Word, text, Markdown, CSV — converted to text), and get a bot in the
+sidebar marked 🧪. Only that person and the admin can see or use it. Up to three
+per person, gone after 14 days, deletable any time. A bar above its chat adds a
+file, deletes it, or **takes it with you**: a zip of `project.json`,
+`instructions.md` and `knowledge/`, ready to drop into their own copy.
+
+Instructions and files are scanned: a card number, an ID number, a key or a
+password is refused. Model calls go through the same rate limit as every bot.
+The admin sees every sandbox bot in the sidebar with the owner's email.

@@ -77,6 +77,20 @@
   #tourmake a, #tourmake button { font:inherit; font-size:13px; padding:7px 12px; border-radius:10px; border:1px solid var(--edge); background:var(--bg); color:var(--text); text-decoration:none; cursor:pointer; }
   #tourmake a.primary { background:var(--text); color:var(--bg); border-color:transparent; font-weight:600; }
   #tourmake .why { color:var(--muted); }
+  .lockwrap form.sbform { width:min(560px,100%); max-height:92vh; overflow:auto; gap:10px; }
+  .sbform label { display:flex; flex-direction:column; gap:4px; font-size:13px; font-weight:600; }
+  .sbform label .muted { font-weight:400; color:var(--muted); }
+  .sbform textarea, .sbform select { padding:10px 12px; border:1px solid var(--edge); border-radius:10px; background:var(--bg); color:var(--text); font:inherit; font-weight:400; resize:vertical; }
+  .sbform input[type=file] { padding:6px 0; font-weight:400; }
+  .sbform .sbhint { font-size:12.5px; color:var(--muted); margin:-4px 0 0; }
+  .sbform .sbmsg { font-size:13px; color:var(--danger, #b42318); min-height:1em; }
+  .sbform .sbmine { border-top:1px solid var(--edge); padding-top:8px; font-size:13px; }
+  .sbform .sbmine div { display:flex; gap:8px; align-items:center; padding:4px 0; }
+  .sbform .sbmine button { padding:4px 10px; font-size:12px; background:var(--panel); color:var(--text); }
+  #sbbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:8px 16px; border-bottom:1px solid var(--edge); background:var(--side); font-size:12.5px; }
+  #sbbar[hidden] { display:none; }
+  #sbbar button { font:inherit; font-size:12.5px; padding:6px 10px; border-radius:10px; border:1px solid var(--edge); background:var(--bg); color:var(--text); cursor:pointer; }
+  #sbbar .muted { color:var(--muted); }
   #tourtoast { position:fixed; left:50%; bottom:92px; transform:translate(-50%, 16px); opacity:0; pointer-events:none; z-index:60; background:var(--text); color:var(--bg); border-radius:14px; padding:10px 16px; max-width:min(520px, 92vw); font-size:13.5px; line-height:1.4; box-shadow:0 8px 30px rgba(0,0,0,.18); transition:opacity .25s, transform .25s; display:flex; flex-direction:column; gap:2px; }
   #tourtoast.show { opacity:1; transform:translate(-50%, 0); }
   #tourtoast b { font-size:13px; }
@@ -345,6 +359,20 @@ document.addEventListener('DOMContentLoaded', function () {
   <div style="display:flex;gap:8px"><button type="submit" style="flex:1">Open</button><button type="button" id="admincancel" style="flex:1;background:var(--panel);color:var(--text)">Cancel</button></div>
   <div id="adminmsg" class="lockmsg"></div>
 </form></div>
+<div id="sandboxwrap" class="lockwrap"><form id="sandboxform" class="sbform">
+  <h2>🧪 Build one here</h2>
+  <p>Paste the Instructions from your custom GPT, or start from a licensed prompt. Add a few files. It's yours to chat with for two weeks, and you can take the files with you.</p>
+  <label>Name<input id="sb_name" type="text" maxlength="60" placeholder="e.g. My proposal writer" /></label>
+  <label>Start from<select id="sb_lib"><option value="">Paste my own instructions</option></select></label>
+  <p class="sbhint" id="sb_libhint" hidden></p>
+  <label id="sb_instrwrap">Instructions<textarea id="sb_instr" rows="7" placeholder="Paste what you'd have typed into ChatGPT's Instructions box. Who it is, what it does, how it answers."></textarea></label>
+  <label>Greeting <span class="muted">(optional)</span><input id="sb_greet" type="text" maxlength="400" placeholder="The first line people see" /></label>
+  <label>Starter prompts <span class="muted">(optional, one per line, up to four)</span><textarea id="sb_starters" rows="2"></textarea></label>
+  <label>Knowledge files <span class="muted">(optional, up to four: PDF, Word, text, Markdown, CSV)</span><input id="sb_files" type="file" multiple accept=".pdf,.docx,.doc,.txt,.md,.csv,.xlsx" /></label>
+  <div id="sb_mine" class="sbmine" hidden></div>
+  <div style="display:flex;gap:8px"><button type="submit" id="sb_go" style="flex:1">Create my bot</button><button type="button" id="sb_close" style="flex:1;background:var(--panel);color:var(--text)">Close</button></div>
+  <div id="sb_msg" class="sbmsg"></div>
+</form></div>
 <div id="lock" class="lockwrap"><form id="lockform">
   <h2 id="locktitle">Before we start</h2>
   <p id="lockhint">Enter the passphrase to continue.</p>
@@ -392,6 +420,7 @@ document.addEventListener('DOMContentLoaded', function () {
     <div class="viewas" id="viewas">👁 <span id="viewaswho"></span> <button type="button" id="viewasexit">Exit</button></div>
     <div id="tour" hidden></div>
     <div id="tourmake" hidden></div>
+    <div id="sbbar" hidden></div>
     <section id="cfg" aria-label="Configure">
       <header>
         <button class="iconbtn" id="cfgback">‹ Back</button>
@@ -789,7 +818,8 @@ function selectProject(p, silent) {
     ? 'Can make mistakes. Check important information.'
     : 'Answers only from what ' + p.name + ' has written down. Can still make mistakes.';
   renderProjects(); newChat(silent);
-  { let off = ''; try { off = sessionStorage.getItem('byo:breakbar') || ''; } catch {} showBreakBar(Boolean(TOUR.guide) && p.id !== TOUR.guide.id && p.kind !== 'food' && off !== 'off' && (TOUR.done.try || TOUR.done.break || Object.keys(BREAK_USED).length > 0)); }
+  { let off = ''; try { off = sessionStorage.getItem('byo:breakbar') || ''; } catch {} showBreakBar(Boolean(TOUR.guide) && p.id !== TOUR.guide.id && p.kind !== 'food' && !p.sandbox && off !== 'off' && (TOUR.done.try || TOUR.done.break || Object.keys(BREAK_USED).length > 0)); }
+  renderSandboxBar();
   if ($('hood').classList.contains('show')) openHood();
   // A bot with its own door is checked on the way in, not after the first message.
   if (p.access && p.access !== 'open' && !checked[p.id]) checkDoor(p);
@@ -854,7 +884,7 @@ function renderProjects() {
     const isApp = p.kind && p.kind !== 'chat';
     // An app-shaped bot (the food log) lives on its own page: /apps/<id>. Chat bots stay here.
     el.href = isApp ? (p.href || ('/apps/' + encodeURIComponent(p.id))) : (location.pathname + '?project=' + encodeURIComponent(p.id));
-    el.innerHTML = '<span>' + (isApp ? '📷 ' : '') + esc(p.name) + accessBadge(p) + (isApp ? ' <span class="pill" style="vertical-align:1px">app</span>' : '') + '</span><small>' + esc(p.tagline || '') + '</small>';
+    el.innerHTML = '<span>' + (isApp ? '📷 ' : '') + esc(p.name) + accessBadge(p) + (isApp ? ' <span class="pill" style="vertical-align:1px">app</span>' : '') + (p.sandbox ? ' <span class="pill" style="vertical-align:1px" title="' + esc(p.sandbox.email ? 'sandbox of ' + p.sandbox.email : 'your sandbox bot') + '">🧪 ' + (p.sandbox.email ? 'sandbox' : 'yours') + '</span>' : '') + '</span><small>' + esc(p.tagline || '') + '</small>';
     el.onclick = (e) => { if (wantsNewTab(e)) return; e.preventDefault(); if (isApp) { location.href = el.href; return; } selectProject(p); $('side').classList.remove('open'); };
     $('projects').appendChild(el);
   });
@@ -1168,6 +1198,87 @@ input.addEventListener('input', () => { input.style.height = 'auto'; input.style
 input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } });
 form.addEventListener('submit', (e) => { e.preventDefault(); if (state.busy) { state.abort?.abort(); return; } send(input.value.trim()); });
 
+// ---- THE SANDBOX: a keyed visitor's own bot, built here (Engine/worker/sandbox.js). ----
+let SB = { library: [], bots: [], limits: {} };
+async function sandboxInfo() {
+  const r = await fetch('/api/sandbox?bot=' + encodeURIComponent(TOUR.guide?.id || ''), { headers: authHeaders(TOUR.guide?.id) });
+  const d = await r.json(); if (r.ok) SB = { ...SB, ...d }; return d;
+}
+async function openSandbox() {
+  const d = await sandboxInfo();
+  if (!d.allowed) { tourToast('Needs a key', 'Building here opens with a workshop key. Enter it under Make your own.'); tourGo('make'); return; }
+  const sel = $('sb_lib'); sel.innerHTML = '<option value="">Paste my own instructions</option>' + (SB.library || []).map((l) => '<option value="' + esc(l.id) + '">' + esc(l.name) + ' — ' + esc(l.source) + '</option>').join('');
+  sel.onchange = () => { const l = (SB.library || []).find((x) => x.id === sel.value); $('sb_libhint').hidden = !l; $('sb_libhint').textContent = l ? l.blurb + ' (' + l.licence + ' licence, credit kept in the instructions.)' : ''; $('sb_instrwrap').hidden = !!l; };
+  sel.onchange();
+  const mine = $('sb_mine');
+  mine.hidden = !(SB.bots || []).length;
+  mine.innerHTML = (SB.bots || []).length ? '<b>Your sandbox bots (' + SB.bots.length + ' of ' + (SB.limits?.perPerson || 3) + ')</b>' + SB.bots.map((b) => '<div><span style="flex:1">' + esc(b.name) + ' <span class="muted">· ' + b.files + ' file' + (b.files === 1 ? '' : 's') + ' · ' + daysLeft(b.expires_at) + '</span></span><button type="button" data-sbopen="' + esc(b.id) + '">Open</button><button type="button" data-sbdel="' + esc(b.id) + '">Delete</button></div>').join('') : '';
+  mine.onclick = async (e) => { const o = e.target.closest('[data-sbopen]'); if (o) { closeSandbox(); const p = state.projects.find((x) => x.id === o.dataset.sbopen); if (p) selectProject(p); return; } const dl = e.target.closest('[data-sbdel]'); if (dl) { dl.disabled = true; await fetch('/api/sandbox/' + encodeURIComponent(dl.dataset.sbdel), { method: 'DELETE', headers: authHeaders() }); await refreshProjects(); openSandbox(); } };
+  $('sb_msg').textContent = ''; $('sandboxwrap').classList.add('show'); $('sb_name').focus();
+}
+function closeSandbox() { $('sandboxwrap').classList.remove('show'); }
+$('sb_close').onclick = closeSandbox;
+const daysLeft = (iso) => { const d = Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000); return d <= 0 ? 'expires today' : d + ' day' + (d === 1 ? '' : 's') + ' left'; };
+// Re-read the bot list from the server so a new sandbox bot appears in the sidebar.
+async function refreshProjects() {
+  try { const r = await fetch('/api/config?project=' + encodeURIComponent(state.project?.id || ''), { headers: configHeaders(state.project?.id) }); const cfg = await r.json(); if (cfg.projects) { state.cfg = cfg; state.projects = cfg.projects; renderProjects(); } } catch {}
+}
+$('sandboxform').addEventListener('submit', async (e) => {
+  e.preventDefault(); const go = $('sb_go'); go.disabled = true; go.textContent = 'Creating…'; $('sb_msg').textContent = '';
+  try {
+    const body = { bot: TOUR.guide?.id, name: $('sb_name').value, greeting: $('sb_greet').value, starters: $('sb_starters').value.split('\n').map((s) => s.trim()).filter(Boolean), library: $('sb_lib').value || undefined, instructions: $('sb_lib').value ? '' : $('sb_instr').value };
+    const r = await fetch('/api/sandbox', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(TOUR.guide?.id) }, body: JSON.stringify(body) });
+    const d = await r.json(); if (!r.ok) throw new Error(d.reason || d.error || r.status);
+    // files, one at a time
+    const files = [...($('sb_files').files || [])].slice(0, SB.limits?.files || 4); const notes = [];
+    for (const f of files) { go.textContent = 'Reading ' + f.name + '…'; const fd = new FormData(); fd.append('file', f, f.name); const fr = await fetch('/api/sandbox/' + encodeURIComponent(d.bot.id) + '/file', { method: 'POST', headers: authHeaders(), body: fd }); const fj = await fr.json(); if (!fr.ok) notes.push(f.name + ': ' + (fj.reason || 'not added')); }
+    markStop('make');
+    await refreshProjects();
+    closeSandbox(); $('sb_name').value = ''; $('sb_instr').value = ''; $('sb_greet').value = ''; $('sb_starters').value = ''; $('sb_files').value = ''; $('sb_lib').value = '';
+    const p = state.projects.find((x) => x.id === d.bot.id); if (p) selectProject(p);
+    tourToast('🧪 ' + d.bot.name + ' is live', (notes.length ? notes.join(' · ') + '. ' : '') + 'Yours for ' + (SB.limits?.days || 14) + ' days. Take it with you any time from the bar above the chat.', 7000);
+  } catch (err) { $('sb_msg').textContent = err.message; }
+  go.disabled = false; go.textContent = 'Create my bot';
+});
+// The bar above a sandbox bot's chat: what it is, add a file, take it with you, delete.
+function renderSandboxBar() {
+  const bar = $('sbbar'); const p = state.project;
+  if (!p || !p.sandbox) { bar.hidden = true; return; }
+  bar.innerHTML = '<span>🧪 <b>' + (p.sandbox.email ? 'Sandbox of ' + esc(p.sandbox.email) : 'Your sandbox bot') + '</b> <span class="muted">· ' + daysLeft(p.sandbox.expires_at) + (p.sandbox.source ? ' · from ' + esc(p.sandbox.source) : '') + '</span></span><span class="spacer" style="flex:1"></span><button type="button" data-sb="file">📎 Add a file</button><button type="button" data-sb="take">⬇ Take it with you</button><button type="button" data-sb="del">Delete</button><input type="file" id="sbfilein" hidden accept=".pdf,.docx,.doc,.txt,.md,.csv,.xlsx" />';
+  bar.hidden = false;
+  bar.onclick = async (e) => {
+    const b = e.target.closest('[data-sb]'); if (!b) return;
+    if (b.dataset.sb === 'file') { $('sbfilein').onchange = async () => { const f = $('sbfilein').files[0]; if (!f) return; b.disabled = true; b.textContent = 'Reading…'; const fd = new FormData(); fd.append('file', f, f.name); const r = await fetch('/api/sandbox/' + encodeURIComponent(p.id) + '/file', { method: 'POST', headers: authHeaders(), body: fd }); const d = await r.json(); tourToast(r.ok ? '📎 ' + d.file + ' added' : 'Not added', r.ok ? (d.cut ? 'It was long; the first ' + d.chars.toLocaleString() + ' characters are in.' : 'The bot answers from it now.') : (d.reason || '')); b.disabled = false; b.textContent = '📎 Add a file'; }; $('sbfilein').click(); return; }
+    if (b.dataset.sb === 'del') { if (b.dataset.armed !== '1') { b.dataset.armed = '1'; b.textContent = 'Really delete? Tap again'; setTimeout(() => { b.dataset.armed = ''; b.textContent = 'Delete'; }, 5000); return; } await fetch('/api/sandbox/' + encodeURIComponent(p.id), { method: 'DELETE', headers: authHeaders() }); await refreshProjects(); const g = TOUR.guide ? state.projects.find((x) => x.id === TOUR.guide.id) : state.projects[0]; if (g) selectProject(g); return; }
+    if (b.dataset.sb === 'take') {
+      b.disabled = true; b.textContent = 'Packing…';
+      try {
+        const r = await fetch('/api/sandbox/' + encodeURIComponent(p.id), { headers: authHeaders() }); const d = await r.json(); if (!r.ok) throw new Error(d.error || r.status);
+        const bot = d.bot; const folder = 'YourBots/' + bot.id.replace(/^sb-/, 'my-bot-') + '/';
+        const meta = { order: 10, name: bot.name, tagline: '', greeting: bot.greeting, starters: bot.starters || [], mode: 'imported', grounding: Object.keys(bot.files || {}).length ? 'strict' : 'open', handoffText: '', handoffContact: '', allowedLinks: [] };
+        const entries = [{ name: folder + 'project.json', text: JSON.stringify(meta, null, 2) + '\n' }, { name: folder + 'instructions.md', text: (bot.instructions || '') + '\n' }, ...Object.entries(bot.files || {}).map(([n, t]) => ({ name: folder + 'knowledge/' + n, text: t + '\n' })), { name: folder + 'README.txt', text: 'Drop this folder into YourBots/ in your own copy of the project, add "' + bot.id.replace(/^sb-/, 'my-bot-') + '" to YourBots/index.js (or just commit — discover does it), and it is live in a minute.\n' }];
+        const blob = makeZip(entries); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = bot.id.replace(/^sb-/, 'my-bot-') + '.zip'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      } catch (err) { tourToast('Could not pack it', err.message); }
+      b.disabled = false; b.textContent = '⬇ Take it with you';
+    }
+  };
+}
+// A zip with no compression: enough for a few text files, no library needed.
+function makeZip(entries) {
+  const enc = new TextEncoder(); const crcT = new Int32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; crcT[n] = c; }
+  const crc = (u8) => { let c = -1; for (let i = 0; i < u8.length; i++) c = crcT[(c ^ u8[i]) & 0xFF] ^ (c >>> 8); return (c ^ -1) >>> 0; };
+  const parts = [], central = []; let off = 0; const le16 = (n) => [n & 255, (n >> 8) & 255], le32 = (n) => [n & 255, (n >> 8) & 255, (n >> 16) & 255, (n >>> 24) & 255];
+  for (const e of entries) {
+    const name = enc.encode(e.name), data = enc.encode(e.text), c = crc(data);
+    const local = new Uint8Array([0x50, 0x4b, 3, 4, ...le16(20), ...le16(0x0800), ...le16(0), ...le16(0), ...le16(0x21), ...le32(c), ...le32(data.length), ...le32(data.length), ...le16(name.length), ...le16(0), ...name]);
+    central.push(new Uint8Array([0x50, 0x4b, 1, 2, ...le16(20), ...le16(20), ...le16(0x0800), ...le16(0), ...le16(0), ...le16(0x21), ...le32(c), ...le32(data.length), ...le32(data.length), ...le16(name.length), ...le16(0), ...le16(0), ...le16(0), ...le16(0), ...le32(0), ...le32(off), ...name]));
+    parts.push(local, data); off += local.length + data.length;
+  }
+  const cdSize = central.reduce((a, b) => a + b.length, 0);
+  const end = new Uint8Array([0x50, 0x4b, 5, 6, ...le16(0), ...le16(0), ...le16(entries.length), ...le16(entries.length), ...le32(cdSize), ...le32(off), ...le16(0)]);
+  return new Blob([...parts, ...central, end], { type: 'application/zip' });
+}
+
 // ---- THE TOUR: five stops above the chat, ticked by what the visitor actually does. ----
 //  The guide is the bot whose project.json has "tour" (YourBots/tour). Progress lives on
 //  this browser and, once they've signed up, on the server (Engine/worker/tour.js), so the
@@ -1274,13 +1385,14 @@ function tourGo(stop) {
   if (stop === 'make') {
     const d = TOUR.deploy || {}; const c = TOUR.community; const box = $('tourmake'); box.innerHTML = '';
     const add = (html) => { const w = document.createElement('span'); w.innerHTML = html; while (w.firstChild) box.appendChild(w.firstChild); };
-    if (d.allowed && d.url) add('<a class="primary" href="' + esc(d.url) + '" target="_blank" rel="noopener" data-mk="deploy">🚀 Deploy your own</a>' + (d.checklist ? '<a href="' + esc(d.checklist) + '" target="_blank" rel="noopener" data-mk="deploy">the owner walkthrough</a>' : ''));
+    if (d.allowed) add('<button type="button" class="primary" data-mk="build">🧪 Build one here</button>' + (d.url ? '<a href="' + esc(d.url) + '" target="_blank" rel="noopener" data-mk="deploy">🚀 Deploy your own</a>' : '') + (d.checklist ? '<a href="' + esc(d.checklist) + '" target="_blank" rel="noopener" data-mk="deploy">the owner walkthrough</a>' : ''));
     else add('<span class="why">' + esc(d.why || 'The deploy walkthrough is the paid workshop.') + '</span>' + (c?.workshopUrl ? '<a class="primary" href="' + esc(c.workshopUrl) + '" target="_blank" rel="noopener" data-mk="workshop" title="' + esc(c.workshopPitch || '') + '">Get ' + esc(c.workshopName || 'the workshop') + '</a>' : '') + (c?.url ? '<a href="' + esc(c.url) + '" target="_blank" rel="noopener" data-mk="join">Join ' + esc(c.name || 'the community') + ' (free)</a>' : '') + (TOUR.signedUp ? '<input id="tourcode" placeholder="Code, e.g. K7M4-P2QX" maxlength="9" style="font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--edge);border-radius:10px;background:var(--bg);color:var(--text);width:150px;text-transform:uppercase" /><button type="button" data-mk="code">Unlock</button>' : ''));
     add((TOUR.links?.prompts ? '<a href="' + esc(TOUR.links.prompts) + '" target="_blank" rel="noopener" data-mk="import">📄 Import a ready-made prompt</a>' : '') + '<button type="button" data-mk="close">Close</button>');
     box.hidden = false;
     box.onclick = async (e) => {
       const t = e.target.closest('[data-mk]'); if (!t) return;
       if (t.dataset.mk === 'close') { box.hidden = true; return; }
+      if (t.dataset.mk === 'build') { box.hidden = true; openSandbox(); return; }
       if (t.dataset.mk === 'code') {
         const v = ($('tourcode')?.value || '').trim(); if (!v) return $('tourcode')?.focus();
         t.disabled = true; t.textContent = 'Checking…';
