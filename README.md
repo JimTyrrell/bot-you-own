@@ -10,6 +10,14 @@ Classroom → **🤖 Build the Chatbot That Answers Your Customers** (third card
 **Licence:** PolyForm Shield — deploy it for your own business and clients and earn with it;
 don't set it up for other businesses or resell it. Plain English in `NOTICE.md`.
 
+**Do you need to buy anything? No.** The code is free to deploy and run for your
+own business (that's the licence). The **free group** is where questions get
+answered and where the deploy walkthrough lives. The **workshop** is paid: an
+afternoon, with people who've done it, that takes you from the button to a bot
+on your own domain with the sign-up funnel switched on, plus the parts that need
+a human (the domain, the spend cap, the secrets, the texting number). Buy it if
+you want to be walked through it; skip it if you'd rather read the docs.
+
 **You will not open a terminal. You will not install anything.** If you can use
 a browser and edit a document, you can do this.
 
@@ -57,6 +65,29 @@ ChatGPT-style page with four projects in the sidebar. Try each one. Then try to
 break them — that's the point of the samples.
 
 ---
+
+## First run: your admin code (two minutes)
+
+Nothing ships with a key. Until you set one, the site runs but the **⚙ Under the
+hood** button does not exist and every admin route answers 404. To switch it on:
+
+1. Cloudflare dashboard → **Workers & Pages** → your worker → **Settings** →
+   **Variables and Secrets** → **Add**.
+2. Type **Secret**. Name `ADMIN_PASSPHRASE`. Value: a passphrase you choose.
+   Save, then **Deploy** (the button at the top of that page).
+3. Reload your site. The **⚙ Under the hood** button appears; your passphrase opens it.
+
+Or from a terminal in your copy of the repo:
+
+```bash
+printf 'your passphrase' | npx wrangler secret put ADMIN_PASSPHRASE
+```
+
+**Forgot it?** Do the same step with a new value. The old one is gone; nobody
+can recover it, including us. **Second factor:** add `ADMIN_TOTP_SECRET` (a base32
+secret from your authenticator app) and the admin code also asks for six digits
+— do this before the sign-up gate collects real people's numbers.
+`docs/OWNER-CHECKLIST.md` §1b has all three first-day secrets.
 
 ## Make it yours — four steps
 

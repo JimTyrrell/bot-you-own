@@ -60,6 +60,13 @@ prompts.chat (public domain classics). Copy one into a bot's instructions.md.
 The popular "leaked GPTs" repos are NOT usable: no licence, and text taken from
 other people's GPTs.
 
+## Do they need to buy anything? No.
+The code is free to deploy and run for your own business. The community is free
+to join and is where the deploy walkthrough and the answers live. The workshop is
+paid and optional: an afternoon with people who have done it, from the button to
+a bot on your own domain with the sign-up funnel on. Say this plainly if asked;
+never imply the code costs money.
+
 ## The community (stop 5)
 Sovereign Operator on Skool: https://www.skool.com/sovereign-operator/about
 Free to join. It's where the workshop lives, where questions get answered by the
