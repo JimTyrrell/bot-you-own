@@ -413,7 +413,7 @@ document.addEventListener('DOMContentLoaded', function () {
   </div>
   <div id="sb_fields" hidden>
   <p class="sbhint"><a href="#" id="sb_back">‹ Start over</a></p>
-  <details class="sbhow"><summary>Bringing a ChatGPT custom GPT over? Where each piece lives</summary>
+  <details class="sbhow"><summary>Need help? Follow these instructions</summary>
     <p>ChatGPT has no export for a GPT, so it's copy and paste — five minutes. In ChatGPT: <b>Explore GPTs → My GPTs → ✎ Edit</b> on the one you want → the <b>Configure</b> tab.</p>
     <ul>
       <li><b>Name</b> → the Name box below.</li>
@@ -1432,15 +1432,15 @@ const TOUR = { guide: null, stops: [], done: {}, deploy: null, community: null, 
 const STOP_META = {
   try:   { label: 'Try a bot',       hint: 'Chat with one of the sample bots in the sidebar.' },
   break: { label: 'Break it',        hint: 'Tell a bot to ignore its instructions, ask for its rules, paste a link. Watch the chip under the answer.' },
-  hood:  { label: 'See the code',    hint: 'The prompts, the files and the firewall, as they really are. Opens with your workshop key.' },
-  make:  { label: 'Make your own',   hint: 'Paste your GPT or pick a ready-made prompt and see it work here. Deploying your own needs a key.' },
+  make:  { label: 'Make your own',   hint: 'Bring your ChatGPT over or pick a ready-made one. It works here, in the sidebar, in a minute. Free.' },
+  hood:  { label: 'Deploy it yourself', hint: 'The code, the walkthrough and the one-click deploy to your own Cloudflare. The paid part: a workshop key opens it.' },
   join:  { label: 'Join',            hint: 'The workshop, the help, and the people doing this.' },
 };
 const STOP_DONE = {
   try: 'You got a real answer. Now the fun part: tap Break it in the strip above.',
   break: 'That chip under the reply is the firewall showing its work. Next: see the code.',
-  hood: 'Everything you saw is in that repo. Next: make one yourself.',
-  make: 'Deploy or import — either way it\'s yours. Last stop: the community.',
+  make: 'It\'s in your sidebar. Next: deploy one for real.',
+  hood: 'The code, the walkthrough and the deploy button are yours. Last stop: the community.',
   join: 'That\'s where the workshop and the help live.',
 };
 // A quiet card, bottom centre, that goes away by itself.
@@ -1557,7 +1557,7 @@ OVERLAYS.forEach((id) => $(id).addEventListener('pointerdown', (e) => { if (e.ta
 // The key modal: everything behind it dims; one thing to do. Used by any locked stop.
 function openKeyModal(stop) {
   const c = TOUR.community || {};
-  $('key_title').textContent = stop === 'hood' ? '🔑 See the code needs a workshop key' : '🔑 This stop needs a workshop key';
+  $('key_title').textContent = stop === 'hood' ? '🔑 Deploy it yourself needs a workshop key' : '🔑 This stop needs a workshop key';
   $('key_why').textContent = TOUR.signedUp ? 'You\'re signed in and the rest of the tour is open. This one stop, the code and the deploy walkthrough, opens with a key from the workshop.' : 'Sign up first; then a key from the workshop opens the code and the deploy walkthrough.';
   $('key_workshop').href = c.workshopUrl || c.url || '#'; $('key_workshop').textContent = 'Get ' + (c.workshopName || 'the workshop'); $('key_workshop').hidden = !(c.workshopUrl || c.url);
   $('key_code').value = ''; $('key_msg').textContent = ''; $('key_go').disabled = !TOUR.signedUp; $('key_code').disabled = !TOUR.signedUp;
@@ -1584,16 +1584,18 @@ function tourGo(stop) {
   if (stop === 'try') { const p = tourSample(); if (p) { selectProject(p); $('side').classList.remove('open'); input.focus(); } return; }
   if (stop === 'break') { try { sessionStorage.setItem('byo:breakbar', 'on'); } catch {} const p = tourSample(); if (p) { selectProject(p); $('side').classList.remove('open'); } showBreakBar(true); renderLog(); input.focus(); return; }
   if (stop === 'hood') {
-    if (!TOUR.links?.code) {
-      if (TOUR.deploy?.allowed) tourToast('Almost', 'The owner hasn\'t set the code link yet.'); else openKeyModal('hood');
-      return;
-    }
-    window.open(TOUR.links.code, '_blank', 'noopener'); markStop('hood'); return;
+    if (!(TOUR.deploy && TOUR.deploy.allowed)) { openKeyModal('hood'); return; }
+    const d = TOUR.deploy, box = $('tourmake'); box.innerHTML = '';
+    const add = (html) => { const w = document.createElement('span'); w.innerHTML = html; while (w.firstChild) box.appendChild(w.firstChild); };
+    add('<span class="why">Yours to keep:</span>' + (TOUR.links?.code ? '<a href="' + esc(TOUR.links.code) + '" target="_blank" rel="noopener" data-mk="deploy">📂 See the code</a>' : '') + (d.checklist ? '<a href="' + esc(d.checklist) + '" target="_blank" rel="noopener" data-mk="deploy">📋 The walkthrough</a>' : '') + (d.url ? '<a class="primary" href="' + esc(d.url) + '" target="_blank" rel="noopener" data-mk="deploy">🚀 Deploy to your Cloudflare</a>' : '') + (TOUR.links?.prompts ? '<a href="' + esc(TOUR.links.prompts) + '" target="_blank" rel="noopener" data-mk="deploy">📄 More prompts</a>' : '') + '<button type="button" data-mk="close">Close</button>');
+    box.hidden = false;
+    box.onclick = (e) => { const t = e.target.closest('[data-mk]'); if (!t) return; if (t.dataset.mk === 'close') { box.hidden = true; return; } markStop('hood'); };
+    return;
   }
   if (stop === 'join') { if (TOUR.community?.url) window.open(TOUR.community.url, '_blank', 'noopener'); markStop('join'); return; }
-  if (stop === 'make') {
+  if (stop === 'make') { if (!TOUR.signedUp) { tourToast('Sign up first', 'Then Make your own opens.'); return; } openSandbox(); return; }
+  if (stop === 'deployPanel') {
     const d = TOUR.deploy || {}; const c = TOUR.community; const box = $('tourmake'); box.innerHTML = '';
-    if (!TOUR.signedUp) { openKeyModal('make'); return; }
     const add = (html) => { const w = document.createElement('span'); w.innerHTML = html; while (w.firstChild) box.appendChild(w.firstChild); };
     add('<button type="button" class="primary" data-mk="build">🧪 Build one here</button>' + (d.allowed && d.url ? '<a href="' + esc(d.url) + '" target="_blank" rel="noopener" data-mk="deploy">🚀 Deploy your own</a>' : '<button type="button" data-mk="locked" title="Opens with a workshop key">🔒 Deploy your own <span class="paid">$</span></button>') + (d.allowed && d.checklist ? '<a href="' + esc(d.checklist) + '" target="_blank" rel="noopener" data-mk="deploy">the owner walkthrough</a>' : ''));
     // (the locked case is the 🔑 button above, which opens the key modal)

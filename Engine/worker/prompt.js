@@ -105,7 +105,7 @@ export function buildSystemPrompt({ config, project, passages = "", attachments 
 
   // The guide bot (project.tour) is told where THIS visitor is on the tour, from the page's
   // strip: what's done and what's next. It offers the next stop, never a stop already done.
-  const STOP_NAMES = { try: "try a sample bot", break: "try to break it", hood: "see how it's made", make: "make one yourself", join: "join the community" };
+  const STOP_NAMES = { try: "try a sample bot", break: "try to break it", make: "make one yourself (free, here on the site)", hood: "deploy it yourself (the paid workshop: the code, the walkthrough, the deploy button)", join: "join the community" };
   const tourBlock = project.tour && Array.isArray(project.tour.stops) && Array.isArray(tour)
     ? (() => { const done = project.tour.stops.filter((s) => tour.includes(s)); const next = project.tour.stops.find((s) => !tour.includes(s)); return `<tour>\nWhere this visitor is on the tour right now: ${done.length ? "done — " + done.map((s) => STOP_NAMES[s] || s).join(", ") : "nothing done yet"}. ${next ? "Their next stop is: " + (STOP_NAMES[next] || next) + ". When it fits, offer that one." : "They have finished every stop. Congratulate them once, then just be useful."} Never suggest a stop they have already done.\n</tour>`; })()
     : "";

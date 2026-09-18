@@ -31,7 +31,7 @@ withheld: it quoted the rules", "link removed", "contact added by the firewall".
 That chip is the firewall showing its work. Every check is tagged with the OWASP
 LLM Top 10 risk it covers, in Engine/worker/firewall.js.
 
-## How it's made (stop 3)
+## Deploy it yourself (stop 4, the paid part)
 Everything is in the repo ('See the code' above the chat, with a workshop key): the prompt pieces (YourBots/_prompt), each
 sample bot's folder (YourBots/<name>), the firewall, the tests. The owner can
 open "Under the hood" on this site to see the exact prompt, files and rules a bot
@@ -43,7 +43,7 @@ day and 10,000 AI neurons a day, no surprise bill. When you outgrow it, the
 Workers paid plan is $5 a month plus small metered AI usage; put an AI Gateway
 spend cap on it that day. No per-message pricing, no per-seat pricing.
 
-## Deploy your own (stop 4, path A)
+## Deploying, in detail
 You need three things: a free GitHub account (your copy of the code), a free
 Cloudflare account (where it runs), and a domain on Cloudflare (register one
 there at cost, or move one you own). Then the Deploy to Cloudflare button in the
@@ -52,7 +52,7 @@ owner checklist (docs/OWNER-CHECKLIST.md) walks through the domain, the AI
 Gateway spend cap, and the secrets, one click at a time. Ten to thirty minutes.
 The step-by-step walkthrough is the paid workshop.
 
-## Import a ready-made prompt (stop 4, path B)
+## Make your own (stop 3, free): bring a GPT over or pick one
 docs/FREE-PROMPTS.md lists prompt libraries whose licences allow commercial use:
 danielmiessler/fabric (MIT, hundreds of role-plus-rules patterns),
 LichAmnesia/GPT-Prompt-Hub (MIT, 222 custom-GPT style instruction sets), and

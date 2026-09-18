@@ -63,8 +63,8 @@
     "stops": [
       "try",
       "break",
-      "hood",
       "make",
+      "hood",
       "join"
     ]
   },
