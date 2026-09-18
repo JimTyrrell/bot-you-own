@@ -91,6 +91,15 @@
   .sbform textarea, .sbform select { padding:10px 12px; border:1px solid var(--edge); border-radius:10px; background:var(--bg); color:var(--text); font:inherit; font-weight:400; resize:vertical; }
   .sbform input[type=file] { padding:6px 0; font-weight:400; }
   .sbform .sbhint { font-size:12.5px; color:var(--muted); margin:-4px 0 0; }
+  .sbdoors { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .sbdoors button { display:flex; flex-direction:column; gap:4px; text-align:left; padding:14px; border:1px solid var(--edge); border-radius:14px; background:var(--bg); color:var(--text); font:inherit; cursor:pointer; }
+  .sbdoors button:hover { border-color:var(--text); }
+  .sbdoors button span { font-size:12.5px; color:var(--muted); font-weight:400; line-height:1.4; }
+  .sbpicks { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  .sbpicks button { font:inherit; font-size:13px; padding:8px 12px; border-radius:999px; border:1px solid var(--edge); background:var(--bg); color:var(--text); cursor:pointer; text-align:left; }
+  .sbpicks button:hover { background:var(--panel); }
+  .sbpicks button small { display:block; color:var(--muted); font-size:11.5px; }
+  @media (max-width: 600px) { .sbdoors { grid-template-columns:1fr; } }
   .sbform .sbhow { font-size:12.5px; color:var(--muted); border:1px solid var(--edge); border-radius:10px; padding:8px 12px; }
   .sbform .sbhow summary { cursor:pointer; color:var(--text); font-weight:600; }
   .sbform .sbhow ul { padding-left:18px; margin:6px 0; } .sbform .sbhow li { margin:3px 0; } .sbform .sbhow p { margin:6px 0; }
@@ -393,7 +402,16 @@ document.addEventListener('DOMContentLoaded', function () {
 </form></div>
 <div id="sandboxwrap" class="lockwrap modal"><form id="sandboxform" class="sbform">
   <h2>🧪 Build one here</h2>
-  <p>Paste the Instructions from your custom GPT, or start from a licensed prompt. Add its files. It's yours to chat with for two weeks, and you can take the files with you.</p>
+  <div id="sb_doors">
+    <p>Two ways in. Either way it's yours to chat with for two weeks, and you can take the files with you.</p>
+    <div class="sbdoors">
+      <button type="button" data-door="mine"><b>I have a ChatGPT to bring over</b><span>Paste its Instructions, add its files. Five minutes.</span></button>
+      <button type="button" data-door="pick"><b>Pick one for me</b><span>Eight ready-made, licensed bots. Tap one, it's live.</span></button>
+    </div>
+    <div id="sb_picks" class="sbpicks" hidden></div>
+  </div>
+  <div id="sb_fields" hidden>
+  <p class="sbhint"><a href="#" id="sb_back">‹ Start over</a></p>
   <details class="sbhow"><summary>Bringing a ChatGPT custom GPT over? Where each piece lives</summary>
     <p>ChatGPT has no export for a GPT, so it's copy and paste — five minutes. In ChatGPT: <b>Explore GPTs → My GPTs → ✎ Edit</b> on the one you want → the <b>Configure</b> tab.</p>
     <ul>
@@ -412,8 +430,10 @@ document.addEventListener('DOMContentLoaded', function () {
   <label>Greeting <span class="muted">(optional)</span><input id="sb_greet" type="text" maxlength="400" placeholder="The first line people see" /></label>
   <label>Starter prompts <span class="muted">(optional, one per line, up to four)</span><textarea id="sb_starters" rows="2"></textarea></label>
   <label>Knowledge files <span class="muted">(optional, up to eight: PDF, Word, text, Markdown, CSV, spreadsheets)</span><input id="sb_files" type="file" multiple accept=".pdf,.docx,.doc,.txt,.md,.csv,.xlsx" /></label>
+  <div style="display:flex;gap:8px"><button type="submit" id="sb_go" style="flex:1">Create my bot</button></div>
+  </div>
   <div id="sb_mine" class="sbmine" hidden></div>
-  <div style="display:flex;gap:8px"><button type="submit" id="sb_go" style="flex:1">Create my bot</button><button type="button" id="sb_close" style="flex:1;background:var(--panel);color:var(--text)">Close</button></div>
+  <button type="button" id="sb_close" style="background:var(--panel);color:var(--text)">Close</button>
   <div id="sb_msg" class="sbmsg"></div>
 </form></div>
 <div id="lock" class="lockwrap"><form id="lockform">
@@ -1324,8 +1344,21 @@ async function openSandbox() {
   mine.hidden = !(SB.bots || []).length;
   mine.innerHTML = (SB.bots || []).length ? '<b>Your sandbox bots (' + SB.bots.length + ' of ' + (SB.limits?.perPerson || 3) + ')</b>' + SB.bots.map((b) => '<div><span style="flex:1">' + esc(b.name) + ' <span class="muted">· ' + b.files + ' file' + (b.files === 1 ? '' : 's') + ' · ' + daysLeft(b.expires_at) + '</span></span><button type="button" data-sbopen="' + esc(b.id) + '">Open</button><button type="button" data-sbdel="' + esc(b.id) + '">Delete</button></div>').join('') : '';
   mine.onclick = async (e) => { const o = e.target.closest('[data-sbopen]'); if (o) { closeSandbox(); const p = state.projects.find((x) => x.id === o.dataset.sbopen); if (p) selectProject(p); return; } const dl = e.target.closest('[data-sbdel]'); if (dl) { dl.disabled = true; await fetch('/api/sandbox/' + encodeURIComponent(dl.dataset.sbdel), { method: 'DELETE', headers: authHeaders() }); await refreshProjects(); openSandbox(); } };
-  $('sb_msg').textContent = ''; overlayOpen('sandboxwrap'); $('sb_name').focus();
+  $('sb_msg').textContent = ''; sbDoor(''); overlayOpen('sandboxwrap');
 }
+// The wizard: '' = the two doors; 'mine' = the paste form; 'pick' = the library as pills.
+function sbDoor(which) {
+  $('sb_doors').hidden = which === 'mine'; $('sb_fields').hidden = which !== 'mine'; $('sb_picks').hidden = which !== 'pick';
+  document.querySelectorAll('.sbdoors').forEach((d) => { d.hidden = which === 'pick'; });
+  if (which === 'mine') { $('sb_lib').value = ''; $('sb_lib').onchange(); const det = document.querySelector('.sbhow'); if (det) det.open = true; $('sb_name').focus(); }
+  if (which === 'pick') {
+    $('sb_picks').innerHTML = '<p class="sbhint" style="width:100%;margin:0 0 2px"><a href="#" id="sb_back2">‹ Start over</a> · Tap one and it\'s live in a moment.</p>' + (SB.library || []).map((l) => '<button type="button" data-pick="' + esc(l.id) + '">' + esc(l.name) + '<small>' + esc(l.blurb) + '</small></button>').join('');
+    $('sb_back2').onclick = (e) => { e.preventDefault(); sbDoor(''); };
+    $('sb_picks').onclick = async (e) => { const b = e.target.closest('[data-pick]'); if (!b) return; const l = (SB.library || []).find((x) => x.id === b.dataset.pick); if (!l) return; $('sb_name').value = l.name; $('sb_lib').value = l.id; $('sb_instr').value = ''; $('sb_greet').value = ''; $('sb_starters').value = ''; $('sb_files').value = ''; b.disabled = true; b.textContent = 'Creating ' + l.name + '…'; $('sandboxform').requestSubmit(); };
+  }
+}
+document.querySelectorAll('.sbdoors button').forEach((b) => { b.onclick = () => sbDoor(b.dataset.door); });
+$('sb_back').onclick = (e) => { e.preventDefault(); sbDoor(''); };
 function closeSandbox() { overlayClose('sandboxwrap'); }
 $('sb_close').onclick = closeSandbox;
 const daysLeft = (iso) => { const d = Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000); return d <= 0 ? 'expires today' : d + ' day' + (d === 1 ? '' : 's') + ' left'; };
