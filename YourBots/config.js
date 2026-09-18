@@ -32,7 +32,7 @@ export const CONFIG = {
     workshopName: "the workshop", workshopUrl: "https://www.skool.com/sovereign-operator/about",
     workshopPitch: "An afternoon, with people who've done it: from the button to a bot on your own domain with the sign-up funnel on.",
     // The human path: bought the workshop, no key in hand → message this person. A Skool profile link works.
-    dmName: "Jim", dmUrl: "https://www.skool.com/sovereign-operator/about",
+    dmName: "Jim", dmUrl: "https://www.skool.com/@jim-tyrrell-8465?g=sovereign-operator",
   },
 
   // ---- 2. WHICH PROJECT OPENS FIRST ------------------------------------------
