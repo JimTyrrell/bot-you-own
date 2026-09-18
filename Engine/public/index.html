@@ -255,7 +255,7 @@
   @media (prefers-reduced-motion: reduce) { .clip.rec { animation:none; } }
   .rectime { font-size:12px; color:var(--danger); font-variant-numeric:tabular-nums; align-self:center; flex:none; }
   /* the speaker under a reply, and the auto-speak switch in the header */
-  .speak { border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:14px; padding:2px 6px; border-radius:6px; margin:2px 0 0 8px; line-height:1; flex:none; align-self:flex-start; }
+  .speak { border:1px solid var(--edge); background:transparent; color:var(--muted); cursor:pointer; font-size:12px; padding:3px 9px; border-radius:999px; display:inline-flex; align-items:center; gap:5px; margin:2px 0 0 8px; line-height:1; flex:none; align-self:flex-start; }
   .speak:hover { background:var(--panel); color:var(--text); }
   .speak.on { color:var(--accent); }
   .speak.busy { opacity:.6; cursor:progress; }
@@ -1184,7 +1184,7 @@ const tts = $('tts');
 let speaking = null;                                              // the button whose audio is playing
 function addSpeaker(el, text) {
   if (!state.voice?.out || el.querySelector('.speak')) return;
-  const b = document.createElement('button'); b.type = 'button'; b.className = 'speak'; b.textContent = '🔊'; b.title = 'Read this aloud';
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'speak'; b.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a9 9 0 0 1 0 14"/></svg> Listen'; b.title = 'Read this aloud';
   b.onclick = () => speak(text, b);
   el.appendChild(b);
 }
@@ -1192,14 +1192,14 @@ function stopSpeaking() {
   try { tts.pause(); } catch {}
   if (tts.src && tts.src.startsWith('blob:')) { try { URL.revokeObjectURL(tts.src); } catch {} }
   tts.removeAttribute('src');
-  if (speaking) { speaking.classList.remove('on', 'busy'); speaking.textContent = '🔊'; speaking.title = 'Read this aloud'; }
+  if (speaking) { speaking.classList.remove('on', 'busy'); speaking.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a9 9 0 0 1 0 14"/></svg> Listen'; speaking.title = 'Read this aloud'; }
   speaking = null;
 }
 tts.onended = stopSpeaking; tts.onerror = stopSpeaking;
 async function speak(text, btn) {
   if (speaking === btn) return stopSpeaking();                    // second press: stop
   stopSpeaking();
-  speaking = btn; btn.classList.add('busy'); btn.textContent = '…'; btn.title = 'Fetching the audio';
+  speaking = btn; btn.classList.add('busy'); btn.textContent = '… loading'; btn.title = 'Fetching the audio';
   try {
     const r = await fetch('/api/speak', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders() }, body: JSON.stringify({ text, project: state.project.id }) });
     if (speaking !== btn) return;                                  // they pressed something else meanwhile
@@ -1209,7 +1209,7 @@ async function speak(text, btn) {
     if (speaking !== btn) return;
     tts.src = URL.createObjectURL(blob);
     await tts.play();
-    btn.classList.remove('busy'); btn.classList.add('on'); btn.textContent = '⏹'; btn.title = 'Stop';
+    btn.classList.remove('busy'); btn.classList.add('on'); btn.textContent = '⏹ Stop'; btn.title = 'Stop';
   } catch (err) {
     // play() is refused when nothing on the page was clicked first (auto-speak on a fresh load); say so and move on
     if (speaking === btn) { voiceNote(err?.name === 'NotAllowedError' ? 'The browser wants a tap before it plays sound. Press 🔊 under the reply.' : 'Could not play the audio.'); stopSpeaking(); }
