@@ -83,7 +83,7 @@
   .keywrap form a { display:block; text-align:center; padding:11px; border-radius:10px; border:1px solid var(--edge); background:var(--bg); color:var(--text); text-decoration:none; font-weight:600; }
   .keywrap form a.primary { background:var(--text); color:var(--bg); border-color:transparent; }
   .keywrap .sbmsg { font-size:13px; color:var(--danger, #b42318); min-height:1em; }
-  #key_code::placeholder, #tourcode::placeholder { text-transform:none; }
+  #key_code::placeholder, #tourcode::placeholder, #lkey::placeholder { text-transform:none; }
   .sbform label { display:flex; flex-direction:column; gap:4px; font-size:13px; font-weight:600; }
   .sbform label .muted { font-weight:400; color:var(--muted); }
   .sbform textarea, .sbform select { padding:10px 12px; border:1px solid var(--edge); border-radius:10px; background:var(--bg); color:var(--text); font:inherit; font-weight:400; resize:vertical; }
@@ -421,6 +421,7 @@ document.addEventListener('DOMContentLoaded', function () {
   <input id="email" type="email" placeholder="Your email address" autocomplete="email" />
   <p id="gateclear" class="lockprivacy" hidden style="margin:-6px 0 0">Filled in from last time. <a href="#" id="gateclearlink">Not you? Clear</a></p>
   <input id="lphone" type="tel" placeholder="Mobile number (for texts)" autocomplete="tel" inputmode="tel" hidden />
+  <input id="lkey" type="text" placeholder="Workshop key, if you have one (optional)" autocomplete="off" maxlength="9" hidden style="text-transform:uppercase" />
   <label class="lockbox" id="lmarketingwrap" hidden><input type="checkbox" id="lmarketing" /><span id="lmarketingtext"></span></label>
   <label class="lockbox" id="lsmswrap" hidden><input type="checkbox" id="lsms" /><span id="lsmstext"></span></label>
   <p id="lprivacy" class="lockprivacy" hidden></p>
@@ -643,6 +644,7 @@ function drawSignup(on) {
   $('lphone').hidden = !on || su.askPhone === 'off'; $('lphone').required = on && su.askPhone === 'required'; $('lphone').placeholder = 'Mobile number, for texts' + (su.askPhone === 'optional' ? ' (optional)' : '');
   $('lmarketingwrap').hidden = !on || !su.marketing.show; $('lmarketingtext').textContent = su.marketing.text + (su.marketing.required ? ' (required)' : ''); if (on && !$('lmarketing').dataset.touched) $('lmarketing').checked = !!su.marketing.checked;
   $('lsmswrap').hidden = !on || !su.sms.show || su.askPhone === 'off'; $('lsmstext').textContent = su.sms.text + (su.sms.required ? ' (required)' : ''); if (on && !$('lsms').dataset.touched) $('lsms').checked = !!su.sms.checked;
+  $('lkey').hidden = !on || !(state.cfg?.projects || []).some((p) => p.tour);      // only a site with a tour has keys
   $('lprivacy').hidden = !on; $('lprivacy').textContent = su.privacyLine || ''; $('lprivacy').appendChild(document.createTextNode(su.privacyLine ? ' ' : ''));
   const pl = document.createElement('a'); pl.href = '/privacy'; pl.target = '_blank'; pl.rel = 'noopener'; pl.textContent = 'Privacy'; const tl = document.createElement('a'); tl.href = '/terms'; tl.target = '_blank'; tl.rel = 'noopener'; tl.textContent = 'Terms';
   $('lprivacy').append(pl, document.createTextNode(' · '), tl);
@@ -727,6 +729,9 @@ $('lockform').addEventListener('submit', async (e) => {
       if (!res.ok) { $('lockmsg').textContent = res.status === 429 ? 'Too many tries. Wait a minute.' : (data.reason || 'Could not join. Try again.'); if (data.error === 'phone') $('lphone').focus(); else if (data.error === 'name') $('lname').focus(); else if (data.error === 'email') $('email').focus(); return; }
       if (!data.linked) return showPending(data.code, em.toLowerCase());
       VISITOR = data.email || em.toLowerCase(); VISITOR_NAME = data.name || gate.name || ''; identified[lock.project] = true;
+      // a key typed at the gate is redeemed right away; a wrong one is just ignored here (the modal will ask again)
+      const key = ($('lkey').value || '').trim(); const guide = (state.cfg?.projects || []).find((p) => p.tour);
+      if (key && guide) { try { const kr = await fetch('/api/tour', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(guide.id) }, body: JSON.stringify({ bot: guide.id, code: key }) }); const kd = await kr.json(); if (kd.redeemed?.ok) { TOUR.deploy = kd.deploy; TOUR.links = kd.links || TOUR.links; setTimeout(() => tourToast('Unlocked 🔑', 'Your key is in: the code, the walkthrough and Build one here are open.'), 800); } } catch {} $('lkey').value = ''; }
     }
     $('lock').classList.remove('show'); boot(lock.project);
   } catch { $('lockmsg').textContent = 'Could not reach the server. Try again.'; }
