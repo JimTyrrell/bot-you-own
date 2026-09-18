@@ -864,9 +864,9 @@ them where a grep of the code and a bot reading the page find nothing:
 - **The `GITHUB_REPO` secret**: `printf 'you/your-repo' | npx wrangler secret put GITHUB_REPO`.
   Used for the deploy button and for Commit to GitHub.
 
-The page asks the Worker (`/api/tour`). Someone who has signed up gets the code
-and the prompt library; someone who may deploy (allowlist or a redeemed code)
-also gets the walkthrough and the deploy button. Nobody else gets a URL at all.
+The page asks the Worker (`/api/tour`). Someone with a key — on the allowlist or
+holding a redeemed deploy code — gets the code, the prompt library, the
+walkthrough and the deploy button. Nobody else gets a URL at all.
 
 ## Privacy and terms
 

@@ -109,8 +109,9 @@ export async function tourState(env, request, guide, { stop = "", code = "", lin
   } else deploy.why = "Sign up first. The deploy walkthrough is the paid workshop.";
   if (!deploy.allowed) { deploy.url = ""; deploy.checklist = ""; }   // these only leave the server for someone who may deploy
   const { unlocked, ...stopsDone } = done;
-  // The code and the prompt library: for people who have signed up. Not in the page, not in the repo.
-  const out = user ? { code: links?.code || "", prompts: links?.prompts || "" } : null;
+  // The code and the prompt library: only for someone with a key (on the list, or a redeemed
+  // code) — the same gate as deploy. Not in the page, not in the repo, not for the merely signed-up.
+  const out = user && deploy.allowed ? { code: links?.code || "", prompts: links?.prompts || "" } : null;
   const c = CONFIG.community || {};
   return { stops, done: stopsDone, signedUp: Boolean(user), deploy, redeemed, links: out, community: c.show ? { name: c.name, url: c.url, pitch: c.pitch, workshopName: c.workshopName || "the workshop", workshopUrl: c.workshopUrl || c.url, workshopPitch: c.workshopPitch || "" } : null };
 }

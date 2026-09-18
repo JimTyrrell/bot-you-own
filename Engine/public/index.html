@@ -22,7 +22,7 @@
   * { box-sizing:border-box; }
   html, body { height:100%; margin:0; }
   body { background:var(--bg); color:var(--text); font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif; }
-  .app { display:grid; grid-template-columns:260px 1fr; height:100vh; }
+  .app { display:grid; grid-template-columns:260px 1fr; height:100vh; height:100dvh; }
   body.embed .app { grid-template-columns:1fr; }
   body.embed aside { display:none; }
   body.embed #hoodbtn, body.embed #cfgbtn { display:none; }   /* a visitor's widget on a customer's site is not the place for the owner's buttons; the full page is */
@@ -56,7 +56,10 @@
   .foot { padding:10px 14px; border-top:1px solid var(--edge); font-size:12px; color:var(--muted); line-height:1.4; }
   .foot b { color:var(--text); }
 
-  main { display:flex; flex-direction:column; min-width:0; }
+  /* min-height:0 is the whole fix for "the chat doesn't scroll": a grid item defaults to
+     min-height:auto, so a long conversation made <main> taller than the screen and the
+     PAGE scrolled instead of #scroll — and nothing ever scrolled the page. */
+  main { display:flex; flex-direction:column; min-width:0; min-height:0; height:100%; overflow:hidden; }
   header { display:flex; align-items:center; gap:10px; padding:10px 16px; border-bottom:1px solid var(--edge); }
   /* the tour strip: five stops, ticked by what the visitor actually does */
   #tour { display:flex; gap:6px; align-items:center; padding:8px 16px; border-bottom:1px solid var(--edge); overflow-x:auto; font-size:12.5px; background:var(--side); }
@@ -88,7 +91,7 @@
   #hoodbtn.off, #cfgbtn.off { visibility:hidden; }
   #modelpill { min-width:120px; text-align:right; }
 
-  #scroll { flex:1; overflow-y:auto; }
+  #scroll { flex:1; min-height:0; overflow-y:auto; overscroll-behavior:contain; }
   #log { max-width:760px; margin:0 auto; padding:24px 16px 12px; display:flex; flex-direction:column; gap:18px; }
   .empty { margin:auto; max-width:760px; padding:40px 16px; text-align:center; }
   .empty h2 { font-size:26px; font-weight:600; margin:0 0 6px; }
@@ -1154,7 +1157,11 @@ function flagRow(flags, sources) {
   });
   return row;
 }
-function scrollDown() { const s = $('scroll'); s.scrollTop = s.scrollHeight; }
+// Follow the conversation as it streams — unless the reader has scrolled up to re-read
+// something, in which case leave them alone until they come back to the bottom.
+let STICK = true;
+$('scroll').addEventListener('scroll', () => { const s = $('scroll'); STICK = s.scrollHeight - s.scrollTop - s.clientHeight < 80; }, { passive: true });
+function scrollDown(force) { const s = $('scroll'); if (force) STICK = true; if (STICK) s.scrollTop = s.scrollHeight; }
 
 const form = $('form'), input = $('input'), sendBtn = $('send');
 input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 180) + 'px'; if (!input.value.trim()) state.voiceIn = false; });
@@ -1169,7 +1176,7 @@ const TOUR = { guide: null, stops: [], done: {}, deploy: null, community: null, 
 const STOP_META = {
   try:   { label: 'Try a bot',       hint: 'Chat with one of the sample bots in the sidebar.' },
   break: { label: 'Break it',        hint: 'Tell a bot to ignore its instructions, ask for its rules, paste a link. Watch the chip under the answer.' },
-  hood:  { label: 'See the code',    hint: 'The prompts, the files and the firewall are public on GitHub.' },
+  hood:  { label: 'See the code',    hint: 'The prompts, the files and the firewall, as they really are. Opens with your workshop key.' },
   make:  { label: 'Make your own',   hint: 'Deploy your own, or import a ready-made prompt.' },
   join:  { label: 'Join',            hint: 'The workshop, the help, and the people doing this.' },
 };
@@ -1254,7 +1261,15 @@ function tourGo(stop) {
   $('tourmake').hidden = true;
   if (stop === 'try') { const p = tourSample(); if (p) { selectProject(p); $('side').classList.remove('open'); input.focus(); } return; }
   if (stop === 'break') { const p = tourSample(); if (p) { selectProject(p); $('side').classList.remove('open'); } try { sessionStorage.removeItem('byo:breakbar'); } catch {} showBreakBar(true); input.focus(); return; }
-  if (stop === 'hood') { if (!TOUR.links?.code) { tourToast('Sign up first', TOUR.signedUp ? 'The owner hasn\'t set the code link yet.' : 'The code opens once you\'ve signed up.'); return; } window.open(TOUR.links.code, '_blank', 'noopener'); markStop('hood'); return; }
+  if (stop === 'hood') {
+    if (!TOUR.links?.code) {
+      if (!TOUR.signedUp) tourToast('Sign up first', 'Then the code opens with a key from the workshop.');
+      else if (TOUR.deploy?.allowed) tourToast('Almost', 'The owner hasn\'t set the code link yet.');
+      else { tourToast('Needs a key', 'The code opens with a key from the workshop. Got one? Enter it under Make your own.'); tourGo('make'); }
+      return;
+    }
+    window.open(TOUR.links.code, '_blank', 'noopener'); markStop('hood'); return;
+  }
   if (stop === 'join') { if (TOUR.community?.url) window.open(TOUR.community.url, '_blank', 'noopener'); markStop('join'); return; }
   if (stop === 'make') {
     const d = TOUR.deploy || {}; const c = TOUR.community; const box = $('tourmake'); box.innerHTML = '';
@@ -1293,7 +1308,7 @@ async function send(text) {
   if (!chat.messages.length) { $('log').innerHTML = ''; chat.title = text.slice(0, 40); pushUrl(true); }
   chat.messages.push({ role: 'user', content: text });
   tourOnSend();
-  addMessage('user', text);
+  addMessage('user', text); scrollDown(true);
   const body = addMessage('assistant', '');
   // "Thinking…" — rotates through the project's words (or the global list) until the first token lands.
   const words = (state.project.thinkingWords || state.cfg.thinkingWords || ['Thinking']).slice();
