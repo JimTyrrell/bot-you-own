@@ -1349,11 +1349,12 @@ function nudgeTarget() {
   const next = TOUR.stops.find((s) => !TOUR.done[s]);
   const onGuide = state.project && state.project.id === TOUR.guide.id;
   if (onGuide) { const go = document.querySelector('.empty .tourlist li.next button'); if (go) return { el: go, text: 'Tap Go' }; return null; }
-  if (state.chat?.messages?.length && $('breakbar').hidden && $('typebar').hidden) return null;        // mid-conversation: let them finish
+  if (next === 'try' && state.chat?.messages?.length && $('breakbar').hidden && $('typebar').hidden) return null;   // first conversation in progress: let them finish
   if (next === 'try') { const s = document.querySelector('.empty .starters button'); if (s) return { el: s, text: 'Tap one' }; if (state.chat?.messages?.length === 0) return { el: input, text: 'Say hi' }; return null; }
   if (!$('typebar').hidden) { return input.value.trim() ? { el: sendBtn, text: 'Send it' } : { el: $('typechip'), text: 'Tap this' }; }
-  if (next === 'break') { const a = document.querySelector('#breakbar .row button:not(.used)'); if (a) return { el: a, text: 'Tap one' }; return null; }
-  if (next) { const chip = [...document.querySelectorAll('#tour .stop')].find((b) => b.classList.contains('next')); if (chip) return { el: chip, text: 'Next stop' }; }
+  if (next === 'break' && !$('breakbar').hidden) { const a = document.querySelector('#breakbar .row button:not(.used)'); if (a) return { el: a, text: 'Tap one' }; }
+  // otherwise: the pill in the strip for the next stop — every stop gets the finger
+  if (next) { const chip = [...document.querySelectorAll('#tour .stop')].find((b) => b.classList.contains('next')) || [...document.querySelectorAll('#tour .stop')][TOUR.stops.indexOf(next)]; if (chip) return { el: chip, text: next === 'break' ? 'Now break it' : 'Next stop' }; }
   return null;
 }
 function showNudge() {
