@@ -32,9 +32,13 @@ const DEFAULT_ON = ["handoff", "intake-complete", "booking"];
 const EMAIL_SHAPE = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
 const TIMEOUT_MS = 5000;
 
-// The marker the intake job prompt asks for, on a line of its own. Tolerant of
-// the ways a model mangles it (spacing, case, an underscore, stray asterisks).
-const INTAKE_MARKER = /^[ \t]*[*_]*\[\s*INTAKE[\s_-]*COMPLETE\s*\][*_]*[ \t]*$/gim;
+// The marker the intake job prompt asks for. Meant to be on a line of its own, but a
+// model will glue it to the end of a sentence ("…confirm on?[INTAKE COMPLETE]"), so it
+// is matched ANYWHERE and never reaches a visitor. Tolerant of spacing, case, an
+// underscore, stray asterisks.
+const INTAKE_MARKER = /[ \t]*[*_]*\[\s*INTAKE[\s_-]*COMPLETE\s*\][*_]*[ \t]*/gi;
+// The summary is only "done" when it has no unanswered slots and isn't still asking.
+const UNANSWERED = /\((awaiting|pending|not (yet )?provided|to be confirmed|tbd|none|unknown|—|-)\)|awaiting response|not provided yet/i;
 
 // The shape every project carries, whatever was (or wasn't) in project.json.
 export function normaliseHandoffActions(a) {
@@ -63,7 +67,23 @@ export function stripIntakeMarker(text) {
   if (!found) return { text, found: false, done: false };
   const clean = String(text).replace(INTAKE_MARKER, "").replace(/\n{3,}/g, "\n\n").trim();
   INTAKE_MARKER.lastIndex = 0;
-  return { text: clean, found: true, done: INTAKE_SUMMARY.test(clean) };
+  const asksMore = /\?\s*$/.test(clean) || (clean.match(/\?/g) || []).length >= 2;
+  return { text: clean, found: true, done: INTAKE_SUMMARY.test(clean) && !UNANSWERED.test(clean) && !asksMore };
+}
+
+// An intake bot is told ONE question per message. When the model dumps three anyway,
+// keep the text up to and including the first question and drop the rest — the
+// visitor answers one thing, the bot asks the next. A finished summary is left alone.
+export function oneQuestion(text) {
+  const t = String(text || "");
+  if (INTAKE_SUMMARY.test(t)) return { text: t, trimmed: false };
+  const qs = [...t.matchAll(/\?/g)].map((m) => m.index);
+  if (qs.length < 2) return { text: t, trimmed: false };
+  // cut after the first question mark, at the end of that line/sentence
+  let cut = qs[0] + 1;
+  const rest = t.slice(cut);
+  const nl = rest.search(/\n/); if (nl >= 0 && nl <= 2) cut += nl;
+  return { text: t.slice(0, cut).trim(), trimmed: true };
 }
 
 // Which ONE event this turn is, if any, given what the bot is listening for.

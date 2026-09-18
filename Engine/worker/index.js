@@ -17,7 +17,7 @@ import { screenInbound, screenOutbound, ensureHandoff, stripHandoffMarker, llama
 import { detectLanguage, chooseLanguage, languageSettings } from "./language.js";
 import { MODES } from "./modes.js";
 import { retrieve, uploadFile, listFiles, deleteFile, downloadFile, rescanLibrary, extractText, libraryMeta, allExtensions, gate, safeName, scanText, websiteOf, crawlWebsite, websiteStatus, deleteWebsite } from "./library.js";
-import { normaliseHandoffActions, stripIntakeMarker, handoffEvent, runHandoffActions, handoffActionsView } from "./handoff.js";
+import { oneQuestion, normaliseHandoffActions, stripIntakeMarker, handoffEvent, runHandoffActions, handoffActionsView } from "./handoff.js";
 import { listLeads, getLead, summariseLead, sendLead, maybeAutoLead, leadsConfig, cleanVisitor } from "./leads.js";
 import { listGaps, getGap, setGapState, draftGap } from "./gaps.js";
 import { normaliseBooking, bookingLive, bookingStep, bookingView } from "./booking.js";
@@ -733,6 +733,8 @@ async function finish(raw, { env, fw, flags, handoff, outboundOpts, retry = null
     // (On the streaming path the line may flash for a moment before "final" replaces the text.)
     const m = stripIntakeMarker(reply);
     if (m.found) { reply = m.text; if (m.done && outboundOpts.project.mode === "intake") f.push("intake-complete"); }
+    // One question at a time, enforced in code (the prompt says it; gpt-oss ignores it about one turn in ten).
+    if (outboundOpts.project.mode === "intake") { const q = oneQuestion(reply); if (q.trimmed) { reply = q.text; f.push("intake-trimmed"); } }
     // A booking bot ends with "[BOOKING: OFFER]" or "[BOOKING: CONFIRM …]" (YourBots/_prompt/jobs/booking.md).
     // Engine/worker/booking.js takes the line out and does the actual work: lists free
     // times, or books the chosen one. Without a provider configured it only strips the line.
@@ -1608,6 +1610,7 @@ async function engineView(env, projectId) {
         "leak-blocked:paraphrase": "answer described its rules in its own words; withheld",
         "handoff-appended": "a decline in a strict project was missing the contact; added",
         "intake-complete": "an intake bot collected everything (the [INTAKE COMPLETE] line was found and removed)",
+        "intake-trimmed": "an intake bot asked several questions in one reply; the code kept only the first (one question at a time)",
         "booking-slots-offered": "a booking bot asked the calendar for free times and listed them (the [BOOKING: OFFER] line was found and removed)",
         "booking-created": "the call was booked on the calendar (the [BOOKING: CONFIRM …] line was found, the time re-checked, the booking made)",
         "booking-failed": "the chosen time was no longer free (or didn't match an offered one); fresh times were offered",
