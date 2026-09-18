@@ -902,7 +902,7 @@ Every sign-up is checked on the server before a row is written:
 A visitor with a key (allowlist or a redeemed deploy code) gets **🧪 Build one
 here** under Make your own. They paste the Instructions from their custom GPT or
 pick a licensed prompt from the library (`Engine/worker/sandbox.js → LIBRARY`,
-fetched at import time with the credit line kept), add up to four knowledge
+fetched at import time with the credit line kept), add up to eight knowledge
 files (PDF, Word, text, Markdown, CSV — converted to text), and get a bot in the
 sidebar marked 🧪. Only that person and the admin can see or use it. Up to three
 per person, gone after 14 days, deletable any time. A bar above its chat adds a

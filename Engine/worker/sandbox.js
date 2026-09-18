@@ -27,7 +27,7 @@ import { PROJECTS } from "../../YourBots/index.js";
 const BLOCKS = ["card", "ssn", "iban", "secret", "password", "privkey"];
 const blocked = (text) => { const f = scanText(text).filter((x) => BLOCKS.includes(x.id)); return f.length ? `That contains what looks like ${f.map((x) => x.label.toLowerCase()).join(", ")} — take it out first.` : ""; };
 
-export const SANDBOX_DAYS = 14, MAX_PER_PERSON = 3, MAX_FILES = 4, MAX_FILE_CHARS = 50000, MAX_INSTRUCTIONS = 20000;
+export const SANDBOX_DAYS = 14, MAX_PER_PERSON = 3, MAX_FILES = 8, MAX_FILE_CHARS = 50000, MAX_INSTRUCTIONS = 20000;
 
 // Licensed, original, verified to exist. The server fetches the text at import time;
 // nothing is copied into this repo. Keep the credit line: MIT asks for it.

@@ -83,6 +83,9 @@
   .sbform textarea, .sbform select { padding:10px 12px; border:1px solid var(--edge); border-radius:10px; background:var(--bg); color:var(--text); font:inherit; font-weight:400; resize:vertical; }
   .sbform input[type=file] { padding:6px 0; font-weight:400; }
   .sbform .sbhint { font-size:12.5px; color:var(--muted); margin:-4px 0 0; }
+  .sbform .sbhow { font-size:12.5px; color:var(--muted); border:1px solid var(--edge); border-radius:10px; padding:8px 12px; }
+  .sbform .sbhow summary { cursor:pointer; color:var(--text); font-weight:600; }
+  .sbform .sbhow ul { padding-left:18px; margin:6px 0; } .sbform .sbhow li { margin:3px 0; } .sbform .sbhow p { margin:6px 0; }
   .sbform .sbmsg { font-size:13px; color:var(--danger, #b42318); min-height:1em; }
   .sbform .sbmine { border-top:1px solid var(--edge); padding-top:8px; font-size:13px; }
   .sbform .sbmine div { display:flex; gap:8px; align-items:center; padding:4px 0; }
@@ -361,14 +364,25 @@ document.addEventListener('DOMContentLoaded', function () {
 </form></div>
 <div id="sandboxwrap" class="lockwrap"><form id="sandboxform" class="sbform">
   <h2>🧪 Build one here</h2>
-  <p>Paste the Instructions from your custom GPT, or start from a licensed prompt. Add a few files. It's yours to chat with for two weeks, and you can take the files with you.</p>
+  <p>Paste the Instructions from your custom GPT, or start from a licensed prompt. Add its files. It's yours to chat with for two weeks, and you can take the files with you.</p>
+  <details class="sbhow"><summary>Bringing a ChatGPT custom GPT over? Where each piece lives</summary>
+    <p>ChatGPT has no export for a GPT, so it's copy and paste — five minutes. In ChatGPT: <b>Explore GPTs → My GPTs → ✎ Edit</b> on the one you want → the <b>Configure</b> tab.</p>
+    <ul>
+      <li><b>Name</b> → the Name box below.</li>
+      <li><b>Instructions</b> → copy the whole box (select all, copy) → the Instructions box below. Everything it does lives here.</li>
+      <li><b>Conversation starters</b> → the Starter prompts box, one per line.</li>
+      <li><b>Knowledge</b> → the files you uploaded to it. ChatGPT won't give them back; pick them again from wherever you have them (up to eight here).</li>
+      <li><b>Description</b> → the Greeting, if you want one.</li>
+    </ul>
+    <p>Capabilities like browsing, image generation and code execution don't carry over; this bot is text and files.</p>
+  </details>
   <label>Name<input id="sb_name" type="text" maxlength="60" placeholder="e.g. My proposal writer" /></label>
   <label>Start from<select id="sb_lib"><option value="">Paste my own instructions</option></select></label>
   <p class="sbhint" id="sb_libhint" hidden></p>
   <label id="sb_instrwrap">Instructions<textarea id="sb_instr" rows="7" placeholder="Paste what you'd have typed into ChatGPT's Instructions box. Who it is, what it does, how it answers."></textarea></label>
   <label>Greeting <span class="muted">(optional)</span><input id="sb_greet" type="text" maxlength="400" placeholder="The first line people see" /></label>
   <label>Starter prompts <span class="muted">(optional, one per line, up to four)</span><textarea id="sb_starters" rows="2"></textarea></label>
-  <label>Knowledge files <span class="muted">(optional, up to four: PDF, Word, text, Markdown, CSV)</span><input id="sb_files" type="file" multiple accept=".pdf,.docx,.doc,.txt,.md,.csv,.xlsx" /></label>
+  <label>Knowledge files <span class="muted">(optional, up to eight: PDF, Word, text, Markdown, CSV, spreadsheets)</span><input id="sb_files" type="file" multiple accept=".pdf,.docx,.doc,.txt,.md,.csv,.xlsx" /></label>
   <div id="sb_mine" class="sbmine" hidden></div>
   <div style="display:flex;gap:8px"><button type="submit" id="sb_go" style="flex:1">Create my bot</button><button type="button" id="sb_close" style="flex:1;background:var(--panel);color:var(--text)">Close</button></div>
   <div id="sb_msg" class="sbmsg"></div>
@@ -1230,7 +1244,7 @@ $('sandboxform').addEventListener('submit', async (e) => {
     const r = await fetch('/api/sandbox', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(TOUR.guide?.id) }, body: JSON.stringify(body) });
     const d = await r.json(); if (!r.ok) throw new Error(d.reason || d.error || r.status);
     // files, one at a time
-    const files = [...($('sb_files').files || [])].slice(0, SB.limits?.files || 4); const notes = [];
+    const files = [...($('sb_files').files || [])].slice(0, SB.limits?.files || 8); const notes = [];
     for (const f of files) { go.textContent = 'Reading ' + f.name + '…'; const fd = new FormData(); fd.append('file', f, f.name); const fr = await fetch('/api/sandbox/' + encodeURIComponent(d.bot.id) + '/file', { method: 'POST', headers: authHeaders(), body: fd }); const fj = await fr.json(); if (!fr.ok) notes.push(f.name + ': ' + (fj.reason || 'not added')); }
     markStop('make');
     await refreshProjects();
