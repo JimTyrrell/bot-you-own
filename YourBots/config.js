@@ -31,6 +31,8 @@ export const CONFIG = {
     // The paid walkthrough. Same page out of the box (the workshop is in that group's classroom); point it at a sales page if you have one.
     workshopName: "the workshop", workshopUrl: "https://www.skool.com/sovereign-operator/about",
     workshopPitch: "An afternoon, with people who've done it: from the button to a bot on your own domain with the sign-up funnel on.",
+    // The human path: bought the workshop, no key in hand → message this person. A Skool profile link works.
+    dmName: "Jim", dmUrl: "https://www.skool.com/sovereign-operator/about",
   },
 
   // ---- 2. WHICH PROJECT OPENS FIRST ------------------------------------------

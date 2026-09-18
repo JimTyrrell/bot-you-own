@@ -126,7 +126,7 @@ export async function tourState(env, request, guide, { stop = "", code = "", lin
   // code) — the same gate as deploy. Not in the page, not in the repo, not for the merely signed-up.
   const out = user && deploy.allowed ? { code: links?.code || "", prompts: links?.prompts || "" } : null;
   const c = CONFIG.community || {};
-  return { stops, done: stopsDone, signedUp: Boolean(user), deploy, redeemed, links: out, community: c.show ? { name: c.name, url: c.url, pitch: c.pitch, workshopName: c.workshopName || "the workshop", workshopUrl: c.workshopUrl || c.url, workshopPitch: c.workshopPitch || "" } : null };
+  return { stops, done: stopsDone, signedUp: Boolean(user), deploy, redeemed, links: out, community: c.show ? { name: c.name, url: c.url, pitch: c.pitch, workshopName: c.workshopName || "the workshop", workshopUrl: c.workshopUrl || c.url, workshopPitch: c.workshopPitch || "", dmName: c.dmName || "", dmUrl: c.dmUrl || "" } : null };
 }
 
 // For the Sign-ups tab: how far each person got, keyed by user id. { id: { n, of } }

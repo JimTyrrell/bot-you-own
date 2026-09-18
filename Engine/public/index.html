@@ -384,6 +384,7 @@ document.addEventListener('DOMContentLoaded', function () {
   <a class="primary" id="key_workshop" href="#" target="_blank" rel="noopener">Get the workshop</a>
   <p class="lockprivacy" style="margin:2px 0 -4px">Already have a key? It looks like K7M4-P2QX.</p>
   <div style="display:flex;gap:8px"><input id="key_code" placeholder="Your key" maxlength="9" autocomplete="off" style="flex:1;text-transform:uppercase" /><button type="submit" id="key_go" style="flex:none;padding:10px 16px">Use my key</button></div>
+  <p class="lockprivacy" id="key_dm" hidden style="margin:-2px 0 0">Bought the workshop but no key in hand? <a id="key_dmlink" href="#" target="_blank" rel="noopener">DM the owner</a> and it comes back with one. No key at all? Just leave the box empty and carry on.</p>
   <button type="button" id="key_close" style="background:var(--panel);color:var(--text)">Back to the tour</button>
   <div id="key_msg" class="sbmsg"></div>
 </form></div>
@@ -1499,6 +1500,7 @@ function openKeyModal(stop) {
   $('key_why').textContent = TOUR.signedUp ? 'You\'re signed in and the rest of the tour is open. This one stop, the code and the deploy walkthrough, opens with a key from the workshop.' : 'Sign up first; then a key from the workshop opens the code and the deploy walkthrough.';
   $('key_workshop').href = c.workshopUrl || c.url || '#'; $('key_workshop').textContent = 'Get ' + (c.workshopName || 'the workshop'); $('key_workshop').hidden = !(c.workshopUrl || c.url);
   $('key_code').value = ''; $('key_msg').textContent = ''; $('key_go').disabled = !TOUR.signedUp; $('key_code').disabled = !TOUR.signedUp;
+  $('key_dm').hidden = !c.dmUrl; if (c.dmUrl) { $('key_dmlink').href = c.dmUrl; $('key_dmlink').textContent = 'DM ' + (c.dmName || 'the owner') + (c.name ? ' in ' + c.name : ''); }
   $('keywrap').dataset.stop = stop; $('keywrap').classList.add('show'); if (TOUR.signedUp) $('key_code').focus();
 }
 function closeKeyModal() { $('keywrap').classList.remove('show'); }
@@ -1510,7 +1512,7 @@ $('keyform').addEventListener('submit', async (e) => {
     const r = await fetch('/api/tour', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(TOUR.guide.id) }, body: JSON.stringify({ bot: TOUR.guide.id, code: v }) });
     const d = await r.json();
     if (d.redeemed && d.redeemed.ok) { TOUR.deploy = d.deploy; TOUR.links = d.links || TOUR.links; closeKeyModal(); tourToast('Unlocked 🔑', 'The code, the walkthrough and Build one here are open.'); const s = $('keywrap').dataset.stop; if (s) tourGo(s); return; }
-    $('key_msg').textContent = (d.redeemed && d.redeemed.reason) || d.error || 'That code didn\'t work.';
+    $('key_msg').textContent = ((d.redeemed && d.redeemed.reason) || d.error || 'That key didn\'t work.') + ' Check it, clear it, or ' + ((TOUR.community?.dmName) ? 'DM ' + TOUR.community.dmName + '.' : 'ask the owner.');
   } catch { $('key_msg').textContent = 'Could not reach the server. Try again.'; }
   $('key_go').disabled = false; $('key_go').textContent = 'Use my key';
 });
