@@ -24,7 +24,14 @@ export const CONFIG = {
   // when they aren't on the list yet. Mine out of the box; make it yours. Used by
   // the tour strip above the chat (YourBots/tour) and appended as the last "next
   // step" of any bot whose project.json says "communityStep": true.
-  community: { show: true, name: "Sovereign Operator", url: "https://www.skool.com/sovereign-operator/about", pitch: "The workshop, the help, and the people doing this. Free to join." },
+  community: {
+    show: true,
+    name: "Sovereign Operator", url: "https://www.skool.com/sovereign-operator/about",
+    pitch: "The people doing this, and the answers. Free to join.",
+    // The paid walkthrough. Same page out of the box (the workshop is in that group's classroom); point it at a sales page if you have one.
+    workshopName: "the workshop", workshopUrl: "https://www.skool.com/sovereign-operator/about",
+    workshopPitch: "An afternoon, with people who've done it: from the button to a bot on your own domain with the sign-up funnel on.",
+  },
 
   // ---- 2. WHICH PROJECT OPENS FIRST ------------------------------------------
   // Every folder in YourBots/ that is listed in YourBots/index.js is available in

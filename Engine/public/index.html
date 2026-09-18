@@ -1243,7 +1243,7 @@ function tourGo(stop) {
     const d = TOUR.deploy || {}; const c = TOUR.community; const box = $('tourmake'); box.innerHTML = '';
     const add = (html) => { const w = document.createElement('span'); w.innerHTML = html; while (w.firstChild) box.appendChild(w.firstChild); };
     if (d.allowed && d.url) add('<a class="primary" href="' + esc(d.url) + '" target="_blank" rel="noopener" data-mk="deploy">🚀 Deploy your own</a>' + (d.checklist ? '<a href="' + esc(d.checklist) + '" target="_blank" rel="noopener" data-mk="deploy">the owner walkthrough</a>' : ''));
-    else add('<span class="why">' + esc(d.why || 'Deploying your own opens for community members.') + '</span>' + (c?.url ? '<a class="primary" href="' + esc(c.url) + '" target="_blank" rel="noopener" data-mk="join">Join ' + esc(c.name || 'the community') + '</a>' : '') + (TOUR.signedUp ? '<input id="tourcode" placeholder="Code, e.g. K7M4-P2QX" maxlength="9" style="font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--edge);border-radius:10px;background:var(--bg);color:var(--text);width:150px;text-transform:uppercase" /><button type="button" data-mk="code">Unlock</button>' : ''));
+    else add('<span class="why">' + esc(d.why || 'The deploy walkthrough is the paid workshop.') + '</span>' + (c?.workshopUrl ? '<a class="primary" href="' + esc(c.workshopUrl) + '" target="_blank" rel="noopener" data-mk="workshop" title="' + esc(c.workshopPitch || '') + '">Get ' + esc(c.workshopName || 'the workshop') + '</a>' : '') + (c?.url ? '<a href="' + esc(c.url) + '" target="_blank" rel="noopener" data-mk="join">Join ' + esc(c.name || 'the community') + ' (free)</a>' : '') + (TOUR.signedUp ? '<input id="tourcode" placeholder="Code, e.g. K7M4-P2QX" maxlength="9" style="font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--edge);border-radius:10px;background:var(--bg);color:var(--text);width:150px;text-transform:uppercase" /><button type="button" data-mk="code">Unlock</button>' : ''));
     add((TOUR.links?.prompts ? '<a href="' + esc(TOUR.links.prompts) + '" target="_blank" rel="noopener" data-mk="import">📄 Import a ready-made prompt</a>' : '') + '<button type="button" data-mk="close">Close</button>');
     box.hidden = false;
     box.onclick = async (e) => {
@@ -1260,7 +1260,7 @@ function tourGo(stop) {
         } catch { t.disabled = false; t.textContent = 'Unlock'; }
         return;
       }
-      if (t.dataset.mk === 'join') markStop('join'); else markStop('make');
+      if (t.dataset.mk === 'join') markStop('join'); else if (t.dataset.mk === 'workshop') { markStop('make'); } else markStop('make');
     };
     const ci = $('tourcode'); if (ci) ci.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); box.querySelector('[data-mk="code"]')?.click(); } });
   }

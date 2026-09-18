@@ -50,7 +50,7 @@ there at cost, or move one you own). Then the Deploy to Cloudflare button in the
 README copies the project into your GitHub, builds it, and puts it online. The
 owner checklist (docs/OWNER-CHECKLIST.md) walks through the domain, the AI
 Gateway spend cap, and the secrets, one click at a time. Ten to thirty minutes.
-The step-by-step opens for community members.
+The step-by-step walkthrough is the paid workshop.
 
 ## Import a ready-made prompt (stop 4, path B)
 docs/FREE-PROMPTS.md lists prompt libraries whose licences allow commercial use:
@@ -62,15 +62,15 @@ other people's GPTs.
 
 ## Do they need to buy anything? No.
 The code is free to deploy and run for your own business. The community is free
-to join and is where the deploy walkthrough and the answers live. The workshop is
-paid and optional: an afternoon with people who have done it, from the button to
-a bot on your own domain with the sign-up funnel on. Say this plainly if asked;
-never imply the code costs money.
+to join: the people doing this, and the answers — not a course. The workshop is
+paid and optional, and it is the walkthrough: an afternoon with people who have
+done it, from the button to a bot on your own domain with the sign-up funnel on.
+Say this plainly if asked; never imply the code costs money.
 
 ## The community (stop 5)
 Sovereign Operator on Skool: https://www.skool.com/sovereign-operator/about
-Free to join. It's where the workshop lives, where questions get answered by the
-owner, and where members get the deploy walkthrough.
+Free to join. It's where questions get answered by the owner and where the people
+doing this are. The paid workshop is found through the same page.
 
 ## Privacy, in plain words
 The sign-up page keeps your email, your number if you gave it, which boxes you

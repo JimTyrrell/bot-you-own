@@ -105,13 +105,14 @@ export async function tourState(env, request, guide, { stop = "", code = "", lin
   if (user && env.DB) {
     if (done.unlocked) deploy.allowed = true;
     else { const a = await isAllowed(env, guide.id, user.email); const b = a.ok ? a : await isAllowed(env, "*", user.email); deploy.allowed = Boolean(b.ok); }
-    if (!deploy.allowed) deploy.why = "Deploying your own opens for community members. Got a code? Enter it here.";
-  } else deploy.why = "Sign up first, then deploying opens for community members.";
+    if (!deploy.allowed) deploy.why = "The deploy walkthrough is the paid workshop. Got a code from it? Enter it here.";
+  } else deploy.why = "Sign up first. The deploy walkthrough is the paid workshop.";
   if (!deploy.allowed) { deploy.url = ""; deploy.checklist = ""; }   // these only leave the server for someone who may deploy
   const { unlocked, ...stopsDone } = done;
   // The code and the prompt library: for people who have signed up. Not in the page, not in the repo.
   const out = user ? { code: links?.code || "", prompts: links?.prompts || "" } : null;
-  return { stops, done: stopsDone, signedUp: Boolean(user), deploy, redeemed, links: out, community: CONFIG.community?.show ? { name: CONFIG.community.name, url: CONFIG.community.url, pitch: CONFIG.community.pitch } : null };
+  const c = CONFIG.community || {};
+  return { stops, done: stopsDone, signedUp: Boolean(user), deploy, redeemed, links: out, community: c.show ? { name: c.name, url: c.url, pitch: c.pitch, workshopName: c.workshopName || "the workshop", workshopUrl: c.workshopUrl || c.url, workshopPitch: c.workshopPitch || "" } : null };
 }
 
 // For the Sign-ups tab: how far each person got, keyed by user id. { id: { n, of } }

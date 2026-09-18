@@ -11,9 +11,9 @@ Classroom → **🤖 Build the Chatbot That Answers Your Customers** (third card
 don't set it up for other businesses or resell it. Plain English in `NOTICE.md`.
 
 **Do you need to buy anything? No.** The code is free to deploy and run for your
-own business (that's the licence). The **free group** is where questions get
-answered and where the deploy walkthrough lives. The **workshop** is paid: an
-afternoon, with people who've done it, that takes you from the button to a bot
+own business (that's the licence). The **free group** is the people doing this
+and the answers — not a course. The **workshop** is paid, and it is the
+walkthrough: an afternoon, with people who've done it, from the button to a bot
 on your own domain with the sign-up funnel switched on, plus the parts that need
 a human (the domain, the spend cap, the secrets, the texting number). Buy it if
 you want to be walked through it; skip it if you'd rather read the docs.

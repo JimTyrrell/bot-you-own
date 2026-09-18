@@ -814,9 +814,10 @@ column is the funnel.
 
 **Make it yours.** Three places:
 
-1. `YourBots/config.js → community` — name, URL, pitch. Used by the strip, the
-   "make your own" panel, and appended as the last next step of any bot whose
-   `project.json` has `"communityStep": true`. One line and every guide follows.
+1. `YourBots/config.js → community` — the free group (name, URL, pitch) and the
+   paid workshop (workshopName, workshopUrl, workshopPitch). Used by the strip,
+   the "make your own" panel, and appended as the last next step of any bot whose
+   `project.json` has `"communityStep": true`. One block and every guide follows.
 2. `YourBots/tour/instructions.md` and `knowledge/tour.md` — the guide's words.
    They name the community and the sample bots; change them to yours.
 3. `YourBots/tour/project.json → tour.stops` — which stops, in what order, from
@@ -827,7 +828,7 @@ column is the funnel.
 **Deploy your own is gated.** The Deploy button in the strip appears for a
 visitor who is on the allowlist (the guide bot's list, or the list for every bot:
 Settings → Allowlist) **or who has redeemed a deploy code**. Everyone else sees
-the community pitch, a box for a code, and the licensed prompts.
+the workshop and the free group, a box for a code, and the licensed prompts.
 
 **Deploy codes** (Under the hood → Sign-ups → Deploy codes): make one, say who
 you gave it to, DM it. A code looks like `K7M4-P2QX`. Any number of email
