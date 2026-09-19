@@ -3,69 +3,95 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Move your custom GPT into a house you own — The Bot You Own</title>
-<meta name="description" content="OpenAI is retiring custom GPTs. Your GPT is two files. Move them into a house you own — twenty minutes, every step on screen. 7 days free, then $47." />
-<meta property="og:title" content="Your custom GPT isn't yours. Move it into a house you own." />
-<meta property="og:description" content="The whole build, recorded, yours the minute you join. Twenty minutes of actual work. 7 days free, then $47 — $141 from November 20." />
+<title>Free Workshop: Install Your Own AI Food Coach</title>
+<meta name="description" content="Stop watching AI demos. Install one. Friday 25 September, 8:00am Mountain. Free." />
+<meta property="og:title" content="Free Workshop: Install Your Own AI Food Coach" />
+<meta property="og:description" content="Stop watching AI demos. Install one. 60 minutes, and you leave with your own AI food coach running on your own account." />
 <meta property="og:type" content="website" />
 <link rel="stylesheet" href="/legal.css" />
 <style>
   main { max-width: 640px; }
-  .eyebrow { font-size: 12px; letter-spacing: .18em; font-weight: 600; color: var(--muted); margin: 0 0 6px; }
-  .lead { font-size: 17px; margin: 0 0 22px; }
+  .when { font-size: 17px; font-weight: 600; margin: 0 0 2px; }
+  .local { color: var(--muted); font-size: 13px; margin: 0 0 22px; }
   .btns { display: flex; flex-wrap: wrap; gap: 10px; margin: 26px 0 8px; }
   .btns a { flex: 1 1 auto; text-align: center; text-decoration: none; padding: 12px 16px;
             border: 1px solid var(--edge); border-radius: 10px; font-size: 14px; font-weight: 500; }
-  .btns a.primary { background: #0a7d32; color: #fff; border-color: #0a7d32; font-size: 16px; font-weight: 600; }
+  .btns a.primary { background: var(--text); color: var(--bg); border-color: var(--text); }
+  .btns a.live { background: #0a7d32; color: #fff; border-color: #0a7d32; }
   ul { padding-left: 0; list-style: none; }
   ul li { margin: 12px 0; } ul li b { display: block; }
-  .price { font-size: 20px; font-weight: 600; margin: 26px 0 0; }
-  .fine { color: var(--muted); font-size: 14px; margin: 6px 0 0; }
-  .quote { border-left: 3px solid var(--edge); padding: 2px 0 2px 14px; color: var(--muted); margin: 18px 0; }
+  .free { font-size: 20px; font-weight: 600; margin: 26px 0 0; }
+  .zones { margin: 22px 0 4px; max-width: 360px; }
+  .zones th { font-weight: 500; color: var(--text); width: 50%; }
+  .zones tr.mine th, .zones tr.mine td { font-weight: 700; }
 </style>
 </head>
 <body>
 <main>
-  <p class="eyebrow">AI STAFF YOU OWN</p>
-  <h1>Your custom GPT isn&rsquo;t yours. Move it into a house you own.</h1>
+  <h1>Stop watching AI demos. Install one.</h1>
+  <p class="when">Friday, September 25 &middot; 8:00&ndash;9:00am Mountain</p>
+  <p class="local" id="local"></p>
 
-  <p class="lead">OpenAI is retiring custom GPTs &mdash; their word, on their own help page. On a personal
-  account you already can&rsquo;t create a new one. And if you accept the migration they&rsquo;re offering,
-  your original becomes read-only.</p>
+  <p>In 60 minutes, you go from &ldquo;I sort of get AI&rdquo; to running your own AI food
+  coach &mdash; on your own account, under your own control. No coding.</p>
 
-  <p>Your GPT is two files: the instructions you wrote and the files you uploaded. That&rsquo;s years of
-  knowing exactly how you&rsquo;d answer, your pricing, your policies, the way you explain your thing.
-  It fits in a folder. It should be your folder.</p>
-
-  <h2>What you get &mdash; the whole build, recorded, yours the minute you join</h2>
+  <h2>What we do</h2>
   <ul>
-    <li><b>&#10003; Your instructions and files, moved</b>Twenty minutes of actual work. Every step on screen, nothing cut.</li>
-    <li><b>&#10003; Running on accounts you own</b>Your domain, your name on it, a login for your clients, and an audit tab so you can finally read what it says.</li>
-    <li><b>&#10003; A firewall that won&rsquo;t leak your rules</b>Attacked 44 times, 44 blocked. The attack set comes with it.</li>
-    <li><b>&#10003; Every chatbot recording, prompt and build file</b>Yours to keep if you ever leave.</li>
+    <li><b>AI in plain English</b>What these things actually are, what they cannot do, and why that matters for anything you build.</li>
+    <li><b>Install your own food-tracking chatbot</b>You deploy it live. It is yours: your account, your data, your rules.</li>
+    <li><b>Why this changes things</b>With something real in front of you, the whole picture lands.</li>
   </ul>
 
-  <p class="quote">No terminal. No API key. You edit text files in your browser. If you can click in a browser, you can do this.</p>
+  <h2>Bring</h2>
+  <p>A laptop, a free GitHub account, a free Cloudflare account.<br />
+  If you don&rsquo;t even know what GitHub or Cloudflare is, no worries &mdash; if you can
+  click in a browser you can do this for free.</p>
 
-  <p class="price">7 days free. Then $47.</p>
-  <p class="fine">Cancel in a click. Not worth it? One message, refunded. Lock $47 for life today &mdash; $141 from November 20.</p>
+  <p class="free">Cost: nothing.</p>
 
   <div class="btns">
-    <a class="primary" href="https://www.skool.com/sovereign-operator/about">Watch the build &mdash; 7 days free</a>
+    <a class="primary" id="gcal" href="https://calendar.google.com/calendar/render?action=TEMPLATE&amp;text=Free%20Workshop%3A%20Install%20Your%20Own%20AI%20Food%20Coach&amp;dates=20260925T080000%2F20260925T090000&amp;ctz=America%2FDenver&amp;details=Stop%20watching%20AI%20demos.%20Install%20one.%0A%0AIn%2060%20minutes%2C%20you%20go%20from%20%E2%80%9CI%20sort%20of%20get%20AI%E2%80%9D%20to%20running%20your%20own%20AI%20food%20coach%20%E2%80%94%20on%20your%20own%20account%2C%20under%20your%20own%20control.%20No%20coding.%0A%0AWhat%20we%20do%3A%0AAI%20in%20plain%20English%20%E2%80%94%20what%20these%20things%20actually%20are%2C%20what%20they%20cannot%20do%2C%20and%20why%20that%20matters%20for%20anything%20you%20build.%0AInstall%20your%20own%20food-tracking%20chatbot%20%E2%80%94%20you%20deploy%20it%20live.%20It%20is%20yours%3A%20your%20account%2C%20your%20data%2C%20your%20rules.%0AWhy%20this%20changes%20things%20%E2%80%94%20with%20something%20real%20in%20front%20of%20you%2C%20the%20whole%20picture%20lands.%0A%0ABring%3A%20a%20laptop%2C%20a%20free%20GitHub%20account%2C%20a%20free%20Cloudflare%20account.%0AIf%20you%20don%27t%20even%20know%20what%20GitHub%20or%20Cloudflare%20is%2C%20no%20worries%2C%20if%20you%20can%20click%20in%20a%20browser%20you%20can%20do%20this%20for%20free.%0A%0ACost%3A%20nothing.%0A%0AJoin%20with%20Google%20Meet%3A%20https%3A%2F%2Fmeet.google.com%2Fzgm-hkhe-ysu%0AJoin%20by%20phone%3A%20%28US%29%20%2B1%20413-679-2667%20%20PIN%3A%20721%20647%20859%23%0A%0Ahttps%3A%2F%2Fbot-you-own.designaticlabs.com&amp;location=https%3A%2F%2Fmeet.google.com%2Fzgm-hkhe-ysu">Add to Google Calendar</a>
+    <a href="/workshop.ics">Apple / Outlook (.ics)</a>
+    <a id="meet" href="https://meet.google.com/zgm-hkhe-ysu">Join the Meet when it&rsquo;s time</a>
   </div>
 
-  <h2>Try one first, no card</h2>
-  <p>This site <em>is</em> the thing. <a href="/">Open the bot</a>, pick a sample in the sidebar and try to break it.
-  Or paste your own GPT&rsquo;s instructions in and talk to it for two weeks &mdash; you can take the files with you.
-  The recording is how you make it yours for good.</p>
+  <h2>What time is that where you are?</h2>
+  <table class="zones">
+    <tbody>
+      <tr><th>Eastern</th><td>10:00&nbsp;am <span class="muted">EDT</span></td></tr>
+      <tr><th>Central</th><td>9:00&nbsp;am <span class="muted">CDT</span></td></tr>
+      <tr class="mine"><th>Mountain</th><td>8:00&nbsp;am <span class="muted">MDT</span></td></tr>
+      <tr><th>Pacific</th><td>7:00&nbsp;am <span class="muted">PDT</span></td></tr>
+      <tr><th>Arizona <span class="muted">(no daylight saving)</span></th><td>7:00&nbsp;am <span class="muted">MST</span></td></tr>
+      <tr><th>Alaska</th><td>6:00&nbsp;am <span class="muted">AKDT</span></td></tr>
+      <tr><th>Hawaii</th><td>4:00&nbsp;am <span class="muted">HST</span></td></tr>
+    </tbody>
+  </table>
+  <p class="muted">Joining by phone: (US) +1 413-679-2667, PIN 721 647 859#</p>
 
-  <h2>Don&rsquo;t want the walkthrough?</h2>
-  <p>The code is free to deploy for your own business (PolyForm Shield &mdash; plain English in the
-  <a href="https://github.com/JimTyrrell/bot-you-own#readme">README</a>). The docs are the long way. The recording is the twenty-minute way.</p>
-
-  <p class="fine" style="margin-top:28px">The intelligence is artificial. The Art, Heart &amp; Soul are yours.</p>
-
-  <nav style="margin-top:32px"><a href="/">The Bot You Own</a><a href="/privacy.html">Privacy</a><a href="/terms.html">Terms</a></nav>
+  <nav style="margin-top:32px"><a href="/">The Bot You Own</a><a href="/privacy.html">Privacy</a></nav>
 </main>
+<script>
+  (function () {
+    var startUTC = "2026-09-25T14:00:00Z", endUTC = "2026-09-25T15:00:00Z";
+    var start = new Date(startUTC), end = new Date(endUTC);
+    if (isNaN(start)) return;
+    try {
+      var tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+      var s = start.toLocaleString(undefined, { weekday: "long", month: "long", day: "numeric",
+        hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+      document.getElementById("local").textContent =
+        "That is " + s + " where you are" + (tz ? " (" + tz + ")" : "") + ".";
+    } catch (e) {}
+    try {
+      var now = Date.now();
+      if (now >= start.getTime() - 10 * 60000 && now <= end.getTime() + 30 * 60000) {
+        var b = document.getElementById("meet");
+        b.textContent = "Join the Meet now";
+        b.className = "live";
+      }
+    } catch (e) {}
+  })();
+</script>
 </body>
 </html>
