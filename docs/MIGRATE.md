@@ -1,11 +1,11 @@
 # Bring your ChatGPT Project or custom GPT across
 
-You built something in ChatGPT. It works. Then the rules changed underneath it:
-**as of August 2026 you can't create a new custom GPT on a personal account**, and
-researchers have spent two years showing that the instructions and files people
-upload to GPTs can be pulled back out by anyone who asks the right way.
+You built something in ChatGPT. It works. Then OpenAI announced it is retiring
+custom GPTs — their word, on their own help page. **On a personal account (Free, Go,
+Plus, Pro) you already can't create a new one.** And if you accept the migration
+they're offering, the original becomes read-only.
 
-This takes what you built and puts it somewhere you own. **About ten minutes.**
+This takes what you built and puts it somewhere you own. **About twenty minutes.**
 
 ## The fast way: the Configure screen
 Open your bot with the admin code → **✎ New bot**. It's the same form as ChatGPT's

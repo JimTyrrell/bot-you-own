@@ -5,18 +5,19 @@ account, from code you can read** — for a few dollars a month, usually zero.
 
 Not a custom GPT. Not a $99-a-month rental. Yours.
 
-**Free group + the workshop:** https://www.skool.com/sovereign-operator/about — join, then open
-Classroom → **🤖 Build the Chatbot That Answers Your Customers** (third card, upper right).
+**The workshop, recorded:** https://www.skool.com/sovereign-operator/about — 7 days free, then $47 a year.
+Join, then open Classroom → **🤖 Build the Chatbot That Answers Your Customers**. The whole build is yours the
+minute you join: your custom GPT out of ChatGPT and running on your own domain in about twenty minutes, every
+step on screen. Live workshops (a new AI hire every third Friday) are the Premium tier.
 **Licence:** PolyForm Shield — deploy it for your own business and clients and earn with it;
 don't set it up for other businesses or resell it. Plain English in `NOTICE.md`.
 
 **Do you need to buy anything? No.** The code is free to deploy and run for your
-own business (that's the licence). The **free group** is the people doing this
-and the answers — not a course. The **workshop** is paid, and it is the
-walkthrough: an afternoon, with people who've done it, from the button to a bot
-on your own domain with the sign-up funnel switched on, plus the parts that need
-a human (the domain, the spend cap, the secrets, the texting number). Buy it if
-you want to be walked through it; skip it if you'd rather read the docs.
+own business (that's the licence). The **recording** is the walkthrough: from the
+button to a bot on your own domain with the sign-up funnel switched on, plus the
+parts that need a human (the domain, the spend cap, the secrets, the texting
+number), with the people who've done it. Take it if you want to be walked through
+it; skip it if you'd rather read the docs.
 
 **You will not open a terminal. You will not install anything.** If you can use
 a browser and edit a document, you can do this.
@@ -183,7 +184,7 @@ a blank one.
 | — | Job, strict/open grounding, the handoff line, allowed links, thinking words: the things ChatGPT doesn't let you set |
 
 ## Coming from ChatGPT?
-**Read `docs/MIGRATE.md`.** A custom GPT or a Project moves across in about ten minutes:
+**Read `docs/MIGRATE.md`.** A custom GPT or a Project moves across in about twenty minutes:
 paste Instructions into one file, files into a folder, flip one switch.
 
 ---
