@@ -64,11 +64,22 @@ export async function complete({ env, config, system, messages, stream = false, 
 }
 
 // ---------------------------------------------------------------- Workers AI
+// A reasoning model spends tokens thinking BEFORE it writes, and the thinking comes out of
+// the same max_tokens budget. At 900 a long article plus a fussy system prompt is entirely
+// eaten by the reasoning and the message comes back empty — which is how "Summarise the
+// sample article" produced nothing at all, twice. max_tokens is a ceiling, not a spend: you
+// pay for what is generated, so lifting it for these models costs nothing on a normal turn
+// and is the difference between an answer and silence on a long one.
+const REASONS = /gpt-oss|deepseek-r1|qwq|magistral/i;
+export function budgetFor(model, maxTokens) {
+  return REASONS.test(String(model || "")) ? Math.max(maxTokens, 4000) : maxTokens;
+}
+
 async function workersAI({ env, config, system, messages, stream, model, maxTokens, meta }) {
   if (!env.AI) throw new Error("Workers AI binding missing (wrangler.jsonc → \"ai\")");
   const input = {
     messages: [{ role: "system", content: system }, ...messages],
-    max_tokens: maxTokens,
+    max_tokens: budgetFor(model, maxTokens),
     stream,
   };
   const id = config.gateway?.id || "";
@@ -104,10 +115,22 @@ async function workersAI({ env, config, system, messages, stream, model, maxToke
 
   if (!stream) {
     if (result?.usage) meta.usage = result.usage;
-    return String(result?.response ?? result?.choices?.[0]?.message?.content ?? "");
+    const text = extractText(result);
+    // An empty reply is not an error anywhere in the stack, so it used to vanish:
+    // the chat handler quietly swapped in the handoff line and the audit row looked
+    // like a normal turn. Say what came back instead — keys only, never content.
+    if (!text) {
+      meta.empty = true;
+      console.error("model returned no text", JSON.stringify({
+        model, keys: result && typeof result === "object" ? Object.keys(result).slice(0, 12) : typeof result,
+        outputTypes: Array.isArray(result?.output) ? result.output.map((o) => o?.type).slice(0, 8) : undefined,
+        finish: result?.choices?.[0]?.finish_reason ?? result?.stop_reason ?? undefined,
+      }));
+    }
+    return text;
   }
   // Streaming: Workers AI returns a ReadableStream of SSE lines.
-  return sseTextChunks(result, (obj) => obj?.response ?? obj?.choices?.[0]?.delta?.content ?? "", meta);
+  return sseTextChunks(result, (obj) => obj?.response ?? obj?.choices?.[0]?.delta?.content ?? obj?.delta?.text ?? "", meta);
 }
 
 // ------------------------------------------------------------------- OpenAI
@@ -174,10 +197,47 @@ async function anthropic({ env, config, system, messages, stream, model, maxToke
 }
 
 // ------------------------------------------------------------------ helpers
+
+// Workers AI does not have one response shape. Most models answer in `response`;
+// OpenAI-compatible ones in choices[].message.content; the gpt-oss family returns
+// an `output` array holding a "reasoning" item AND a "message" item, and when the
+// model spends its budget reasoning about a long input the first two fields come
+// back empty while the real answer sits in the third. Reading only the first two
+// turned those turns into a silent "I can't help with that one."
+function extractText(result) {
+  if (!result) return "";
+  if (typeof result === "string") return result;
+  const direct = result.response ?? result.choices?.[0]?.message?.content;
+  if (typeof direct === "string" && direct.trim()) return direct;
+  if (Array.isArray(result.output)) {
+    const parts = [];
+    for (const item of result.output) {
+      if (!item || item.type === "reasoning") continue;          // the thinking is not the answer
+      const chunks = Array.isArray(item.content) ? item.content : [];
+      for (const c of chunks) {
+        if (typeof c?.text === "string" && (c.type === undefined || /text/.test(String(c.type)))) parts.push(c.text);
+      }
+      if (typeof item.text === "string") parts.push(item.text);
+    }
+    const joined = parts.join("").trim();
+    if (joined) return joined;
+  }
+  if (typeof result.output_text === "string" && result.output_text.trim()) return result.output_text;
+  return typeof direct === "string" ? direct : "";
+}
+
 function gatewayBase(config, provider) {
   const { id, accountId } = config.gateway || {};
   if (!id || !accountId) return null;
   return `https://gateway.ai.cloudflare.com/v1/${accountId}/${id}/${provider}`;
+}
+
+// Cloudflare does not tell a Worker what plan the account is on, but it does tell it when the
+// free Workers AI allowance is gone — the call fails. Recognising that one case turns "the bot
+// broke" into "today's free allowance is used up", which is the thing the owner can act on.
+export function isAllowanceError(err) {
+  const s = (String(err?.message || err || "") + " " + String(err?.code || "")).toLowerCase();
+  return /neuron|quota|allowance|exceeded|limit reached|out of credit|capacity|3040|10000 request/.test(s);
 }
 
 async function httpError(res) {

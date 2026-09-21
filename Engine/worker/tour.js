@@ -120,8 +120,8 @@ export async function tourState(env, request, guide, { stop = "", code = "", lin
   if (user && env.DB) {
     if (done.unlocked) deploy.allowed = true;
     else { const a = await isAllowed(env, guide.id, user.email); const b = a.ok ? a : await isAllowed(env, "*", user.email); deploy.allowed = Boolean(b.ok); }
-    if (!deploy.allowed) deploy.why = "The deploy walkthrough is the paid workshop. Got a code from it? Enter it here.";
-  } else deploy.why = "Sign up first. The deploy walkthrough is the paid workshop.";
+    if (!deploy.allowed) deploy.why = "The deploy walkthrough opens with your membership. Got a key? Enter it here.";
+  } else deploy.why = "Sign up first. The deploy walkthrough opens with your membership.";
   if (!deploy.allowed) { deploy.url = ""; deploy.checklist = ""; }   // these only leave the server for someone who may deploy
   const { unlocked, ...stopsDone } = done;
   // The code and the prompt library: only for someone with a key (on the list, or a redeemed

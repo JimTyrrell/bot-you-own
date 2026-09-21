@@ -33,6 +33,13 @@ export const KINDS = { chat: normaliseChat, food: normaliseFood };
 export function cleanKind(k) { return KINDS[String(k || "").toLowerCase()] ? String(k).toLowerCase() : "chat"; }
 
 // The fields every kind shares. `id` is the folder name; nothing here is kind-specific.
+// A model id as Workers AI writes them, or a bare provider model for the openai/anthropic
+// providers. Nothing clever: trim, cap, and drop anything with whitespace or quotes in it.
+export function cleanModelId(v) {
+  const s = String(v || "").trim().slice(0, 120);
+  return /^[A-Za-z0-9@/._:-]+$/.test(s) ? s : "";
+}
+
 export function normaliseProject(p, id) {
   p = p && typeof p === "object" ? p : {};
   const kind = cleanKind(p.kind);
@@ -43,6 +50,10 @@ export function normaliseProject(p, id) {
     // who can use THIS bot (Engine/worker/access.js): "" = the deployment default; listed = in the sidebar;
     // accessKey = the NAME of a per-bot secret (ACCESS_PASSPHRASE_…), never a passphrase itself
     access: cleanMode(p.access), listed: p.listed !== false, accessKey: cleanKeyName(p.accessKey),
+    // This bot's own model. "" = the deployment's (YourBots/config.js → model). A bot doing a
+    // constrained job is well served by something small and cheap; the ChatGPT-style assistant
+    // is the one people compare against the real thing, and it can be worth more per turn.
+    model: cleanModelId(p.model),
     // this bot's own identity knobs (Engine/identity/): graceMinutes = the return window; "" = the deployment's
     identity: normaliseIdentity(p.identity),
     // A visitor's own sandbox bot (Engine/worker/sandbox.js): who owns it and when it goes.
@@ -177,7 +188,7 @@ export async function resolveList(env) {
 }
 // What a bot shows to the page. `access` is what the bot SAYS ("" = default); the effective mode is per request. Never the secret's name.
 export function pickPublic(p) {
-  return { kind: cleanKind(p.kind), name: p.name, tagline: p.tagline, greeting: p.greeting, starters: p.starters, mode: p.mode, grounding: p.grounding, thinkingWords: (p.thinkingWords || []).length ? p.thinkingWords : undefined, order: p.order, access: cleanMode(p.access), listed: p.listed !== false, ...(p.tour ? { tour: p.tour } : {}), ...(p.sandbox ? { sandbox: { expires_at: p.sandbox.expires_at, source: p.sandbox.source } } : {}) };
+  return { kind: cleanKind(p.kind), name: p.name, tagline: p.tagline, greeting: p.greeting, starters: p.starters, mode: p.mode, grounding: p.grounding, model: p.model || "", thinkingWords: (p.thinkingWords || []).length ? p.thinkingWords : undefined, order: p.order, access: cleanMode(p.access), listed: p.listed !== false, ...(p.tour ? { tour: p.tour } : {}), ...(p.sandbox ? { sandbox: { expires_at: p.sandbox.expires_at, source: p.sandbox.source, samples: p.sandbox.samples || {} } } : {}) };
 }
 // Where a bot lives on the page: chat bots on the chat page, apps at /apps/<id>.
 export function hrefFor(p) { return cleanKind(p.kind) === "chat" ? `/?project=${encodeURIComponent(p.id)}` : `/apps/${encodeURIComponent(p.id)}`; }

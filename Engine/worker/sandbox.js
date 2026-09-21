@@ -31,13 +31,28 @@ export const SANDBOX_DAYS = 14, MAX_PER_PERSON = 3, MAX_FILES = 8, MAX_FILE_CHAR
 
 // Licensed, original, verified to exist. The server fetches the text at import time;
 // nothing is copied into this repo. Keep the credit line: MIT asks for it.
-export const LIBRARY = [
-  { id: "fabric-extract-wisdom", name: "Extract wisdom", blurb: "Pulls ideas, quotes, habits and references out of anything you paste — a transcript, an article.", source: "danielmiessler/fabric", licence: "MIT", url: "https://raw.githubusercontent.com/danielmiessler/fabric/main/data/patterns/extract_wisdom/system.md", starters: ["Here's a transcript — pull the wisdom out of it:", "What are the top ideas in this article?"] },
-  { id: "fabric-create-summary", name: "Summariser", blurb: "A 20-word overview, the main points, the takeaways. Paste anything long.", source: "danielmiessler/fabric", licence: "MIT", url: "https://raw.githubusercontent.com/danielmiessler/fabric/main/data/patterns/create_summary/system.md", starters: ["Summarise this for me:", "Give me the takeaways from this email thread:"] },
-  { id: "fabric-improve-writing", name: "Writing improver", blurb: "Fixes grammar, clarity and flow without changing what you meant.", source: "danielmiessler/fabric", licence: "MIT", url: "https://raw.githubusercontent.com/danielmiessler/fabric/main/data/patterns/improve_writing/system.md", starters: ["Tighten this paragraph:", "Make this email sound confident but friendly:"] },
-  { id: "fabric-explain-code", name: "Code explainer", blurb: "Explains what a piece of code does, in plain words.", source: "danielmiessler/fabric", licence: "MIT", url: "https://raw.githubusercontent.com/danielmiessler/fabric/main/data/patterns/explain_code/system.md", starters: ["What does this function do?", "Explain this error message:"] },
+export // A demo needs something to chew on. A paste-driven prompt ("Summarise this:") dead-ends
+// in front of an audience: you click the starter and then have to go and find text. So the
+// paste-driven library items ship one sample article, saved as a file on the new bot, and a
+// starter that runs the whole demo in one click. Original text: no licence to worry about.
+// A second sample for the paste-driven starters that are not about an article. Without one,
+// "Give me the takeaways from this email thread:" loads a prompt with nothing under it and
+// the demo stops dead at an empty box.
+const SAMPLE_PARAGRAPH = "It should be noted that at this point in time the company is currently in the process of undertaking a comprehensive review of its existing customer onboarding procedures, with a view to potentially identifying areas in which improvements could conceivably be made going forward. It is anticipated that the findings of the aforementioned review will be communicated to all relevant stakeholders in due course.";
+const SAMPLE_FUNCTION = "function averageOrderValue(orders) {\n  let total = 0;\n  for (let i = 0; i <= orders.length; i++) {\n    total += orders[i].amount;\n  }\n  return total / orders.length;\n}";
+const SAMPLE_ERROR = "TypeError: Cannot read properties of undefined (reading 'amount')\n    at averageOrderValue (/app/src/reports.js:4:22)\n    at buildMonthlyReport (/app/src/reports.js:38:19)\n    at async run (/app/src/cron.js:12:3)";
+const SAMPLE_SQL = "SELECT c.name, COUNT(*) AS orders, SUM(o.total) AS spend\nFROM customers c, orders o\nWHERE c.id = o.customer_id\n  AND o.created_at > '2026-01-01'\nGROUP BY c.name\nORDER BY spend DESC;";
+const SAMPLE_THREAD = "Subject: Riverbend spring order \u2014 sizes and dates\n\nFrom: Dana Okonjo\nTue 09:12\nMarco, the spring order needs to go in by Friday. Last year we over-ordered mediums and sat on twelve of them until August. Can you check what actually sold?\n\nFrom: Marco Bellini\nTue 11:40\nChecked. Mediums sold 31 of 44. Larges sold out by mid-April and we turned people away \u2014 I counted nine we couldn't fill. Smalls were fine at 18 of 20.\n\nFrom: Dana Okonjo\nTue 11:58\nSo we shift the mix rather than the total. Cut mediums to 32, raise larges to 30, leave smalls. That keeps us at the same spend.\n\nFrom: Priya Raman\nTue 14:05\nOne thing before you send it: the supplier moved to a 6-week lead time in January, not 4. If we order Friday we get stock the first week of May, not mid-April. Larges will sell out before it lands again.\n\nFrom: Dana Okonjo\nTue 14:22\nGood catch. Then we order Wednesday instead and I'll ring them to confirm the lead time in writing. Marco, get me the final numbers by tomorrow lunchtime. Priya, can you check whether the 6 weeks applies to the whole range or just outerwear?";
+
+const SAMPLE_ARTICLE = "# The Tuesday Meeting\n\nRiverbend Cycles has run the same Tuesday meeting for six years. Every manager gives a status update, in turn, for ninety minutes. Nobody has ever cancelled it.\n\nLast spring the workshop manager, Dana Okonjo, started timing it. Of the ninety minutes, she found that roughly sixty were spent on information that was already in the shared calendar or the repair queue. The remaining thirty were the part everyone actually needed: three or four decisions that required two people in a room agreeing on something.\n\nShe proposed a change. Status updates would be written down by Monday evening and read before the meeting. Tuesday would be thirty minutes, decisions only, and anyone with nothing to decide could skip it.\n\nThe first month went badly. People did not write their updates, so the meeting became thirty minutes of verbal status after all, just more rushed. Dana nearly abandoned it. What fixed it was smaller than the original idea: she began posting the decision list on Monday at 4pm, and anyone whose name was not on it was told plainly not to come.\n\nAttendance halved. The meeting now runs twenty-two minutes on average. Two of the managers have said, separately, that it is the only meeting they do not resent.\n\nDana's own conclusion was not about meetings. It was that people will not adopt a new habit to save time in the abstract, but they will adopt one immediately if it means they get an hour back on a specific afternoon.";
+
+const LIBRARY = [
+  { id: "fabric-extract-wisdom", name: "Extract wisdom", blurb: "Pulls ideas, quotes, habits and references out of anything you paste — a transcript, an article.", source: "danielmiessler/fabric", licence: "MIT", url: "https://raw.githubusercontent.com/danielmiessler/fabric/main/data/patterns/extract_wisdom/system.md", starters: ["Pull the wisdom out of the sample article", "Pull the wisdom out of the sample email thread"], samples: { "sample article": SAMPLE_ARTICLE, "email thread": SAMPLE_THREAD } },
+  { id: "fabric-create-summary", name: "Summariser", blurb: "A 20-word overview, the main points, the takeaways. Paste anything long.", source: "danielmiessler/fabric", licence: "MIT", url: "https://raw.githubusercontent.com/danielmiessler/fabric/main/data/patterns/create_summary/system.md", starters: ["Summarise the sample article", "Summarise the sample email thread", "Summarise this for me:"], samples: { "sample article": SAMPLE_ARTICLE, "email thread": SAMPLE_THREAD } },
+  { id: "fabric-improve-writing", name: "Writing improver", blurb: "Fixes grammar, clarity and flow without changing what you meant.", source: "danielmiessler/fabric", licence: "MIT", url: "https://raw.githubusercontent.com/danielmiessler/fabric/main/data/patterns/improve_writing/system.md", starters: ["Tighten the sample paragraph", "Tighten this paragraph:"], samples: { "sample paragraph": SAMPLE_PARAGRAPH } },
+  { id: "fabric-explain-code", name: "Code explainer", blurb: "Explains what a piece of code does, in plain words.", source: "danielmiessler/fabric", licence: "MIT", url: "https://raw.githubusercontent.com/danielmiessler/fabric/main/data/patterns/explain_code/system.md", starters: ["Explain the sample function", "Explain the sample error", "Explain this for me:"], samples: { "sample function": SAMPLE_FUNCTION, "sample error": SAMPLE_ERROR } },
   { id: "fabric-write-essay", name: "Essay writer", blurb: "Writes a clear, personal essay on a topic you give it.", source: "danielmiessler/fabric", licence: "MIT", url: "https://raw.githubusercontent.com/danielmiessler/fabric/main/data/patterns/write_essay/system.md", starters: ["Write 500 words on why small businesses should own their tools", "An essay on saying no"] },
-  { id: "hub-code-reviewer", name: "Senior code reviewer", blurb: "A staff-engineer persona that reviews code and ranks findings by severity.", source: "LichAmnesia/GPT-Prompt-Hub", licence: "MIT", url: "https://raw.githubusercontent.com/LichAmnesia/GPT-Prompt-Hub/main/prompts/engineering/senior-code-reviewer.md", starters: ["Review this function:", "What would you change in this SQL?"] },
+  { id: "hub-code-reviewer", name: "Senior code reviewer", blurb: "A staff-engineer persona that reviews code and ranks findings by severity.", source: "LichAmnesia/GPT-Prompt-Hub", licence: "MIT", url: "https://raw.githubusercontent.com/LichAmnesia/GPT-Prompt-Hub/main/prompts/engineering/senior-code-reviewer.md", starters: ["Review the sample function", "Review the sample SQL"], samples: { "sample function": SAMPLE_FUNCTION, "sample sql": SAMPLE_SQL } },
   { id: "hub-prd-writer", name: "PRD writer", blurb: "A product-manager persona with an 11-section PRD template, driven by KPIs.", source: "LichAmnesia/GPT-Prompt-Hub", licence: "MIT", url: "https://raw.githubusercontent.com/LichAmnesia/GPT-Prompt-Hub/main/prompts/business/product-manager-prd-writer-kpi-driven.md", starters: ["Write a PRD for a booking page for a dentist", "Turn this idea into a one-page PRD:"] },
   { id: "hub-socratic-tutor", name: "Socratic tutor", blurb: "Teaches any topic by asking, seven moves at a time.", source: "LichAmnesia/GPT-Prompt-Hub", licence: "MIT", url: "https://raw.githubusercontent.com/LichAmnesia/GPT-Prompt-Hub/main/prompts/learning/socratic-polymath-tutor-any-topic.md", starters: ["Teach me how DNS works", "I want to understand compound interest"] },
 ];
@@ -54,12 +69,23 @@ async function mine(env, email) {
   const saved = await savedProjects(env);
   return Object.values(saved).filter((p) => p.sandbox && p.sandbox.email === email && !(p.sandbox.expires_at && p.sandbox.expires_at < now()));
 }
+// The demo sample that belongs with this bot. Stored on the bot when it is made — but a bot
+// built before the sample shipped has none, and rebuilding a bot to get a starter is a silly
+// thing to ask anyone to do. So fall back to the library item named in its source line.
+function sampleFor(p) {
+  if (p.sandbox?.samples && Object.keys(p.sandbox.samples).length) return p.sandbox.samples;
+  if (p.sandbox?.sample) return { "sample article": p.sandbox.sample };      // bots made before the set existed
+  const src = String(p.sandbox?.source || "");
+  const item = LIBRARY.find((l) => src === l.source + " \u00b7 " + l.name);
+  return item?.samples || {};
+}
+
 // Sidebar rows: the visitor's own; the admin sees every sandbox with a badge. Expired ones are swept here.
 let SWEPT_AT = 0;
 export async function visibleSandboxes(env, request, { isAdmin, all }) {
   if (!env.DB) return [];
   if (Date.now() - SWEPT_AT > 3600 * 1000) { SWEPT_AT = Date.now(); try { for (const p of Object.values(await savedProjects(env))) if (p.sandbox?.expires_at && p.sandbox.expires_at < now()) await deleteSavedProject(env, p.id); } catch {} }
-  const row = (p) => ({ id: p.id, ...pickPublic(p), kind: "chat", href: hrefFor(p), access: "open", listed: true, source: "sandbox", sandbox: { expires_at: p.sandbox.expires_at, source: p.sandbox.source, ...(isAdmin ? { email: p.sandbox.email } : {}) } });
+  const row = (p) => ({ id: p.id, ...pickPublic(p), kind: "chat", href: hrefFor(p), access: "open", listed: true, source: "sandbox", sandbox: { expires_at: p.sandbox.expires_at, source: p.sandbox.source, samples: sampleFor(p), ...(isAdmin ? { email: p.sandbox.email } : {}) } });
   if (isAdmin) return Object.values(await savedProjects(env)).filter((p) => p.sandbox).map(row);
   const email = await sandboxOwnerOf(env, request); if (!email) return [];
   return (await mine(env, email)).map(row);
@@ -112,7 +138,8 @@ export async function handleSandbox(request, env, url, { isAdmin, allowed, setti
     const owner = email || "admin";
     if (!isAdmin && (await mine(env, email)).length >= MAX_PER_PERSON) return json({ error: "limit", reason: `You can have ${MAX_PER_PERSON} sandbox bots at a time. Delete one to make room.` }, 400);
     let instructions = String(body.instructions || "").trim().slice(0, MAX_INSTRUCTIONS), starters = cleanStarters(body.starters), source = "pasted";
-    if (body.library) { const lib = await fetchLibrary(String(body.library)); if (lib.error) return json({ error: "library", reason: lib.error }, 502); instructions = lib.text; source = lib.item.source + " · " + lib.item.name; if (!starters.length) starters = lib.item.starters || []; }
+    let samples = {};
+    if (body.library) { const lib = await fetchLibrary(String(body.library)); if (lib.error) return json({ error: "library", reason: lib.error }, 502); instructions = lib.text; source = lib.item.source + " · " + lib.item.name; if (!starters.length) starters = lib.item.starters || []; if (lib.item.samples) samples = lib.item.samples; }
     if (instructions.length < 20) return json({ error: "instructions", reason: "Paste the instructions (at least a sentence), or pick one from the library." }, 400);
     const bad = blocked(instructions); if (bad) return json({ error: "instructions", reason: bad }, 400);
     const bid = newId();
@@ -122,7 +149,7 @@ export async function handleSandbox(request, env, url, { isAdmin, allowed, setti
       greeting: String(body.greeting || "").trim().slice(0, 400) || `Hi — I'm ${name}. What can I do for you?`,
       starters, mode: "imported", grounding: "open", instructions, files: {},
       handoffText: "", handoffContact: "", allowedLinks: [], access: "open", listed: false,
-      sandbox: { email: owner, userId: "", expires_at: new Date(Date.now() + SANDBOX_DAYS * 86400 * 1000).toISOString(), source },
+      sandbox: { email: owner, userId: "", expires_at: new Date(Date.now() + SANDBOX_DAYS * 86400 * 1000).toISOString(), source, samples },
     });
     console.log(JSON.stringify({ event: "sandbox-create", bot: bid, source }));
     return json({ ok: true, bot: { id: p.id, name: p.name, expires_at: p.sandbox.expires_at, source } });

@@ -28,10 +28,10 @@ export const CONFIG = {
     show: true,
     name: "Sovereign Operator", url: "https://www.skool.com/sovereign-operator/about",
     pitch: "The people doing this, and the answers. Free to join.",
-    // The paid walkthrough. Same page out of the box (the workshop is in that group's classroom); point it at a sales page if you have one.
-    workshopName: "the workshop", workshopUrl: "https://www.skool.com/sovereign-operator/about",
-    workshopPitch: "An afternoon, with people who've done it: from the button to a bot on your own domain with the sign-up funnel on.",
-    // The human path: bought the workshop, no key in hand → message this person. A Skool profile link works.
+    // The membership. Same page out of the box (the walkthrough lives in that group's classroom); point it at your trial or sales page when you have one.
+    workshopName: "the membership", workshopUrl: "https://www.skool.com/sovereign-operator/about",
+    workshopPitch: "The deploy walkthrough, the recordings, and the people who have done it: from the button to a bot on your own domain with the sign-up funnel on.",
+    // The human path: joined, no key in hand → message this person. A Skool profile link works.
     dmName: "Jim", dmUrl: "https://www.skool.com/@jim-tyrrell-8465?g=sovereign-operator",
   },
 
@@ -51,8 +51,10 @@ export const CONFIG = {
   // "workers-ai" needs NO API key — it's included with Cloudflare. Start here.
   // "openai" or "anthropic" need a secret (see docs/DEPLOY.md) and go through AI Gateway.
   provider: "workers-ai",
-  model: "@cf/openai/gpt-oss-120b",
-  // model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",   // the previous default; passes the same set, pricier output
+  model: "@cf/meta/llama-4-scout-17b-16e-instruct",
+  // model: "@cf/openai/gpt-oss-120b",                    // reasoning model: thinks inside max_tokens, so a long
+  //                                                      // input can eat the whole budget and answer nothing.
+  // model: "@cf/meta/llama-3.3-70b-instruct-fp8-fast",   // an older default; passes the same set, pricier output
   // model: "gpt-4.1-mini",                    // provider: "openai"
   // model: "claude-opus-5",                   // provider: "anthropic"
   maxTokens: 900,
@@ -105,6 +107,20 @@ export const CONFIG = {
   // Under the hood → Settings changes both without a commit (the saved copy wins,
   // then YourBots/settings.json, then this). docs/CUSTOMIZE.md → "Who can use it".
   access: { default: "email", floor: "open" },
+
+  // ---- 4b. DEMO MODE ---------------------------------------------------------
+  // What ships in the box so a fresh deploy has something to click, and what a new
+  // owner turns off once it is their site. Two switches because they go stale at
+  // different times: the tour teaches YOUR site and sells the workshop it came from,
+  // while the sample bots are just examples to copy. Someone may want the tour gone on
+  // day one and keep Example Co as a reference, or exactly the other way round.
+  // Both are presentation, not security — flip them in Settings, live, no redeploy.
+  //   tour  false → no stop strip, no pointing finger, no $ badges, no intro modal.
+  //                 The guide bot (YourBots/tour) stays; it just becomes a normal bot.
+  //   bots  false → the sample bots (marked "demo": true) leave the sidebar. Nothing is
+  //                 deleted: the folders stay, the owner can still open one by its link,
+  //                 and switching this back brings them all straight back.
+  demo: { tour: true, bots: true },
 
   // ---- 5. THE SIGN-UP GATE (what "email" mode asks for) --------------------------
   // Out of the box a visitor meets a welcome page: email, a mobile number, and two

@@ -17,6 +17,8 @@ import { ensureExpirySchema, cleanUntil, asDateInput, setPersonUntil, setKeyUnti
 import { buildSystemPrompt, PROMPT_FILES, ROOT_PROMPT_FILES } from "./prompt.js";
 import { complete, gatewayStatus } from "./gateway.js";
 import { classifyTurn, recordRoute, routingStats } from "./router.js";
+import { recordUsage, usageReport } from "./usage.js";
+import { isAllowanceError } from "./gateway.js";
 import { screenInbound, screenOutbound, ensureHandoff, stripHandoffMarker, llamaGuard, redact, INJECTION_PATTERNS, SECRET_PATTERNS, LLAMA_GUARD_MODEL } from "./firewall.js";
 import { detectLanguage, chooseLanguage, languageSettings } from "./language.js";
 import { MODES } from "./modes.js";
@@ -380,7 +382,18 @@ export default {
       const all = (await resolveList(env)).map((p) => { const a = effectiveAccess(p, settings); return { ...p, kind: cleanKind(p.kind), href: hrefFor(p), access: a.mode, listed: a.listed }; });
       // Visitors see listed bots that aren't drafts. The admin sees everything, with a badge.
       // "listed" is visibility, not security: an unlisted bot still checks its own door.
-      let projects = (CONFIG.singleProject ? all.filter((p) => p.id === CONFIG.defaultProject) : all).filter((p) => !p.sandbox && (isAdmin || (p.listed && p.access !== "draft")));
+      // demo.bots off: the sample bots that ship in the box leave the sidebar. Visibility only —
+      // nothing is deleted, the folders are untouched, the owner still sees them (badged, like an
+      // unlisted bot) and can open any of them by its link. Flip it back and they all return.
+      const showDemoBots = settings.demo?.bots !== false;
+      let projects = (CONFIG.singleProject ? all.filter((p) => p.id === CONFIG.defaultProject) : all)
+        .filter((p) => !p.sandbox && (isAdmin || (p.listed && p.access !== "draft")))
+        .filter((p) => showDemoBots || isAdmin || !p.demo);
+      // demo.tour off: drop the stops from the payload. The page decides there IS a guide by
+      // finding a bot that carries tour.stops (index.html), so removing it takes the whole
+      // layer with it — strip, pointing finger, $ badges, intro — and leaves the bot itself
+      // as an ordinary bot. One field, because everything already hangs off that one check.
+      if (settings.demo?.tour === false) projects = projects.map(({ tour, ...rest }) => rest);
       // …plus this visitor's own sandbox bots (Engine/worker/sandbox.js), and every sandbox for the admin.
       for (const sb of await visibleSandboxes(env, request, { isAdmin, all })) projects.push(sb);
       if (!projects.some((p) => p.id === curId)) projects.push({ ...pickPublic({ ...current, thinkingWords: current.thinkingWords || [] }), id: curId, href: hrefFor({ ...current, id: curId }), access: view.mode, listed: view.listed, source: "direct link" });
@@ -430,7 +443,7 @@ export default {
         ...(isAdmin ? { links: settings.links } : {}),           // the owner's page may show them; a visitor asks /api/tour
         accent: CONFIG.accent,
         thinkingWords: Array.isArray(CONFIG.thinkingWords) ? CONFIG.thinkingWords : ["Thinking"],
-        model: CONFIG.model,
+        model: current.model || CONFIG.model,   // the pill should name what actually answers this bot
         provider: CONFIG.provider,
         defaultProject: CONFIG.defaultProject,
         projects,
@@ -653,7 +666,12 @@ async function handleChat(request, env, ctx, { isAdmin = false, guard, visitorOf
   const prompt = buildSystemPrompt({ config: { ...CONFIG, owner: settings.brand?.owner || CONFIG.owner, siteName: settings.brand?.siteName || CONFIG.siteName }, project, passages, attachments, bookingLive: bookingLive(env, project), language, tour: project.tour && Array.isArray(body.tour) ? body.tour.map((x) => String(x).slice(0, 20)).slice(0, 8) : null });
   const outboundOpts = { allowedLinks: project.allowedLinks, protectedText: prompt.protectedText, config: CONFIG, project };
   // A second, non-streaming call with the same prompt — used only if the first reply came out as garbage (see finish()).
-  const retry = () => complete({ env, config: CONFIG, system: prompt.text, messages: history, stream: false });
+  // The retry exists for a reply that came back degenerate or empty. Re-asking with the
+  // SAME budget just reproduces the same failure — which is exactly what happened on the
+  // first empty-reply turns: no retry ever succeeded. Give it real headroom instead.
+  // This bot's own model if it names one, otherwise the deployment's.
+  const botModel = project.model || "";
+  const retry = () => complete({ env, config: CONFIG, system: prompt.text, messages: history, stream: false, model: botModel, maxTokens: Math.max(Number(CONFIG.maxTokens) || 900, 4000) * 2 });
 
   // --- LAYER 3c: the router. "hi" / "thanks" / "ok" go to the small model with
   //     the same prompt; everything else to the main model. Engine/worker/router.js.
@@ -679,17 +697,23 @@ async function handleChat(request, env, ctx, { isAdmin = false, guard, visitorOf
         small = false;
       }
     }
-    if (!small) result = await complete({ env, config: CONFIG, system: prompt.text, messages: history, stream, meta });
+    if (!small) result = await complete({ env, config: CONFIG, system: prompt.text, messages: history, stream, model: botModel, meta });
   } catch (err) {
     console.error("model call failed", err?.code || "", err?.message || err);
-    const f = [...flags, err?.code === "gateway-blocked" ? "gateway-blocked" : err?.code === "rate-limited" ? "provider-rate-limited" : "model-error"];
+    const spent = isAllowanceError(err);
+    const f = [...flags, err?.code === "gateway-blocked" ? "gateway-blocked" : err?.code === "rate-limited" ? "provider-rate-limited" : spent ? "ai-allowance-spent" : "model-error"];
+    ctx.waitUntil(recordUsage(env, { model: botModel || CONFIG.model, error: true }));
     ctx.waitUntil(afterReply(env, { project, question: last.content, reply: handoff, flags: f, who, history, url: request.url }));
     return send(handoff, f);
   }
   if (small) flags.push("small-model");
   if (meta.gateway === "direct (gateway missing)") flags.push("gateway-direct");
   // the split for Under the hood: counted now for a full reply, after the last chunk for a stream
-  const countRoute = () => recordRoute(small ? "small" : "main", meta.usage);
+  const countRoute = () => {
+    recordRoute(small ? "small" : "main", meta.usage);
+    // The same numbers, kept: router.js counts in memory and an isolate forgets.
+    ctx.waitUntil(recordUsage(env, { model: small ? (routing.smallModel || "") : (botModel || CONFIG.model), usage: meta.usage }));
+  };
 
   // --- Non-streaming path -----------------------------------------------------
   if (!stream) {
@@ -773,7 +797,25 @@ async function finish(raw, { env, fw, flags, handoff, outboundOpts, retry = null
     const g = await llamaGuard(env, [{ role: "user", content: "(user message)" }, { role: "assistant", content: reply }]);
     if (g.ran && !g.safe) { f.push("guard-blocked-output:" + g.categories.join(",")); reply = ""; }
   }
-  if (!reply) reply = handoff;
+  // An empty reply used to become the handoff line with no flag on it, so a turn
+  // that failed looked identical to one that went fine — nothing in the audit, nothing
+  // in Gaps, nothing to chase. Retry once (the same one degenerate replies get), and
+  // if it is still empty, say so in the flags so it lands in D1 and in Under the hood.
+  if (!reply) {
+    const spentRetry = f.includes("degenerate-reply") || f.includes("degenerate-retried");
+    const guardBlocked = f.some((x) => String(x).startsWith("guard-blocked-output"));
+    if (!spentRetry && !guardBlocked) {
+      let again = "";
+      try { again = retry ? String(await retry()).trim() : ""; } catch (err) { console.error("retry after empty reply failed", err?.message || err); }
+      if (again && !isDegenerate(again)) { f.push("empty-retried"); reply = screenOutbound(again, outboundOpts).text; }
+    }
+    if (!reply) {
+      f.push(String(raw || "").trim() ? "empty-after-screen" : "empty-reply");
+      // Not a decline: the bot did not refuse, it produced nothing. Saying "I can't help
+      // with that one" blames the question and tells the visitor nothing they can act on.
+      reply = "I didn't manage to put an answer together that time. Ask me again, or give me a bit more to work with.";
+    }
+  }
   return { reply, flags: f, booking };
 }
 
@@ -1227,7 +1269,7 @@ function isDegenerate(text) {
 // The single most useful thing your bot produces is a record of what people
 // asked and what it couldn't answer. Every refusal is a page your site should have.
 async function logTurn(env, project, question, answer, flags, who = "") {
-  const refused = flags.some((f) => /blocked|error/.test(f)) || answer.includes("rather not guess") || answer.includes("don't have a solid answer");
+  const refused = flags.some((f) => /blocked|error|empty/.test(f)) || answer.includes("rather not guess") || answer.includes("don't have a solid answer");
   // Always goes to Workers Logs (dashboard → Worker → Logs). The visitor email is
   // kept on purpose in email mode; the question and answer are redacted.
   console.log(JSON.stringify({ event: "turn", project: project.name, who, refused, flags, asked: redact(question).slice(0, 200) }));
@@ -1419,6 +1461,7 @@ async function settingsView(env, settings) {
     source: settings.source,
     file: SETTINGS_FILE?.access || {},
     adminTotp: adminNeedsCode(env),
+    pepperSet: Boolean(env.FOODLOG_PEPPER),          // user ids are salted with a real secret, not the dev pepper
     modes: ACCESS_MODES.map((id) => ({ id, line: MODE_LINES[id] })),
     order: ACCESS_MODES.join(" < "),
     sharedKey: Boolean(env.ACCESS_PASSPHRASE),
@@ -1667,6 +1710,7 @@ async function engineView(env, projectId) {
       provider: CONFIG.provider, model: CONFIG.model, maxTokens: CONFIG.maxTokens,
       gateway: { ...CONFIG.gateway, ...gatewayStatus(CONFIG) },
       routing: { ...(CONFIG.routing || {}), split: routingStats() },
+      usage: await usageReport(env, 7),
     },
     handoffActions: handoffActionsView(env, CONFIG, project),
     booking: bookingView(env, project),

@@ -1,5 +1,6 @@
 {
   "order": 2,
+  "demo": true,
   "name": "Example Co",
   "tagline": "Machine servicing for Midwest manufacturers",
   "greeting": "Hi — ask me anything about Example Co. I'll only answer from what the team has actually written down.",

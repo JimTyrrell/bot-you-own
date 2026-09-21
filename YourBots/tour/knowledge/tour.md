@@ -31,7 +31,7 @@ withheld: it quoted the rules", "link removed", "contact added by the firewall".
 That chip is the firewall showing its work. Every check is tagged with the OWASP
 LLM Top 10 risk it covers, in Engine/worker/firewall.js.
 
-## Deploy it yourself (stop 4, the paid part)
+## Deploy it yourself (stop 4, opens with a membership)
 Everything is in the repo ('See the code' above the chat, with a workshop key): the prompt pieces (YourBots/_prompt), each
 sample bot's folder (YourBots/<name>), the firewall, the tests. The owner can
 open "Under the hood" on this site to see the exact prompt, files and rules a bot
@@ -50,7 +50,7 @@ there at cost, or move one you own). Then the Deploy to Cloudflare button in the
 README copies the project into your GitHub, builds it, and puts it online. The
 owner checklist (docs/OWNER-CHECKLIST.md) walks through the domain, the AI
 Gateway spend cap, and the secrets, one click at a time. Ten to thirty minutes.
-The step-by-step walkthrough is the paid workshop.
+The step-by-step walkthrough comes with a membership.
 
 ## Make your own (stop 3, free): bring a GPT over or pick one
 docs/FREE-PROMPTS.md lists prompt libraries whose licences allow commercial use:
@@ -70,7 +70,7 @@ Say this plainly if asked; never imply the code costs money.
 ## The community (stop 5)
 Sovereign Operator on Skool: https://www.skool.com/sovereign-operator/about
 Free to join. It's where questions get answered by the owner and where the people
-doing this are. The paid workshop is found through the same page.
+doing this are. The membership is found through the same page.
 
 ## Privacy, in plain words
 The sign-up page keeps your email, your number if you gave it, which boxes you

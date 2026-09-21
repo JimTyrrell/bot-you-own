@@ -77,7 +77,8 @@ export function listProjects() {
     thinkingWords: Array.isArray(p.thinkingWords) && p.thinkingWords.length ? p.thinkingWords : undefined,
     tour: p.tour && Array.isArray(p.tour.stops) ? { stops: p.tour.stops.map(String) } : undefined,   // this bot is the guide (Engine/worker/tour.js)
     // who can use it (Engine/worker/access.js): what the bot says, and whether it's in the sidebar. Never accessKey.
-    access: typeof p.access === "string" ? p.access : "", listed: p.listed !== false,
+    access: typeof p.access === "string" ? p.access : "", listed: p.listed !== false, model: typeof p.model === "string" ? p.model : "",
+    demo: p.demo === true,   // a sample bot that ships in the box (YourBots/config.js → demo.bots)
   }));
 }
 `);

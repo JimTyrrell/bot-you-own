@@ -154,12 +154,16 @@ const DECLINE_OTHER = /\b(no (?:puedo|tengo|dispongo de)|no (?:me )?es posible|j
 // model declining in Spanish won't say "I'm not able to", so the prompt asks it
 // to mark the decline instead; the code reads the mark and takes it out. Tolerant
 // of the same manglings as the intake marker (case, spaces, stray asterisks).
-const HANDOFF_MARKER = /^[ \t]*[*_]*\[\s*HANDOFF\s*\][*_]*[ \t]*$/gim;
+// The marker is an internal protocol token, never something a visitor should read. It used
+// to be anchored to a whole line (^...$ /m), so a model that ended a SENTENCE with it —
+// "...wenden Sie sich an unser Team. [HANDOFF]" — leaked it straight to the page. Strip it
+// wherever it appears, with the spaces around it, and tidy what is left behind.
+const HANDOFF_MARKER = /[ \t]*[*_]*\[\s*HANDOFF\s*\][*_]*[ \t]*/gi;
 export function stripHandoffMarker(text) {
   const found = HANDOFF_MARKER.test(String(text || ""));
   HANDOFF_MARKER.lastIndex = 0;
   if (!found) return { text, found: false };
-  const clean = String(text).replace(HANDOFF_MARKER, "").replace(/\n{3,}/g, "\n\n").trim();
+  const clean = String(text).replace(HANDOFF_MARKER, " ").replace(/[ \t]{2,}/g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
   HANDOFF_MARKER.lastIndex = 0;
   return { text: clean, found: true };
 }

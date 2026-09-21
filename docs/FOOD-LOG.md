@@ -65,8 +65,10 @@ food log) like any bot; Export / Commit to GitHub write `project.json`.
   target across logged days, which days were off and what they had in common,
   how many days hit protein, the weight trend, one change for next week.
 - **Repeats — because people eat the same things.** Every saved meal becomes a
-  **favourite** (keyed on its foods): a chip above the composer, the ones you eat at
-  this time of day first, tap to log it again at once. **⟲ Same as yesterday** (and
+  **favourite** (keyed on its foods): a chip above the composer, the ones you eat
+  around this hour first — marked *usually now* once you have had it then twice. A
+  tap puts it in the box; send logs it (nothing is logged by a tap alone). A chip
+  you have not tapped today breathes; a used one goes quiet. **⟲ Same as yesterday** (and
   *same as last Tuesday* when there was one) copies a whole day, then you delete
   the one that differs. Typing or saying **"chicken rice again"** or **"log my work
   lunch"** matches a favourite *before* any model runs — "Logging your chicken, rice
@@ -74,6 +76,13 @@ food log) like any bot; Export / Commit to GitHub write `project.json`.
   No, estimate fresh. After the third time the coach asks once for a name; every
   fifth repeat opens the editor with "still about this much?" so a staple never
   quietly drifts. ★ Staples lists them all: log, half, rename, forget.
+- **Times keep their place.** Every meal stores the clock where it was eaten and the
+  zone's name; seen later from another zone it reads *12:00 EDT*, not the local hour.
+  Tap a meal → **Eaten at** to move it; the favourite's "usually now" hours follow.
+- **What fits.** Before you save, the editor sets the plate against what is left today:
+  *Fits*, or *about three quarters fits* with one tap that scales every item (grams and
+  ounces, to what a scale shows), or *leave the rice* when dropping the item worth the
+  least protein gets you under. Written by code from the day's numbers, no model call.
 - **One composer.** *Say what you ate, or ask…* takes both. The mic records a clip
   (press, talk, press again, 30 s at most) and sends it to **Whisper on Workers AI**
   through the app's own `transcribe` route — never the browser's speech service, so

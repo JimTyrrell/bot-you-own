@@ -1,5 +1,6 @@
 {
   "order": 3,
+  "demo": true,
   "name": "Tumblebrook Family Dental",
   "tagline": "Family dentistry in Boulder, CO (a made-up practice)",
   "greeting": "Hi, I'm the Tumblebrook Family Dental assistant. I can answer questions about the practice and take the details for a new-patient appointment.",

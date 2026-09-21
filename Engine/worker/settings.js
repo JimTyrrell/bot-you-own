@@ -25,7 +25,7 @@ import { accessSettings } from "./access.js";
 import { cleanGrace, DEFAULT_GRACE_MINUTES } from "../identity/devices.js";
 import { expirySettings, cleanExpiryConfig, EXPIRY_BUILT_IN } from "./expiry.js";
 
-const KEYS = ["access", "createYourOwn", "identity", "expiry", "signup", "links", "brand", "keys"];
+const KEYS = ["access", "createYourOwn", "identity", "expiry", "signup", "links", "brand", "keys", "demo"];
 // ---- Workshop keys look like PREFIX-1234-5678. The prefix is yours (letters, up to 6).
 export function cleanKeys(k) { if (!k || typeof k !== "object") return null; const p = String(k.prefix || "").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 6); return p ? { prefix: p } : null; }
 function mergeKeys(c, f, s) { let cur = { prefix: "SO" }, source = "built-in"; for (const [layer, label] of [[c, "YourBots/config.js"], [f, "YourBots/settings.json"], [s, "saved (Settings screen)"]]) { const v = cleanKeys(layer); if (v) { cur = v; source = label; } } return { ...cur, source }; }
@@ -106,6 +106,17 @@ async function readRows(env) {
 // The one reader. Returns:
 //   { default, floor, source: { default, floor } }   (the access shape every gate already uses)
 //   + createYourOwn: { show, text, url, source }
+// What ships in the box: the guided tour, and the sample bots. Config, then the file,
+// then the saved row — later wins, same as every other setting. Both default ON so a
+// fresh button-deploy has something to click the moment it comes up.
+export function mergeDemo(c, f, row) {
+  const pick = (...vals) => { for (const v of vals) if (typeof v === "boolean") return v; return true; };
+  return {
+    tour: pick(row?.tour, f?.tour, c?.tour),
+    bots: pick(row?.bots, f?.bots, c?.bots),
+  };
+}
+
 export async function getSettings(env) {
   const rows = (await readRows(env)) || {};
   const access = accessSettings(CONFIG, SETTINGS_FILE, rows.access ? { access: rows.access } : null);
@@ -116,7 +127,8 @@ export async function getSettings(env) {
   const links = mergeLinks(CONFIG.links, SETTINGS_FILE?.links, rows.links);
   const brand = mergeBrand({ owner: CONFIG.owner, siteName: CONFIG.siteName }, SETTINGS_FILE?.brand, rows.brand);
   const keys = mergeKeys(CONFIG.keys, SETTINGS_FILE?.keys, rows.keys);
-  return { ...access, createYourOwn: badge, identity, expiry, signup, links, brand, keys };
+  const demo = mergeDemo(CONFIG.demo, SETTINGS_FILE?.demo, rows.demo);
+  return { ...access, createYourOwn: badge, identity, expiry, signup, links, brand, keys, demo };
 }
 // identity.graceMinutes: the return window, in minutes. 0 = off. Same three places, later wins.
 const graceOf = (i) => (i && typeof i === "object" && i.graceMinutes !== undefined && i.graceMinutes !== null && i.graceMinutes !== "" && Number.isFinite(Number(i.graceMinutes)) && Number(i.graceMinutes) >= -1 ? cleanGrace(i.graceMinutes) : null);

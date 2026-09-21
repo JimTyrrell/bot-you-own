@@ -14,8 +14,9 @@
 //     the food changed. The model is handed the computed totals as facts and told
 //     it may not invent numbers.
 //   · Repeats. People eat the same things. Every saved meal becomes a favourite
-//     (track_favourites, keyed on its item names): a chip above the camera, most
-//     used for this time of day first; "same as yesterday" copies a whole day;
+//     (track_favourites, keyed on its item names): a chip above the composer, the
+//     ones eaten at this time of day first ("usually now" once that is true twice);
+//     a tap puts it in the box and send logs it. "same as yesterday" copies a day;
 //     typing "chicken rice again" matches a favourite BEFORE any model runs. After
 //     three uses the coach asks once for a name ("work lunch"); every fifth repeat
 //     asks "still about this much?" so a repeat never quietly drifts.
@@ -62,8 +63,15 @@ const QUESTION_HINT = /\?|^(what|how|why|should|can|could|is|are|was|were|do|doe
 const mealKey = (items) => items.map((i) => i.name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()).filter(Boolean).sort().join("|").slice(0, 400);
 const fmt = (n) => Math.round(Number(n) || 0).toLocaleString("en-US");
 const parseItems = (s) => { try { return JSON.parse(s) || []; } catch { return []; } };
-const localHour = (createdAt, tzOffsetMin) => { const d = new Date(createdAt); return ((d.getUTCHours() * 60 + d.getUTCMinutes() - (Number(tzOffsetMin) || 0)) / 60 + 24) % 24; };
-const bucketOf = (h) => (h < 10.5 ? "morning" : h < 15 ? "midday" : h < 21 ? "evening" : "night");
+export const localHour = (createdAt, tzOffsetMin) => { const d = new Date(createdAt); return ((d.getUTCHours() * 60 + d.getUTCMinutes() - (Number(tzOffsetMin) || 0)) / 60 + 24) % 24; };
+// The words for a time of day (the label on a chip). Night wraps past midnight: 1 a.m. is not "morning".
+const bucketOf = (h) => (h < 5 ? "night" : h < 10.5 ? "morning" : h < 15 ? "midday" : h < 21 ? "evening" : "night");
+// How far apart two hours of the day are, round the clock (23 and 1 are two hours apart).
+const hoursApart = (a, b) => { const d = Math.abs(a - b) % 24; return Math.min(d, 24 - d); };
+// "At this time of day" = within two hours either side of now — no bucket edges, so a 17:15 dinner and a
+// 17:45 one count as the same habit. A chip SAYS "usually now" only after two uses in that window: once is a
+// meal, twice is a habit, and the claim has to be true. A single use still sorts the chip towards its hour.
+const NEAR_HOURS = 2, USUAL_MIN_USES = 2;
 
 // ---------------------------------------------------------------- the reaction (code, not the model)
 // One line after every meal, from the day's numbers. Never a guess, never a lecture.
@@ -89,7 +97,7 @@ export async function dayChat(env, who, date) {
   ].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.type === "meal" ? -1 : 1));
   return { date, turns, totals: totalsOf(meals), targets: who.targets };
 }
-function mealRow(r) { const items = parseItems(r.items_json); return { id: r.id, date: r.date, time: r.time, items, kcal: r.kcal, protein_g: r.protein_g, carbs_g: r.carbs_g, fat_g: r.fat_g, thumb: r.thumb, source: r.source, created_at: r.created_at }; }
+function mealRow(r) { const items = parseItems(r.items_json); return { id: r.id, date: r.date, time: r.time, items, kcal: r.kcal, protein_g: r.protein_g, carbs_g: r.carbs_g, fat_g: r.fat_g, thumb: r.thumb, source: r.source, created_at: r.created_at, zone: r.tz || null, tzOffset: r.tz_offset ?? null }; }
 export async function addWords(env, who, date, role, kind, text, mealId = null) {
   await ensureDaySchema(env);
   const now = nowIso();
@@ -116,8 +124,24 @@ export async function editedMeal(env, who, meal, { tzOffsetMin = 0 } = {}) {
   await env.DB.prepare(`UPDATE track_day_chat SET text = ? WHERE user_id = ? AND meal_id = ? AND kind = 'reaction'`).bind(line, who.id, meal.id).run();
   // A first-time favourite made from the raw estimate is replaced by the corrected one.
   await forgetUnusedFavourite(env, who, meal.id);
-  const fav = await rememberFavourite(env, who, meal, tzOffsetMin);
+  // An edit is the same meal, not another one: a repeat's use count and hour history stay put (bump: false).
+  const fav = await rememberFavourite(env, who, meal, tzOffsetMin, { bump: false });
   return { totals, favourite: fav };
+}
+// The meal moved to another hour (v3.13): swap that one use in the favourite's hour history, so "usually now"
+// follows the corrected time. A favourite with one use was just re-made from the moved meal — nothing to swap.
+export async function retimeFavourite(env, who, meal, fromHour, toHour) {
+  await ensureDaySchema(env);
+  if (fromHour === toHour) return;
+  const key = mealKey(meal.items || []);
+  if (!key) return;
+  const have = await env.DB.prepare(`SELECT id, hours, times_used FROM track_favourites WHERE user_id = ? AND key = ?`).bind(who.id, key).first();
+  if (!have || Number(have.times_used) <= 1) return;
+  const hours = String(have.hours || "").split(",").filter(Boolean);
+  const i = hours.indexOf(String(fromHour));
+  if (i >= 0) hours.splice(i, 1);
+  hours.push(String(toHour));
+  await env.DB.prepare(`UPDATE track_favourites SET hours = ? WHERE id = ?`).bind(hours.slice(-20).join(","), have.id).run();
 }
 // A meal deleted (or a fresh estimate discarded): its words go, and a favourite nobody has reused goes with it.
 export async function removedMeal(env, who, mealId) {
@@ -133,7 +157,7 @@ async function forgetUnusedFavourite(env, who, mealId) {
 }
 
 // ---------------------------------------------------------------- favourites
-async function rememberFavourite(env, who, meal, tzOffsetMin) {
+async function rememberFavourite(env, who, meal, tzOffsetMin, { bump = true } = {}) {
   const items = meal.items || [];
   if (!items.length) return null;
   const key = mealKey(items);
@@ -141,6 +165,11 @@ async function rememberFavourite(env, who, meal, tzOffsetMin) {
   const now = nowIso();
   const hour = Math.round(localHour(meal.created_at || now, tzOffsetMin));
   const have = await env.DB.prepare(`SELECT * FROM track_favourites WHERE user_id = ? AND key = ?`).bind(who.id, key).first();
+  if (have && !bump) {
+    await env.DB.prepare(`UPDATE track_favourites SET thumb = COALESCE(?, thumb), items_json = ?, kcal = ?, protein_g = ?, carbs_g = ?, fat_g = ? WHERE id = ?`)
+      .bind(meal.thumb || null, JSON.stringify(items), meal.kcal, meal.protein_g, meal.carbs_g, meal.fat_g, have.id).run();
+    return favOut({ ...have, items_json: JSON.stringify(items), kcal: meal.kcal, protein_g: meal.protein_g, carbs_g: meal.carbs_g, fat_g: meal.fat_g, thumb: meal.thumb || have.thumb });
+  }
   if (have) {
     const hours = String(have.hours || "").split(",").filter(Boolean).slice(-19).concat(String(hour)).join(",");
     await env.DB.prepare(`UPDATE track_favourites SET times_used = times_used + 1, last_used = ?, hours = ?, thumb = COALESCE(?, thumb), items_json = ?, kcal = ?, protein_g = ?, carbs_g = ?, fat_g = ? WHERE id = ?`)
@@ -158,13 +187,22 @@ function favOut(r) {
   const buckets = {}; for (const h of hours) buckets[bucketOf(h)] = (buckets[bucketOf(h)] || 0) + 1;
   return { id: r.id, name: r.name || null, label: r.name || items.map((i) => i.name).join(", ").slice(0, 60), items, kcal: Math.round(r.kcal || 0), protein_g: round1(r.protein_g || 0), carbs_g: round1(r.carbs_g || 0), fat_g: round1(r.fat_g || 0), thumb: r.thumb || null, timesUsed: Number(r.times_used) || 1, lastUsed: r.last_used, buckets, nameAsked: Boolean(r.name_asked) };
 }
-// The chips: staples for THIS time of day first (used at least twice), then everything else by use.
+// The chips: `now` = the ones usually eaten at this hour (twice or more within two hours of it), most-repeated
+// first; `rest` = everything else, nearest to this hour first, then by use. Every chip carries `usual` so the
+// page can say why it is where it is. `hour` is the PERSON'S local hour (the page sends it); the stored hours are local too.
 export async function listFavourites(env, who, { hour = 12, date = todayUtc() } = {}) {
   await ensureDaySchema(env);
-  const rows = ((await env.DB.prepare(`SELECT * FROM track_favourites WHERE user_id = ? ORDER BY times_used DESC, last_used DESC LIMIT 60`).bind(who.id).all()).results || []).map(favOut);
-  const bucket = bucketOf(Number(hour) || 12);
-  const now = rows.filter((f) => (f.buckets[bucket] || 0) >= 1 && f.timesUsed >= 2).sort((a, b) => (b.buckets[bucket] || 0) - (a.buckets[bucket] || 0) || b.timesUsed - a.timesUsed);
-  const rest = rows.filter((f) => !now.includes(f));
+  const h = Number(hour), at = Number.isFinite(h) ? ((h % 24) + 24) % 24 : 12;
+  const bucket = bucketOf(at);
+  const rows = ((await env.DB.prepare(`SELECT * FROM track_favourites WHERE user_id = ? ORDER BY times_used DESC, last_used DESC LIMIT 60`).bind(who.id).all()).results || []).map((r) => {
+    const hours = String(r.hours || "").split(",").filter(Boolean).map(Number);
+    const near = hours.filter((x) => hoursApart(x, at) <= NEAR_HOURS).length;
+    const nearest = hours.length ? Math.min(...hours.map((x) => hoursApart(x, at))) : 24;
+    return { ...favOut(r), usual: near >= USUAL_MIN_USES, near, nearest };
+  });
+  const tidy = ({ near, nearest, ...f }) => f;
+  const now = rows.filter((f) => f.usual).sort((a, b) => b.near - a.near || b.timesUsed - a.timesUsed).map(tidy);
+  const rest = rows.filter((f) => !f.usual).sort((a, b) => a.nearest - b.nearest || b.timesUsed - a.timesUsed).map(tidy);
   const yesterday = addDays(date, -1);
   const y = await env.DB.prepare(`SELECT COUNT(*) n, SUM(kcal) kcal FROM track_meals WHERE user_id = ? AND date = ?`).bind(who.id, yesterday).first();
   const sameDay = await env.DB.prepare(`SELECT COUNT(*) n FROM track_meals WHERE user_id = ? AND date = ?`).bind(who.id, addDays(date, -7)).first();

@@ -13,6 +13,7 @@
 //    node tests/break-it.mjs --passphrase "your passphrase"   # if the bot is locked
 //    --gap 2200   milliseconds between cases (default 2200 remote, 0 on localhost)
 //    --email you@example.com   if access.mode is "email" or "key+email"
+//    --phone "+1 555 0100" --name "Tester"   if the sign-up gate asks for them
 //
 //  Exit code 1 if any case marked "critical": true fails. Those are the ones
 //  that cost you money or credibility: near-miss → handoff, unwritten price →
@@ -35,6 +36,11 @@ const GAP_MS = args.gap ? Number(args.gap) : (/localhost|127\.0\.0\.1/.test(URL_
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const PASS = args.passphrase ? String(args.passphrase) : process.env.BYO_PASSPHRASE || "";
 const EMAIL = args.email ? String(args.email) : process.env.BYO_EMAIL || "";   // for access.mode email / key+email
+// The sign-up gate can ask for a name and a mobile number as well (config.js → signup).
+// Without them the join is refused and every case comes back "Please enter your email
+// address to start" — 61 green-looking failures that say nothing about the bot.
+const PHONE = args.phone ? String(args.phone) : process.env.BYO_PHONE || "";
+const NAME = args.name ? String(args.name) : process.env.BYO_NAME || "Break-it runner";
 // Email mode goes through Engine/identity: this run is one "browser" with one device key,
 // and it joins each bot with --email before asking it anything. A fresh key every run, so
 // the join is a first device unless the email already exists on that bot — then the bot
@@ -45,7 +51,7 @@ async function joinIfNeeded(project) {
   if (!EMAIL || joined.has(project)) return;
   joined.add(project);
   try {
-    const r = await fetch(`${URL_}/api/id/join`, { method: "POST", headers: { "content-type": "application/json", "x-device-key": DEVICE, ...(TOKEN ? { "x-access-token": TOKEN } : {}) }, body: JSON.stringify({ bot: project, email: EMAIL }) });
+    const r = await fetch(`${URL_}/api/id/join`, { method: "POST", headers: { "content-type": "application/json", "x-device-key": DEVICE, ...(TOKEN ? { "x-access-token": TOKEN } : {}) }, body: JSON.stringify({ bot: project, email: EMAIL, name: NAME, phone: PHONE, marketing: false, sms: false }) });
     const d = await r.json().catch(() => ({}));
     if (!d.linked) process.stderr.write(`  (${project}: not linked as ${EMAIL} — ${d.code ? "a second device; code " + d.code + " needs the owner" : d.reason || r.status})\n`);
   } catch (err) { process.stderr.write(`  (${project}: join failed — ${err.message})\n`); }

@@ -48,7 +48,7 @@ import { resolve as resolveExpiry, lapseReply, noticeFor, EXPIRY_BUILT_IN } from
 import { join as idJoin, userIdFor, userById as idUserById, bindDevice, linkByCode, deviceCount, listDevices, pendingByEmail, touch as idTouch, DEV_PEPPER, pepperOf } from "../identity/devices.js";
 import { runVision, PROMPTS, extractJson, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize, mergeCorrection } from "./track-vision.js";
 import { lookupBarcode, rememberLabel, saveReceipt, listReceipts, deleteReceipt, setWeight, listWeights, importWeights, householdOf, createHousehold, joinHousehold, leaveHousehold, canView } from "./track-extras.js";
-import { ensureDaySchema, dayChat, addWords, afterMeal, editedMeal, removedMeal, listFavourites, nameFavourite, forgetFavourite, matchFavourite, repeatMeals, askDay, summaryFor, classifySay, looksLikeFood } from "./track-day.js";
+import { ensureDaySchema, dayChat, addWords, afterMeal, editedMeal, removedMeal, listFavourites, nameFavourite, forgetFavourite, matchFavourite, repeatMeals, retimeFavourite, localHour, askDay, summaryFor, classifySay, looksLikeFood } from "./track-day.js";
 
 const THUMB_MAX_PX = 256, THUMB_MAX_BYTES = 48 * 1024;
 let HONESTY = "Photo estimates are typically within about 30%. Fix the portion when it's off.";   // per bot: project.json → food.honesty
@@ -71,9 +71,22 @@ export async function ensureTrackSchema(env) {
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS track_members (household_id TEXT NOT NULL, user_id TEXT PRIMARY KEY, name TEXT, joined_at TEXT NOT NULL)`),
     env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_track_members_h ON track_members(household_id)`),
   ]);
+  // Where the person WAS when they logged (v3.13): the zone's name and the browser's UTC offset, so a lunch
+  // eaten at noon in New York still reads "12:00 EDT" two weeks later from Denver. `time` became the LOCAL clock
+  // at the same moment; rows from before carry no zone and the page shows those in the viewer's own zone.
+  // SQLite has no ADD COLUMN IF NOT EXISTS: look first.
+  try {
+    const have = new Set(((await env.DB.prepare(`PRAGMA table_info(track_meals)`).all()).results || []).map((c) => c.name));
+    for (const [col, decl] of [["tz", "TEXT"], ["tz_offset", "INTEGER"]]) if (!have.has(col)) await env.DB.prepare(`ALTER TABLE track_meals ADD COLUMN ${col} ${decl}`).run();
+  } catch (err) { console.warn("meal zone columns not added (times will show in UTC)", err?.message || err); }
   await ensureDaySchema(env);
   TRACK_SCHEMA_OK = true;
 }
+// A zone name as the browser reports it ("America/New_York"), or null. The offset is getTimezoneOffset(): minutes WEST of UTC.
+const cleanZone = (z) => { const s = String(z || "").trim(); return /^[A-Za-z_][A-Za-z0-9_+\-]*(\/[A-Za-z0-9_+\-]+){0,3}$/.test(s) && s.length <= 64 ? s : null; };
+const cleanOffset = (o) => { const n = Number(o); return Number.isFinite(n) && Math.abs(n) <= 16 * 60 ? Math.round(n) : null; };
+// The clock on the person's wall at a UTC instant, "HH:MM".
+const localClock = (iso, offsetMin) => new Date(Date.parse(iso) - (offsetMin || 0) * 60000).toISOString().slice(11, 16);
 
 // --- The router. Called from index.js for one food bot: the app's page, its API, its coach API.
 //     `bot` is the resolved project (kind food); api/page/admin are the path prefixes it answers on
@@ -183,9 +196,11 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
       if (!items.length) return json({ error: "no items", reason: "A meal needs at least one food. Delete it instead." }, 400);
       const t = totalsOf(items);
       await env.DB.prepare(`UPDATE track_meals SET items_json = ?, kcal = ?, protein_g = ?, carbs_g = ?, fat_g = ? WHERE id = ?`).bind(JSON.stringify(items), t.kcal, t.protein_g, t.carbs_g, t.fat_g, id).run();
+      const moved = await retimeMeal(env, me, id, body);
       const meal = await readMeal(env, id);
       const after = await editedMeal(env, me, meal, { tzOffsetMin: body.tz });
-      return json({ ok: true, meal, totals: after.totals, favourite: after.favourite });
+      if (moved) await retimeFavourite(env, me, meal, moved.from, moved.to);
+      return json({ ok: true, meal, totals: after.totals, favourite: after.favourite, moved });
     }
     return json({ error: "PATCH or DELETE" }, 405);
   }
@@ -218,7 +233,7 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
   if (sub === "repeat") {
     if (request.method !== "POST") return json({ error: "POST only" }, 405);
     const date = pickDate(body.date);
-    const r = await repeatMeals(env, me, { favouriteId: body.favouriteId, fromDate: body.fromDate, date, mult: body.mult, insertMeal: (m) => insertMeal(env, me, m) });
+    const r = await repeatMeals(env, me, { favouriteId: body.favouriteId, fromDate: body.fromDate, date, mult: body.mult, insertMeal: (m) => insertMeal(env, me, { ...m, tz: body.tz, zone: body.zone }) });
     if (!r.ok) return json(r, r.status || 400);
     let totals = null;
     for (const m of r.meals) totals = (await afterMeal(env, me, m, { repeat: true, favouriteName: r.favourite?.name || "", tzOffsetMin: body.tz })).totals;
@@ -279,7 +294,9 @@ const PENDING_MESSAGE = "This email is already logging on another device. Use a 
 function foodConfig(bot, env) {
   const f = bot.food || {};
   const methods = signInMethods(bot, env);
-  return { id: bot.id, name: bot.name, model: f.model, maxPhotoBytes: f.maxPhotoBytes, dailyPhotoLimit: f.dailyPhotoLimit, coachName: f.coachName, honesty: f.honesty, signIn: methods.providers, methods, pepper: pepperOf(env) };
+  // siteName is for the "← back" link at the top of the app page: it is a different page from
+// the bot list, so it has to say for itself where back goes.
+  return { id: bot.id, name: bot.name, siteName: CONFIG.siteName || "", model: f.model, maxPhotoBytes: f.maxPhotoBytes, dailyPhotoLimit: f.dailyPhotoLimit, coachName: f.coachName, honesty: f.honesty, signIn: methods.providers, methods, pepper: pepperOf(env) };
 }
 
 // --- JOIN: first device creates the log; a second device gets a code instead (Engine/identity/devices.js). ---
@@ -348,7 +365,7 @@ async function photo(request, env, cfg, me) {
     const items = revising ? mergeCorrection(current, fresh, correction) : fresh;
     if (revising && !fresh.length) return json({ error: "no food", reason: "I couldn't apply that correction. Try naming the food and the amount, like “8 strawberries”." }, 422);
     if (!items.length) return json({ error: "no food", reason: parsed?.notes ? `I couldn't find food in that: ${String(parsed.notes).slice(0, 140)}` : "I couldn't make out any food in that photo. Try closer, with more light — or type it.", raw: out.text.slice(0, 300) }, 422);
-    const meal = mealId ? await updateMealItems(env, me, mealId, items) : await insertMeal(env, me, { date, items, source: "photo", thumb });
+    const meal = mealId ? await updateMealItems(env, me, mealId, items) : await insertMeal(env, me, { date, items, source: "photo", thumb, tz: form.get("tz"), zone: form.get("zone") });
     if (!meal) return json({ error: "no such meal" }, 404);
     const after = mealId ? await editedMeal(env, me, meal, { tzOffsetMin: form.get("tz") }) : await afterMeal(env, me, meal, { tzOffsetMin: form.get("tz") });
     return json({ ok: true, meal, notes: String(parsed?.notes || "").slice(0, 200), honesty: HONESTY, totals: after.totals });
@@ -401,7 +418,7 @@ async function textMeal(env, cfg, me, body) {
   if (revising && !fresh.length) return json({ error: "no food", reason: "I couldn't apply that correction. Try naming the food and the amount, like “8 strawberries”." }, 422);
   if (!items.length) return json({ error: "no food", reason: "I couldn't turn that into foods. Try naming them plainly: '2 eggs, 1 slice of toast'." }, 422);
   const mealId = String(body.mealId || "").trim();
-  const meal = mealId ? await updateMealItems(env, me, mealId, items) : await insertMeal(env, me, { date: pickDate(body.date), items, source: "text", thumb: null });
+  const meal = mealId ? await updateMealItems(env, me, mealId, items) : await insertMeal(env, me, { date: pickDate(body.date), items, source: "text", thumb: null, tz: body.tz, zone: body.zone });
   if (!meal) return json({ error: "no such meal" }, 404);
   const after = mealId ? await editedMeal(env, me, meal, { tzOffsetMin: body.tz }) : await afterMeal(env, me, meal, { tzOffsetMin: body.tz });
   return json({ ok: true, meal, notes: String(parsed?.notes || "").slice(0, 200), honesty: HONESTY, totals: after.totals });
@@ -463,15 +480,35 @@ async function say(env, cfg, me, body) {
 async function saveMeal(env, me, body) {
   const items = sanitiseItems(body.items, { source: ["barcode", "label", "text", "photo", "receipt"].includes(body.source) ? body.source : "text" });
   if (!items.length) return json({ error: "no items", reason: "Nothing to save." }, 400);
-  const meal = await insertMeal(env, me, { date: pickDate(body.date), items, source: items[0].source, thumb: null });
+  const meal = await insertMeal(env, me, { date: pickDate(body.date), items, source: items[0].source, thumb: null, tz: body.tz, zone: body.zone });
   const after = await afterMeal(env, me, meal, { tzOffsetMin: body.tz });
   return json({ ok: true, meal, totals: after.totals });
 }
 
-async function insertMeal(env, me, { date, items, source, thumb }) {
+// A meal moved to another clock time on the same day (v3.13): "HH:MM" on the person's clock, in the zone the
+// browser is in NOW. The row's created_at follows so the thread re-sorts, the reaction line moves with its card,
+// and the caller swaps the hour in the favourite's history. Returns { from, to } as rounded local hours, or null.
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+async function retimeMeal(env, me, id, body) {
+  const time = String(body.time || "").trim();
+  if (!TIME_RE.test(time)) return null;
+  const old = await env.DB.prepare(`SELECT date, time, created_at, tz_offset FROM track_meals WHERE id = ? AND user_id = ?`).bind(id, me.id).first();
+  if (!old) return null;
+  const offset = cleanOffset(body.tz) ?? 0;
+  const createdAt = new Date(Date.parse(`${old.date}T${time}:00.000Z`) + offset * 60000).toISOString();
+  if (createdAt === old.created_at) return null;
+  await env.DB.batch([
+    env.DB.prepare(`UPDATE track_meals SET time = ?, created_at = ?, tz = ?, tz_offset = ? WHERE id = ?`).bind(time, createdAt, cleanZone(body.zone), offset, id),
+    env.DB.prepare(`UPDATE track_day_chat SET created_at = ? WHERE user_id = ? AND meal_id = ? AND kind = 'reaction'`).bind(createdAt, me.id, id),
+  ]);
+  // The hour it was: on its own clock if the row knew its offset; a row from before zones is read in the person's current zone.
+  return { from: Math.round(localHour(old.created_at, old.tz_offset ?? offset)), to: Math.round(localHour(createdAt, offset)) };
+}
+async function insertMeal(env, me, { date, items, source, thumb, tz, zone }) {
   const id = randomId(12), t = totalsOf(items), now = nowIso();
-  await env.DB.prepare(`INSERT INTO track_meals (id, user_id, date, time, items_json, kcal, protein_g, carbs_g, fat_g, thumb, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .bind(id, me.id, date, now.slice(11, 16), JSON.stringify(items), t.kcal, t.protein_g, t.carbs_g, t.fat_g, thumb, source, now).run();
+  const offset = cleanOffset(tz);
+  await env.DB.prepare(`INSERT INTO track_meals (id, user_id, date, time, items_json, kcal, protein_g, carbs_g, fat_g, thumb, source, created_at, tz, tz_offset) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(id, me.id, date, localClock(now, offset), JSON.stringify(items), t.kcal, t.protein_g, t.carbs_g, t.fat_g, thumb, source, now, cleanZone(zone), offset).run();
   return readMeal(env, id);
 }
 async function updateMealItems(env, me, id, items) {
@@ -485,7 +522,7 @@ async function readMeal(env, id) {
   const r = await env.DB.prepare(`SELECT * FROM track_meals WHERE id = ?`).bind(id).first();
   return r ? mealOut(r) : null;
 }
-function mealOut(r) { let items = []; try { items = JSON.parse(r.items_json); } catch {} return { id: r.id, date: r.date, time: r.time, items, kcal: r.kcal, protein_g: r.protein_g, carbs_g: r.carbs_g, fat_g: r.fat_g, thumb: r.thumb, source: r.source, created_at: r.created_at }; }
+function mealOut(r) { let items = []; try { items = JSON.parse(r.items_json); } catch {} return { id: r.id, date: r.date, time: r.time, items, kcal: r.kcal, protein_g: r.protein_g, carbs_g: r.carbs_g, fat_g: r.fat_g, thumb: r.thumb, source: r.source, created_at: r.created_at, zone: r.tz || null, tzOffset: r.tz_offset ?? null }; }
 
 // --- THE DAY and THE WEEK. -------------------------------------------------------------
 async function dayView(env, who, date, { readOnly = false } = {}) {

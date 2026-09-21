@@ -1,5 +1,6 @@
 {
   "order": 4,
+  "demo": true,
   "name": "Ledgerly",
   "tagline": "Bookkeeping software for solo consultants",
   "greeting": "Hi! I'm the Ledgerly assistant. Ask me about the product, plans, or getting set up.",
