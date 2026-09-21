@@ -79,6 +79,12 @@ food log) like any bot; Export / Commit to GitHub write `project.json`.
 - **Times keep their place.** Every meal stores the clock where it was eaten and the
   zone's name; seen later from another zone it reads *12:00 EDT*, not the local hour.
   Tap a meal → **Eaten at** to move it; the favourite's "usually now" hours follow.
+- **Planned meals.** The date arrow opens the next two weeks. Anything logged on a day
+  after today is a **plan**: drawn hollow, counted against that day's budget, never as
+  eaten — so "dinner out, about 1,200" on Thursday lowers what Thursday's breakfast is told
+  it has. Nothing planned touches the streak, the week's averages, the favourites or the
+  coach's export until you tap **Had it**, which logs it as eaten at that moment. A meal
+  on today can be marked planned in the editor (Eaten / Planned).
 - **What fits.** Before you save, the editor sets the plate against what is left today:
   *Fits*, or *about three quarters fits* with one tap that scales every item (grams and
   ounces, to what a scale shows), or *leave the rice* when dropping the item worth the

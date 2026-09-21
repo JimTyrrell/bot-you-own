@@ -75,11 +75,18 @@ const NEAR_HOURS = 2, USUAL_MIN_USES = 2;
 
 // ---------------------------------------------------------------- the reaction (code, not the model)
 // One line after every meal, from the day's numbers. Never a guess, never a lecture.
-export function reactionFor(meal, totals, targets, { repeat = false, name = "" } = {}) {
+// `planned` is the day's planned calories (this meal's own included when it is a plan): they are kept back
+// from "left", so a dinner out booked in the morning lowers what breakfast and lunch are told they have.
+export function reactionFor(meal, totals, targets, { repeat = false, name = "", planned = 0 } = {}) {
   const t = targets || {};
-  const left = t.kcal ? t.kcal - totals.kcal : null;
+  const left = t.kcal ? t.kcal - totals.kcal - (planned || 0) : null;
+  if (meal.planned) {
+    const bits = [`Planned. ${fmt(meal.kcal)} kcal kept back`];
+    if (left !== null) bits.push(left >= 0 ? `${fmt(left)} left for the rest of the day` : `${fmt(-left)} over for the day once it happens`);
+    return bits.join(" · ") + ".";
+  }
   const bits = [`${repeat ? (name ? `${name} again.` : "Logged that again.") : "Logged."} ${fmt(meal.kcal)} kcal`];
-  if (left !== null) bits.push(left >= 0 ? `${fmt(left)} left today` : `${fmt(-left)} over for today`);
+  if (left !== null) bits.push(left >= 0 ? `${fmt(left)} left today${planned ? ` after ${fmt(planned)} planned` : ""}` : `${fmt(-left)} over for today${planned ? " counting what's planned" : ""}`);
   if (t.protein_g) bits.push(`protein ${fmt(totals.protein_g)} of ${fmt(t.protein_g)}`);
   return bits.join(" · ") + ".";
 }
@@ -95,9 +102,16 @@ export async function dayChat(env, who, date) {
     ...meals.map((m) => ({ type: "meal", at: m.created_at, meal: m })),
     ...rows.map((r) => ({ type: "text", id: r.id, at: r.created_at, role: r.role, kind: r.kind, text: r.text, mealId: r.meal_id || null })),
   ].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.type === "meal" ? -1 : 1));
-  return { date, turns, totals: totalsOf(meals), targets: who.targets };
+  const plannedMeals = meals.filter((m) => m.planned);
+  return { date, turns, totals: totalsOf(meals.filter((m) => !m.planned)), planned: { ...totalsOf(plannedMeals), meals: plannedMeals.length }, targets: who.targets };
 }
-function mealRow(r) { const items = parseItems(r.items_json); return { id: r.id, date: r.date, time: r.time, items, kcal: r.kcal, protein_g: r.protein_g, carbs_g: r.carbs_g, fat_g: r.fat_g, thumb: r.thumb, source: r.source, created_at: r.created_at, zone: r.tz || null, tzOffset: r.tz_offset ?? null }; }
+// The day's numbers as the reaction line needs them: what was eaten, and what is planned.
+async function dayNumbers(env, who, date) {
+  const rows = (await env.DB.prepare(`SELECT kcal, protein_g, carbs_g, fat_g, planned FROM track_meals WHERE user_id = ? AND date = ?`).bind(who.id, date).all()).results || [];
+  const plannedRows = rows.filter((r) => r.planned);
+  return { totals: totalsOf(rows.filter((r) => !r.planned)), planned: { ...totalsOf(plannedRows), meals: plannedRows.length } };
+}
+function mealRow(r) { const items = parseItems(r.items_json); return { id: r.id, date: r.date, time: r.time, items, kcal: r.kcal, protein_g: r.protein_g, carbs_g: r.carbs_g, fat_g: r.fat_g, thumb: r.thumb, source: r.source, created_at: r.created_at, zone: r.tz || null, tzOffset: r.tz_offset ?? null, planned: Boolean(r.planned) }; }
 export async function addWords(env, who, date, role, kind, text, mealId = null) {
   await ensureDaySchema(env);
   const now = nowIso();
@@ -107,26 +121,35 @@ export async function addWords(env, who, date, role, kind, text, mealId = null) 
 // Called by track.js after every meal lands (photo, text, barcode, repeat): the reaction line, and the favourite.
 export async function afterMeal(env, who, meal, { repeat = false, favouriteName = "", tzOffsetMin = 0 } = {}) {
   await ensureDaySchema(env);
-  const dayMeals = ((await env.DB.prepare(`SELECT kcal, protein_g, carbs_g, fat_g FROM track_meals WHERE user_id = ? AND date = ?`).bind(who.id, meal.date).all()).results || []);
-  const totals = totalsOf(dayMeals);
-  const line = reactionFor(meal, totals, who.targets, { repeat, name: favouriteName });
+  const { totals, planned } = await dayNumbers(env, who, meal.date);
+  const line = reactionFor(meal, totals, who.targets, { repeat, name: favouriteName, planned: planned.kcal });
   const reaction = await addWords(env, who, meal.date, "assistant", "reaction", line, meal.id);
+  // A plan teaches the favourites nothing until it happens (confirmedMeal): the habit model learns what was eaten.
+  const fav = meal.planned ? null : await rememberFavourite(env, who, meal, tzOffsetMin);
+  return { reaction, totals, planned, favourite: fav };
+}
+// "Had it": the plan became a meal. The reaction line is rewritten as eaten, and the favourite learns it now.
+export async function confirmedMeal(env, who, meal, { tzOffsetMin = 0 } = {}) {
+  await ensureDaySchema(env);
+  const { totals, planned } = await dayNumbers(env, who, meal.date);
+  const line = reactionFor(meal, totals, who.targets, { planned: planned.kcal });
+  await env.DB.prepare(`UPDATE track_day_chat SET text = ? WHERE user_id = ? AND meal_id = ? AND kind = 'reaction'`).bind(line, who.id, meal.id).run();
   const fav = await rememberFavourite(env, who, meal, tzOffsetMin);
-  return { reaction, totals, favourite: fav };
+  return { totals, planned, favourite: fav };
 }
 
 // The person fixed the portion (or the foods) in the editor: the reaction line and the favourite follow.
 export async function editedMeal(env, who, meal, { tzOffsetMin = 0 } = {}) {
   await ensureDaySchema(env);
-  const dayMeals = ((await env.DB.prepare(`SELECT kcal, protein_g, carbs_g, fat_g FROM track_meals WHERE user_id = ? AND date = ?`).bind(who.id, meal.date).all()).results || []);
-  const totals = totalsOf(dayMeals);
-  const line = reactionFor(meal, totals, who.targets);
+  const { totals, planned } = await dayNumbers(env, who, meal.date);
+  const line = reactionFor(meal, totals, who.targets, { planned: planned.kcal });
   await env.DB.prepare(`UPDATE track_day_chat SET text = ? WHERE user_id = ? AND meal_id = ? AND kind = 'reaction'`).bind(line, who.id, meal.id).run();
+  if (meal.planned) return { totals, planned, favourite: null };
   // A first-time favourite made from the raw estimate is replaced by the corrected one.
   await forgetUnusedFavourite(env, who, meal.id);
   // An edit is the same meal, not another one: a repeat's use count and hour history stay put (bump: false).
   const fav = await rememberFavourite(env, who, meal, tzOffsetMin, { bump: false });
-  return { totals, favourite: fav };
+  return { totals, planned, favourite: fav };
 }
 // The meal moved to another hour (v3.13): swap that one use in the favourite's hour history, so "usually now"
 // follows the corrected time. A favourite with one use was just re-made from the moved meal — nothing to swap.
@@ -204,8 +227,8 @@ export async function listFavourites(env, who, { hour = 12, date = todayUtc() } 
   const now = rows.filter((f) => f.usual).sort((a, b) => b.near - a.near || b.timesUsed - a.timesUsed).map(tidy);
   const rest = rows.filter((f) => !f.usual).sort((a, b) => a.nearest - b.nearest || b.timesUsed - a.timesUsed).map(tidy);
   const yesterday = addDays(date, -1);
-  const y = await env.DB.prepare(`SELECT COUNT(*) n, SUM(kcal) kcal FROM track_meals WHERE user_id = ? AND date = ?`).bind(who.id, yesterday).first();
-  const sameDay = await env.DB.prepare(`SELECT COUNT(*) n FROM track_meals WHERE user_id = ? AND date = ?`).bind(who.id, addDays(date, -7)).first();
+  const y = await env.DB.prepare(`SELECT COUNT(*) n, SUM(kcal) kcal FROM track_meals WHERE user_id = ? AND date = ? AND planned = 0`).bind(who.id, yesterday).first();
+  const sameDay = await env.DB.prepare(`SELECT COUNT(*) n FROM track_meals WHERE user_id = ? AND date = ? AND planned = 0`).bind(who.id, addDays(date, -7)).first();
   return { bucket, now: now.slice(0, 6), rest: rest.slice(0, 12), yesterday: y?.n ? { date: yesterday, meals: Number(y.n), kcal: Math.round(y.kcal || 0) } : null, lastWeek: sameDay?.n ? { date: addDays(date, -7), meals: Number(sameDay.n) } : null };
 }
 export async function nameFavourite(env, who, id, name) {
@@ -272,7 +295,7 @@ export async function repeatMeals(env, who, { favouriteId, fromDate, date, mult 
   if (fromDate) {
     const from = pickDate(fromDate);
     if (from === date) return { ok: false, status: 400, error: "that's the same day" };
-    const rows = (await env.DB.prepare(`SELECT * FROM track_meals WHERE user_id = ? AND date = ? ORDER BY created_at`).bind(who.id, from).all()).results || [];
+    const rows = (await env.DB.prepare(`SELECT * FROM track_meals WHERE user_id = ? AND date = ? AND planned = 0 ORDER BY created_at`).bind(who.id, from).all()).results || [];
     if (!rows.length) return { ok: false, status: 404, error: "nothing logged that day", reason: `Nothing was logged on ${from}.` };
     for (const r of rows) { const m = mealRow(r); out.push(await insertMeal({ date, items: scale(m.items), source: "repeat", thumb: m.thumb })); }
     return { ok: true, meals: out, from };
@@ -284,14 +307,14 @@ export async function repeatMeals(env, who, { favouriteId, fromDate, date, mult 
 // The facts block the coach answers from. Numbers come from here, never from the model.
 async function factsFor(env, who, date) {
   const chat = await dayChat(env, who, date);
-  const y = await env.DB.prepare(`SELECT SUM(kcal) kcal, SUM(protein_g) protein_g, COUNT(*) meals FROM track_meals WHERE user_id = ? AND date = ?`).bind(who.id, addDays(date, -1)).first();
+  const y = await env.DB.prepare(`SELECT SUM(kcal) kcal, SUM(protein_g) protein_g, COUNT(*) meals FROM track_meals WHERE user_id = ? AND date = ? AND planned = 0`).bind(who.id, addDays(date, -1)).first();
   const wk = (await env.DB.prepare(`SELECT date, SUM(kcal) kcal, SUM(protein_g) protein_g, COUNT(*) meals FROM track_meals WHERE user_id = ? AND date BETWEEN ? AND ? GROUP BY date ORDER BY date`).bind(who.id, addDays(date, -6), date).all()).results || [];
   const w = (await env.DB.prepare(`SELECT date, kg FROM track_weights WHERE user_id = ? ORDER BY date DESC LIMIT 8`).bind(who.id).all()).results || [];
   const t = who.targets || {};
   return {
     date, name: who.name || null,
     targets: t.kcal ? { kcal: t.kcal, protein_g: t.protein_g, carbs_g: t.carbs_g, fat_g: t.fat_g } : null,
-    today: { totals: chat.totals, remaining_kcal: t.kcal ? t.kcal - chat.totals.kcal : null, meals: chat.turns.filter((x) => x.type === "meal").map((x) => ({ time: x.meal.time, foods: x.meal.items.map((i) => `${i.name} (${i.portion || Math.round(i.grams || 0) + " g"})`).join(", "), kcal: Math.round(x.meal.kcal), protein_g: Math.round(x.meal.protein_g), carbs_g: Math.round(x.meal.carbs_g), fat_g: Math.round(x.meal.fat_g) })) },
+    today: { totals: chat.totals, planned_kcal: chat.planned?.kcal || 0, remaining_kcal: t.kcal ? t.kcal - chat.totals.kcal - (chat.planned?.kcal || 0) : null, meals: chat.turns.filter((x) => x.type === "meal" && !x.meal.planned).map((x) => ({ time: x.meal.time, foods: x.meal.items.map((i) => `${i.name} (${i.portion || Math.round(i.grams || 0) + " g"})`).join(", "), kcal: Math.round(x.meal.kcal), protein_g: Math.round(x.meal.protein_g), carbs_g: Math.round(x.meal.carbs_g), fat_g: Math.round(x.meal.fat_g) })) },
     yesterday: y?.meals ? { kcal: Math.round(y.kcal), protein_g: Math.round(y.protein_g), meals: y.meals } : null,
     last_7_days: wk.map((d) => ({ date: d.date, kcal: Math.round(d.kcal), protein_g: Math.round(d.protein_g), meals: d.meals })),
     weights_kg: w.reverse().map((x) => ({ date: x.date, kg: x.kg })),
@@ -356,9 +379,9 @@ const DAY_PROMPT = (coach, isToday) => `You write the one-paragraph review of a 
 const WEEK_PROMPT = (coach) => `You write the seven-day look-back for a person's food log, in the voice of a calm, plain-spoken coach${coach ? ` (their human coach is ${coach})` : ""}. Answer ONLY with a JSON object, exactly these keys: {"headline":"","averages":"","pattern":"","protein":"","weight":"","nudge":""}. headline: one sentence on the week. averages: average calories against target across LOGGED days, and how many days were logged, using ONLY the numbers in the facts. pattern: the one pattern worth knowing — which days were off and what they have in common (weekday, time, a repeated food), or that it was steady. protein: how many days hit the protein target. weight: the weight trend from the facts, or "no weigh-ins" if none. nudge: the one change for next week. Never invent numbers. No medical advice. No moralising.`;
 async function weekFacts(env, who, end) {
   const start = addDays(end, -6);
-  const rows = (await env.DB.prepare(`SELECT date, SUM(kcal) kcal, SUM(protein_g) protein_g, SUM(carbs_g) carbs_g, SUM(fat_g) fat_g, COUNT(*) meals FROM track_meals WHERE user_id = ? AND date BETWEEN ? AND ? GROUP BY date`).bind(who.id, start, end).all()).results || [];
+  const rows = (await env.DB.prepare(`SELECT date, SUM(kcal) kcal, SUM(protein_g) protein_g, SUM(carbs_g) carbs_g, SUM(fat_g) fat_g, COUNT(*) meals FROM track_meals WHERE user_id = ? AND date BETWEEN ? AND ? AND planned = 0 GROUP BY date`).bind(who.id, start, end).all()).results || [];
   const by = Object.fromEntries(rows.map((r) => [r.date, r]));
-  const foods = (await env.DB.prepare(`SELECT date, items_json, kcal FROM track_meals WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY created_at`).bind(who.id, start, end).all()).results || [];
+  const foods = (await env.DB.prepare(`SELECT date, items_json, kcal FROM track_meals WHERE user_id = ? AND date BETWEEN ? AND ? AND planned = 0 ORDER BY created_at`).bind(who.id, start, end).all()).results || [];
   const byFood = {};
   for (const f of foods) for (const i of parseItems(f.items_json)) { const k = i.name.toLowerCase(); byFood[k] = (byFood[k] || 0) + 1; }
   const repeated = Object.entries(byFood).filter(([, n]) => n >= 3).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([name, n]) => ({ food: name, times: n }));

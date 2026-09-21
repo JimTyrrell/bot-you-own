@@ -48,7 +48,7 @@ import { resolve as resolveExpiry, lapseReply, noticeFor, EXPIRY_BUILT_IN } from
 import { join as idJoin, userIdFor, userById as idUserById, bindDevice, linkByCode, deviceCount, listDevices, pendingByEmail, touch as idTouch, DEV_PEPPER, pepperOf } from "../identity/devices.js";
 import { runVision, PROMPTS, extractJson, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize, mergeCorrection } from "./track-vision.js";
 import { lookupBarcode, rememberLabel, saveReceipt, listReceipts, deleteReceipt, setWeight, listWeights, importWeights, householdOf, createHousehold, joinHousehold, leaveHousehold, canView } from "./track-extras.js";
-import { ensureDaySchema, dayChat, addWords, afterMeal, editedMeal, removedMeal, listFavourites, nameFavourite, forgetFavourite, matchFavourite, repeatMeals, retimeFavourite, localHour, askDay, summaryFor, classifySay, looksLikeFood } from "./track-day.js";
+import { ensureDaySchema, dayChat, addWords, afterMeal, editedMeal, confirmedMeal, removedMeal, listFavourites, nameFavourite, forgetFavourite, matchFavourite, repeatMeals, retimeFavourite, localHour, askDay, summaryFor, classifySay, looksLikeFood } from "./track-day.js";
 
 const THUMB_MAX_PX = 256, THUMB_MAX_BYTES = 48 * 1024;
 let HONESTY = "Photo estimates are typically within about 30%. Fix the portion when it's off.";   // per bot: project.json → food.honesty
@@ -77,13 +77,17 @@ export async function ensureTrackSchema(env) {
   // SQLite has no ADD COLUMN IF NOT EXISTS: look first.
   try {
     const have = new Set(((await env.DB.prepare(`PRAGMA table_info(track_meals)`).all()).results || []).map((c) => c.name));
-    for (const [col, decl] of [["tz", "TEXT"], ["tz_offset", "INTEGER"]]) if (!have.has(col)) await env.DB.prepare(`ALTER TABLE track_meals ADD COLUMN ${col} ${decl}`).run();
+    // planned (v3.13): a meal that has not happened yet. Counts against the day's budget, never as eaten.
+    for (const [col, decl] of [["tz", "TEXT"], ["tz_offset", "INTEGER"], ["planned", "INTEGER DEFAULT 0"]]) if (!have.has(col)) await env.DB.prepare(`ALTER TABLE track_meals ADD COLUMN ${col} ${decl}`).run();
   } catch (err) { console.warn("meal zone columns not added (times will show in UTC)", err?.message || err); }
   await ensureDaySchema(env);
   TRACK_SCHEMA_OK = true;
 }
 // A zone name as the browser reports it ("America/New_York"), or null. The offset is getTimezoneOffset(): minutes WEST of UTC.
 const cleanZone = (z) => { const s = String(z || "").trim(); return /^[A-Za-z_][A-Za-z0-9_+\-]*(\/[A-Za-z0-9_+\-]+){0,3}$/.test(s) && s.length <= 64 ? s : null; };
+const cleanFlag = (v) => v === true || v === 1 || v === "1" || v === "true";
+// Not said → a meal on a day after today is a plan; said → as said.
+const cleanPlanned = (v, date) => (v === undefined || v === null || v === "" ? date > todayUtc() : cleanFlag(v));
 const cleanOffset = (o) => { const n = Number(o); return Number.isFinite(n) && Math.abs(n) <= 16 * 60 ? Math.round(n) : null; };
 // The clock on the person's wall at a UTC instant, "HH:MM".
 const localClock = (iso, offsetMin) => new Date(Date.parse(iso) - (offsetMin || 0) * 60000).toISOString().slice(11, 16);
@@ -196,11 +200,16 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
       if (!items.length) return json({ error: "no items", reason: "A meal needs at least one food. Delete it instead." }, 400);
       const t = totalsOf(items);
       await env.DB.prepare(`UPDATE track_meals SET items_json = ?, kcal = ?, protein_g = ?, carbs_g = ?, fat_g = ? WHERE id = ?`).bind(JSON.stringify(items), t.kcal, t.protein_g, t.carbs_g, t.fat_g, id).run();
-      const moved = await retimeMeal(env, me, id, body);
+      // A plan becoming a meal ("Had it"), or the other way. Confirming without a time means it happened now.
+      const was = Boolean((await env.DB.prepare(`SELECT planned FROM track_meals WHERE id = ?`).bind(id).first())?.planned);
+      const wantPlanned = body.planned === undefined ? was : cleanFlag(body.planned);
+      if (wantPlanned !== was) await env.DB.prepare(`UPDATE track_meals SET planned = ? WHERE id = ?`).bind(wantPlanned ? 1 : 0, id).run();
+      const confirming = was && !wantPlanned;
+      const moved = await retimeMeal(env, me, id, confirming && !body.time ? { ...body, time: localClock(nowIso(), cleanOffset(body.tz) ?? 0) } : body);
       const meal = await readMeal(env, id);
-      const after = await editedMeal(env, me, meal, { tzOffsetMin: body.tz });
-      if (moved) await retimeFavourite(env, me, meal, moved.from, moved.to);
-      return json({ ok: true, meal, totals: after.totals, favourite: after.favourite, moved });
+      const after = confirming ? await confirmedMeal(env, me, meal, { tzOffsetMin: body.tz }) : await editedMeal(env, me, meal, { tzOffsetMin: body.tz });
+      if (moved && !confirming) await retimeFavourite(env, me, meal, moved.from, moved.to);
+      return json({ ok: true, meal, totals: after.totals, planned: after.planned, favourite: after.favourite, moved, confirmed: confirming });
     }
     return json({ error: "PATCH or DELETE" }, 405);
   }
@@ -233,7 +242,7 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
   if (sub === "repeat") {
     if (request.method !== "POST") return json({ error: "POST only" }, 405);
     const date = pickDate(body.date);
-    const r = await repeatMeals(env, me, { favouriteId: body.favouriteId, fromDate: body.fromDate, date, mult: body.mult, insertMeal: (m) => insertMeal(env, me, { ...m, tz: body.tz, zone: body.zone }) });
+    const r = await repeatMeals(env, me, { favouriteId: body.favouriteId, fromDate: body.fromDate, date, mult: body.mult, insertMeal: (m) => insertMeal(env, me, { ...m, tz: body.tz, zone: body.zone, planned: body.planned }) });
     if (!r.ok) return json(r, r.status || 400);
     let totals = null;
     for (const m of r.meals) totals = (await afterMeal(env, me, m, { repeat: true, favouriteName: r.favourite?.name || "", tzOffsetMin: body.tz })).totals;
@@ -365,7 +374,7 @@ async function photo(request, env, cfg, me) {
     const items = revising ? mergeCorrection(current, fresh, correction) : fresh;
     if (revising && !fresh.length) return json({ error: "no food", reason: "I couldn't apply that correction. Try naming the food and the amount, like “8 strawberries”." }, 422);
     if (!items.length) return json({ error: "no food", reason: parsed?.notes ? `I couldn't find food in that: ${String(parsed.notes).slice(0, 140)}` : "I couldn't make out any food in that photo. Try closer, with more light — or type it.", raw: out.text.slice(0, 300) }, 422);
-    const meal = mealId ? await updateMealItems(env, me, mealId, items) : await insertMeal(env, me, { date, items, source: "photo", thumb, tz: form.get("tz"), zone: form.get("zone") });
+    const meal = mealId ? await updateMealItems(env, me, mealId, items) : await insertMeal(env, me, { date, items, source: "photo", thumb, tz: form.get("tz"), zone: form.get("zone"), planned: form.get("planned") });
     if (!meal) return json({ error: "no such meal" }, 404);
     const after = mealId ? await editedMeal(env, me, meal, { tzOffsetMin: form.get("tz") }) : await afterMeal(env, me, meal, { tzOffsetMin: form.get("tz") });
     return json({ ok: true, meal, notes: String(parsed?.notes || "").slice(0, 200), honesty: HONESTY, totals: after.totals });
@@ -418,7 +427,7 @@ async function textMeal(env, cfg, me, body) {
   if (revising && !fresh.length) return json({ error: "no food", reason: "I couldn't apply that correction. Try naming the food and the amount, like “8 strawberries”." }, 422);
   if (!items.length) return json({ error: "no food", reason: "I couldn't turn that into foods. Try naming them plainly: '2 eggs, 1 slice of toast'." }, 422);
   const mealId = String(body.mealId || "").trim();
-  const meal = mealId ? await updateMealItems(env, me, mealId, items) : await insertMeal(env, me, { date: pickDate(body.date), items, source: "text", thumb: null, tz: body.tz, zone: body.zone });
+  const meal = mealId ? await updateMealItems(env, me, mealId, items) : await insertMeal(env, me, { date: pickDate(body.date), items, source: "text", thumb: null, tz: body.tz, zone: body.zone, planned: body.planned });
   if (!meal) return json({ error: "no such meal" }, 404);
   const after = mealId ? await editedMeal(env, me, meal, { tzOffsetMin: body.tz }) : await afterMeal(env, me, meal, { tzOffsetMin: body.tz });
   return json({ ok: true, meal, notes: String(parsed?.notes || "").slice(0, 200), honesty: HONESTY, totals: after.totals });
@@ -461,7 +470,7 @@ async function say(env, cfg, me, body) {
       return json({ ok: true, kind: "repeat", favourite: f, question: `Logging your ${f.label} from ${when}, about ${Math.round(f.kcal)} kcal. Right?` });
     }
     if (looksLikeFood(text)) {
-      const r = await textMeal(env, cfg, me, { text, date, tz: body.tz });
+      const r = await textMeal(env, cfg, me, { text, date, tz: body.tz, zone: body.zone, planned: body.planned });
       const d = await r.json();
       if (r.ok) return json({ ok: true, kind: "meal", ...d });
       if (d.error !== "no food") return json(d, r.status);
@@ -480,7 +489,7 @@ async function say(env, cfg, me, body) {
 async function saveMeal(env, me, body) {
   const items = sanitiseItems(body.items, { source: ["barcode", "label", "text", "photo", "receipt"].includes(body.source) ? body.source : "text" });
   if (!items.length) return json({ error: "no items", reason: "Nothing to save." }, 400);
-  const meal = await insertMeal(env, me, { date: pickDate(body.date), items, source: items[0].source, thumb: null, tz: body.tz, zone: body.zone });
+  const meal = await insertMeal(env, me, { date: pickDate(body.date), items, source: items[0].source, thumb: null, tz: body.tz, zone: body.zone, planned: body.planned });
   const after = await afterMeal(env, me, meal, { tzOffsetMin: body.tz });
   return json({ ok: true, meal, totals: after.totals });
 }
@@ -504,11 +513,11 @@ async function retimeMeal(env, me, id, body) {
   // The hour it was: on its own clock if the row knew its offset; a row from before zones is read in the person's current zone.
   return { from: Math.round(localHour(old.created_at, old.tz_offset ?? offset)), to: Math.round(localHour(createdAt, offset)) };
 }
-async function insertMeal(env, me, { date, items, source, thumb, tz, zone }) {
+async function insertMeal(env, me, { date, items, source, thumb, tz, zone, planned }) {
   const id = randomId(12), t = totalsOf(items), now = nowIso();
   const offset = cleanOffset(tz);
-  await env.DB.prepare(`INSERT INTO track_meals (id, user_id, date, time, items_json, kcal, protein_g, carbs_g, fat_g, thumb, source, created_at, tz, tz_offset) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .bind(id, me.id, date, localClock(now, offset), JSON.stringify(items), t.kcal, t.protein_g, t.carbs_g, t.fat_g, thumb, source, now, cleanZone(zone), offset).run();
+  await env.DB.prepare(`INSERT INTO track_meals (id, user_id, date, time, items_json, kcal, protein_g, carbs_g, fat_g, thumb, source, created_at, tz, tz_offset, planned) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(id, me.id, date, localClock(now, offset), JSON.stringify(items), t.kcal, t.protein_g, t.carbs_g, t.fat_g, thumb, source, now, cleanZone(zone), offset, cleanPlanned(planned, date) ? 1 : 0).run();
   return readMeal(env, id);
 }
 async function updateMealItems(env, me, id, items) {
@@ -522,29 +531,33 @@ async function readMeal(env, id) {
   const r = await env.DB.prepare(`SELECT * FROM track_meals WHERE id = ?`).bind(id).first();
   return r ? mealOut(r) : null;
 }
-function mealOut(r) { let items = []; try { items = JSON.parse(r.items_json); } catch {} return { id: r.id, date: r.date, time: r.time, items, kcal: r.kcal, protein_g: r.protein_g, carbs_g: r.carbs_g, fat_g: r.fat_g, thumb: r.thumb, source: r.source, created_at: r.created_at, zone: r.tz || null, tzOffset: r.tz_offset ?? null }; }
+function mealOut(r) { let items = []; try { items = JSON.parse(r.items_json); } catch {} return { id: r.id, date: r.date, time: r.time, items, kcal: r.kcal, protein_g: r.protein_g, carbs_g: r.carbs_g, fat_g: r.fat_g, thumb: r.thumb, source: r.source, created_at: r.created_at, zone: r.tz || null, tzOffset: r.tz_offset ?? null, planned: Boolean(r.planned) }; }
 
 // --- THE DAY and THE WEEK. -------------------------------------------------------------
 async function dayView(env, who, date, { readOnly = false } = {}) {
   const rows = (await env.DB.prepare(`SELECT * FROM track_meals WHERE user_id = ? AND date = ? ORDER BY created_at`).bind(who.id, date).all()).results || [];
   const meals = rows.map(mealOut);
-  const totals = totalsOf(meals);
+  const totals = totalsOf(meals.filter((m) => !m.planned));
+  const plannedMeals = meals.filter((m) => m.planned);
+  const planned = { ...totalsOf(plannedMeals), meals: plannedMeals.length };
   const weightRow = await env.DB.prepare(`SELECT kg FROM track_weights WHERE user_id = ? AND date = ?`).bind(who.id, date).first();
-  return { date, targets: who.targets, totals, meals, weight: weightRow?.kg ?? null, weights: await listWeights(env, who.id, 30), readOnly, name: who.name || null, honesty: HONESTY };
+  return { date, targets: who.targets, totals, planned, meals, weight: weightRow?.kg ?? null, weights: await listWeights(env, who.id, 30), readOnly, name: who.name || null, honesty: HONESTY };
 }
 
 async function weekView(env, who, end) {
   const start = addDays(end, -6);
-  const rows = (await env.DB.prepare(`SELECT date, SUM(kcal) kcal, SUM(protein_g) protein_g, SUM(carbs_g) carbs_g, SUM(fat_g) fat_g, COUNT(*) meals FROM track_meals WHERE user_id = ? AND date BETWEEN ? AND ? GROUP BY date`).bind(who.id, start, end).all()).results || [];
+  const rows = (await env.DB.prepare(`SELECT date, SUM(kcal) kcal, SUM(protein_g) protein_g, SUM(carbs_g) carbs_g, SUM(fat_g) fat_g, COUNT(*) meals FROM track_meals WHERE user_id = ? AND date BETWEEN ? AND ? AND planned = 0 GROUP BY date`).bind(who.id, start, end).all()).results || [];
+  const plans = (await env.DB.prepare(`SELECT date, SUM(kcal) kcal, COUNT(*) meals FROM track_meals WHERE user_id = ? AND date BETWEEN ? AND ? AND planned = 1 GROUP BY date`).bind(who.id, start, end).all()).results || [];
   const byDate = Object.fromEntries(rows.map((r) => [r.date, r]));
+  const planBy = Object.fromEntries(plans.map((r) => [r.date, r]));
   const days = [];
-  for (let i = 0; i < 7; i++) { const d = addDays(start, i); const r = byDate[d]; days.push({ date: d, kcal: Math.round(r?.kcal || 0), protein_g: round1(r?.protein_g || 0), carbs_g: round1(r?.carbs_g || 0), fat_g: round1(r?.fat_g || 0), meals: r?.meals || 0 }); }
+  for (let i = 0; i < 7; i++) { const d = addDays(start, i); const r = byDate[d]; const p = planBy[d]; days.push({ date: d, kcal: Math.round(r?.kcal || 0), protein_g: round1(r?.protein_g || 0), carbs_g: round1(r?.carbs_g || 0), fat_g: round1(r?.fat_g || 0), meals: r?.meals || 0, planned: Math.round(p?.kcal || 0), plannedMeals: p?.meals || 0 }); }
   return { start, end, days, targets: who.targets, streak: await streakOf(env, who.id, end), adherence: adherenceOf(days, who.targets) };
 }
 
 // Streak: consecutive days with at least one meal, ending today or yesterday (today isn't over).
 async function streakOf(env, userId, today) {
-  const rows = (await env.DB.prepare(`SELECT DISTINCT date FROM track_meals WHERE user_id = ? AND date <= ? ORDER BY date DESC LIMIT 400`).bind(userId, today).all()).results || [];
+  const rows = (await env.DB.prepare(`SELECT DISTINCT date FROM track_meals WHERE user_id = ? AND date <= ? AND planned = 0 ORDER BY date DESC LIMIT 400`).bind(userId, today).all()).results || [];
   const have = new Set(rows.map((r) => r.date));
   let d = have.has(today) ? today : addDays(today, -1), n = 0;
   while (have.has(d)) { n++; d = addDays(d, -1); }
@@ -618,7 +631,7 @@ async function handleCoach(request, env, url, cfg, sub) {
   return json({ error: "not found" }, 404);
 }
 async function clientRows(env, bot) {
-  const rows = (await env.DB.prepare(`SELECT u.id, u.email, u.created_at, u.last_seen, t.targets_json, (SELECT MAX(created_at) FROM track_meals m WHERE m.user_id = u.id) last_log, (SELECT COUNT(*) FROM id_devices d WHERE d.user_id = u.id) devices, (SELECT COUNT(*) FROM id_pending p WHERE p.bot = u.bot AND p.email = u.email) pending, (SELECT h.name FROM track_members mb JOIN track_households h ON h.id = mb.household_id WHERE mb.user_id = u.id) household FROM id_users u LEFT JOIN track_users t ON t.id = u.id WHERE u.bot = ? ORDER BY last_log DESC`).bind(bot).all()).results || [];
+  const rows = (await env.DB.prepare(`SELECT u.id, u.email, u.created_at, u.last_seen, t.targets_json, (SELECT MAX(created_at) FROM track_meals m WHERE m.user_id = u.id AND m.planned = 0) last_log, (SELECT COUNT(*) FROM id_devices d WHERE d.user_id = u.id) devices, (SELECT COUNT(*) FROM id_pending p WHERE p.bot = u.bot AND p.email = u.email) pending, (SELECT h.name FROM track_members mb JOIN track_households h ON h.id = mb.household_id WHERE mb.user_id = u.id) household FROM id_users u LEFT JOIN track_users t ON t.id = u.id WHERE u.bot = ? ORDER BY last_log DESC`).bind(bot).all()).results || [];
   const out = [];
   for (const r of rows) {
     let targets = null; try { targets = r.targets_json ? JSON.parse(r.targets_json) : null; } catch {}

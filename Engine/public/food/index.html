@@ -79,6 +79,10 @@
   .meal .b .m { font-size:12px; color:var(--muted); }
   .meal .k { font-weight:700; white-space:nowrap; }
   .meal .x { background:transparent; color:var(--muted); padding:8px; }
+  .meal.planned { background:transparent; border:1px dashed var(--edge); } .meal.planned .k, .meal.planned .t { color:var(--muted); }
+  .meal .tag { font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--accent); font-weight:700; }
+  .meal .had { flex:none; background:var(--accent); color:#fff; padding:7px 11px; border-radius:999px; font-size:12.5px; font-weight:600; }
+  .edstate { display:flex; gap:14px; flex-wrap:wrap; margin-top:8px; font-size:13.5px; } .edstate label { display:inline-flex; align-items:center; gap:6px; }
   /* tabs across the top */
   .tabs { display:flex; gap:4px; background:var(--panel); border-radius:14px; padding:4px; margin:6px 0 10px; }
   .tabs button { flex:1; padding:9px 0; border-radius:11px; background:transparent; font-weight:600; color:var(--muted); }
@@ -418,7 +422,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const OFFLINE_REASON = 'Can’t reach the server right now. Check your connection and try again in a moment.';
 async function api(path, opts = {}) {
   const headers = Object.assign({ 'x-device-key': S.deviceKey }, opts.headers || {});
-  if (opts.json) { headers['content-type'] = 'application/json'; opts.body = JSON.stringify({ tz: TZ, zone: ZONE, ...opts.json }); }
+  if (opts.json) { headers['content-type'] = 'application/json'; opts.body = JSON.stringify({ tz: TZ, zone: ZONE, planned: day > localDate(), ...opts.json }); }
   const method = opts.method || (opts.body ? 'POST' : 'GET');
   for (let attempt = 0; ; attempt++) {
     let r = null, why = '';
@@ -728,12 +732,14 @@ function renderDay() {
   const t = DAY.targets || {}, tot = DAY.totals;
   const today = localDate();
   $('daylabel').textContent = day === today ? 'Today' : day === shift(today, -1) ? 'Yesterday' : new Date(day + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-  $('nextday').disabled = day >= today;
+  $('nextday').disabled = day >= shift(today, 14);
+  $('empty').textContent = day > today ? 'Nothing planned yet. Tap a favourite or say what you’ll have — it counts against the day, not as eaten, until you tap “Had it”.' : 'Nothing logged yet. Snap a plate, tap a favourite, or say what you ate.';
   $('streak').innerHTML = WEEK && WEEK.streak ? '🔥 <b>' + WEEK.streak + '</b> day' + (WEEK.streak === 1 ? '' : 's') : '';
   $('viewing').hidden = !viewUser; if (viewUser) $('viewing').textContent = 'Viewing ' + (DAY.name || viewUser.name) + '’s day (read-only)';
   const goal = t.kcal || 0, frac = goal ? Math.min(1, tot.kcal / goal) : 0;
   $('ring').style.strokeDashoffset = 326.7 * (1 - frac); $('ring').style.stroke = goal && tot.kcal > goal * 1.1 ? 'var(--over)' : 'var(--ring)';
-  $('kcal').textContent = tot.kcal; $('kcalof').textContent = goal ? (goal - tot.kcal >= 0 ? (goal - tot.kcal) + ' left of ' + goal : (tot.kcal - goal) + ' over ' + goal) : 'kcal';
+  const pl = (DAY.planned && DAY.planned.kcal) || 0, leftAfter = goal - tot.kcal - pl;
+  $('kcal').textContent = tot.kcal; $('kcalof').textContent = goal ? (leftAfter >= 0 ? leftAfter + ' left of ' + goal + (pl ? ' · ' + pl + ' planned' : '') : (-leftAfter) + ' over ' + goal + (pl ? ' with plans' : '')) : 'kcal';
   for (const [k, id] of [['protein_g', 'p'], ['carbs_g', 'c'], ['fat_g', 'f']]) {
     const g = t[k] || 0; $(id + 'v').textContent = Math.round(tot[k]) + ' g'; $(id + 't').textContent = g ? '/ ' + g : ''; $(id + 'b').style.width = (g ? Math.min(100, 100 * tot[k] / g) : 0) + '%';
   }
@@ -742,10 +748,10 @@ function renderDay() {
   $('week').querySelectorAll('button').forEach((b) => b.onclick = () => { day = b.dataset.d; refresh(); });
   // the chat tab's compact header
   $('miniring').style.strokeDashoffset = 81.7 * (1 - frac); $('miniring').style.stroke = goal && tot.kcal > goal * 1.1 ? 'var(--over)' : 'var(--ring)';
-  $('minik').innerHTML = tot.kcal + ' <small>' + (goal ? (goal - tot.kcal >= 0 ? (goal - tot.kcal) + ' left' : (tot.kcal - goal) + ' over') : 'kcal') + '</small>';
+  $('minik').innerHTML = tot.kcal + ' <small>' + (goal ? (leftAfter >= 0 ? leftAfter + ' left' + (pl ? ' · ' + pl + ' planned' : '') : (-leftAfter) + ' over') : 'kcal') + '</small>';
   $('minim').innerHTML = [['P', 'protein_g'], ['C', 'carbs_g'], ['F', 'fat_g']].map(([l, k]) => '<span>' + l + ' <b>' + Math.round(tot[k]) + '</b>' + (t[k] ? '<span style="opacity:.7">/' + t[k] + '</span>' : '') + '</span>').join('');
   // the week tab's rows
-  $('weekrows').innerHTML = (WEEK?.days || []).map((d) => '<div class="wrow"><span class="d">' + new Date(d.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' }) + '</span><span>' + (d.meals ? d.kcal + ' kcal' + (goal ? ' <span class="muted small">' + (d.kcal > goal ? '+' + (d.kcal - goal) : '−' + (goal - d.kcal)) + '</span>' : '') : '<span class="muted">nothing logged</span>') + '</span><span class="muted">' + (d.meals ? 'P ' + Math.round(d.protein_g) + (t.protein_g ? '/' + t.protein_g : '') + ' · ' + d.meals + ' meal' + (d.meals === 1 ? '' : 's') : '') + '</span></div>').join('')
+  $('weekrows').innerHTML = (WEEK?.days || []).map((d) => '<div class="wrow"><span class="d">' + new Date(d.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' }) + '</span><span>' + (d.planned ? '<span class="muted small">+' + d.planned + ' planned</span> ' : '') + (d.meals ? d.kcal + ' kcal' + (goal ? ' <span class="muted small">' + (d.kcal > goal ? '+' + (d.kcal - goal) : '−' + (goal - d.kcal)) + '</span>' : '') : '<span class="muted">nothing logged</span>') + '</span><span class="muted">' + (d.meals ? 'P ' + Math.round(d.protein_g) + (t.protein_g ? '/' + t.protein_g : '') + ' · ' + d.meals + ' meal' + (d.meals === 1 ? '' : 's') : '') + '</span></div>').join('')
     + (WEEK?.adherence != null ? '<p class="muted small">Adherence ' + WEEK.adherence + '% of logged days within 15% of target.</p>' : '');
   // the thread (chat tab)
   renderThread();
@@ -769,10 +775,11 @@ function mealWhen(m) {
   if (m.tzOffset !== null && m.tzOffset !== undefined) { const o = Number(m.tzOffset); if (o === TZ) return m.time; const h = -o / 60; return m.time + ' <small>UTC' + (h >= 0 ? '+' : '−') + Math.abs(h) + '</small>'; }
   return isNaN(at) ? m.time : (clockOf(at) || m.time);
 }
+// A planned meal is drawn hollow with a "Had it" button: one tap makes it eaten, at the time it is tapped.
 function mealCard(m) {
-  return '<div class="meal" data-id="' + m.id + '">' + (m.thumb ? '<img src="' + m.thumb + '" alt="">' : '<div class="ph">' + ({ text: '⌨️', barcode: '▥', label: '🏷', receipt: '🧾', repeat: '⟲' }[m.source] || '🍽') + '</div>')
-    + '<div class="b"><div class="t">' + esc(m.items.map((i) => i.name).join(', ')) + '</div><div class="m">' + mealWhen(m) + ' · P ' + Math.round(m.protein_g) + ' · C ' + Math.round(m.carbs_g) + ' · F ' + Math.round(m.fat_g) + '</div></div><div class="k">' + Math.round(m.kcal) + '</div>'
-    + (DAY.readOnly ? '' : '<button class="x" data-del="' + m.id + '" title="Delete">✕</button>') + '</div>';
+  return '<div class="meal' + (m.planned ? ' planned' : '') + '" data-id="' + m.id + '">' + (m.thumb ? '<img src="' + m.thumb + '" alt="">' : '<div class="ph">' + (m.planned ? '📅' : ({ text: '⌨️', barcode: '▥', label: '🏷', receipt: '🧾', repeat: '⟲' }[m.source] || '🍽')) + '</div>')
+    + '<div class="b"><div class="t">' + (m.planned ? '<span class="tag">Planned</span> ' : '') + esc(m.items.map((i) => i.name).join(', ')) + '</div><div class="m">' + (m.planned ? 'P ' : mealWhen(m) + ' · P ') + Math.round(m.protein_g) + ' · C ' + Math.round(m.carbs_g) + ' · F ' + Math.round(m.fat_g) + '</div></div><div class="k">' + Math.round(m.kcal) + '</div>'
+    + (DAY.readOnly ? '' : (m.planned ? '<button class="had" data-had="' + m.id + '" title="I had it — log it as eaten now">Had it</button>' : '') + '<button class="x" data-del="' + m.id + '" title="Delete">✕</button>') + '</div>';
 }
 function renderThread() {
   const turns = (CHAT && CHAT.turns) || [];
@@ -784,7 +791,8 @@ function renderThread() {
   wireMeals($('thread'));
 }
 function wireMeals(root) {
-  root.querySelectorAll('.meal').forEach((el) => el.onclick = (e) => { if (e.target.dataset.del) return; if (DAY.readOnly) return; const m = DAY.meals.find((x) => x.id === el.dataset.id); if (m) openEditor(m, { existing: true }); });
+  root.querySelectorAll('[data-had]').forEach((b) => b.onclick = async (e) => { e.stopPropagation(); const m = DAY.meals.find((x) => x.id === b.dataset.had); if (!m) return; b.disabled = true; const r = await api('meal/' + m.id, { method: 'PATCH', json: { items: m.items, planned: false } }); if (!r.ok) toast(r.reason || 'Couldn’t log it.'); else toast('Logged as eaten'); await refresh(); if (tab === 'chat') scrollThread(); });
+  root.querySelectorAll('.meal').forEach((el) => el.onclick = (e) => { if (e.target.dataset.del || e.target.dataset.had) return; if (DAY.readOnly) return; const m = DAY.meals.find((x) => x.id === el.dataset.id); if (m) openEditor(m, { existing: true }); });
   root.querySelectorAll('[data-del]').forEach((b) => b.onclick = async (e) => { e.stopPropagation(); if (!confirm('Delete this meal?')) return; await api('meal/' + b.dataset.del, { method: 'DELETE' }); refresh(); });
 }
 function scrollThread() { requestAnimationFrame(() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' })); }
@@ -1014,7 +1022,7 @@ async function handlePhoto(file, kind) {
         if (found.length) { const r = await api('barcode', { json: { code: found[0].rawValue } }); if (r.ok) return openProduct(r.product); toast(r.reason || 'Not found'); }
       } catch {}
     }
-    const fd = new FormData(); fd.append('photo', photo, 'photo.jpg'); fd.append('thumb', thumb, 'thumb.jpg'); fd.append('kind', kind); fd.append('date', day); fd.append('tz', String(TZ)); fd.append('zone', ZONE);
+    const fd = new FormData(); fd.append('photo', photo, 'photo.jpg'); fd.append('thumb', thumb, 'thumb.jpg'); fd.append('kind', kind); fd.append('date', day); fd.append('tz', String(TZ)); fd.append('zone', ZONE); fd.append('planned', day > localDate() ? '1' : '0');
     const r = await api('photo', { body: fd });
     if (!r.ok) { closeSheet(); return toast(r.reason || 'That didn’t work.', 4000); }
     if (kind === 'food') return openEditor(r.meal, { fresh: true, notes: r.notes });
@@ -1039,19 +1047,22 @@ function fitAdvice() {
   const t = (DAY && DAY.targets) || S.targets || {};
   if (!t.kcal || !DAY || !DAY.totals || !ED.items.length) return '';
   const inDay = (DAY.meals || []).find((m) => m.id === ED.meal.id);
-  const eaten = DAY.totals.kcal - (inDay ? inDay.kcal : 0), eatenP = DAY.totals.protein_g - (inDay ? inDay.protein_g : 0);
-  const left = Math.round(t.kcal - eaten);
+  const mine = inDay && !inDay.planned ? inDay : null;                 // this meal already in the eaten totals
+  const eaten = DAY.totals.kcal - (mine ? mine.kcal : 0), eatenP = DAY.totals.protein_g - (mine ? mine.protein_g : 0);
+  const kept = ((DAY.planned && DAY.planned.kcal) || 0) - (inDay && inDay.planned ? inDay.kcal : 0);   // other plans on this day
+  const left = Math.round(t.kcal - eaten - kept);
   const rows = ED.items.map((it, i) => ({ i, it, s: scaled(it) }));
   const plate = rows.reduce((a, x) => a + x.s.kcal, 0), plateP = rows.reduce((a, x) => a + x.s.protein_g, 0);
   const needP = t.protein_g ? Math.max(0, Math.round(t.protein_g - eatenP)) : null;
   const pWords = needP !== null ? ' Protein: this gives ' + Math.round(plateP) + ' of the ' + needP + ' you still need.' : '';
-  if (left <= 0) return '<div class="fit over"><b>' + kfmt(-left) + ' over</b> for today already. Log it as it is, or trim it.' + pWords + '</div>';
-  if (plate <= left) return '<div class="fit"><b>Fits.</b> ' + kfmt(left) + ' left today, this is ' + kfmt(plate) + ' — ' + kfmt(left - plate) + ' after.' + pWords + '</div>';
+  const keptWords = kept > 0 ? ' (' + kfmt(kept) + ' kept for what’s planned)' : '';
+  if (left <= 0) return '<div class="fit over"><b>' + kfmt(-left) + ' over</b> for today already' + keptWords + '. Log it as it is, or trim it.' + pWords + '</div>';
+  if (plate <= left) return '<div class="fit"><b>Fits.</b> ' + kfmt(left) + ' left today' + keptWords + ', this is ' + kfmt(plate) + ' — ' + kfmt(left - plate) + ' after.' + pWords + '</div>';
   const pick = FRACTIONS.find(([v]) => v <= left / plate) || null;
   // Leave one thing? Only the item worth the least protein per calorie (never the chicken), and only if that alone gets under.
   const worst = rows.length > 1 ? rows.slice().sort((a, b) => (b.s.kcal / (b.s.protein_g + 1)) - (a.s.kcal / (a.s.protein_g + 1)))[0] : null;
   const leave = worst && plate - worst.s.kcal <= left ? worst : null;
-  let html = '<div class="fit tight"><b>' + kfmt(left) + ' left today</b>, this is ' + kfmt(plate) + '.';
+  let html = '<div class="fit tight"><b>' + kfmt(left) + ' left today</b>' + keptWords + ', this is ' + kfmt(plate) + '.';
   html += pick ? ' About <b>' + pick[1] + '</b> fits.' : ' Only a few bites fit — under a meal’s worth. Eat something sensible and take it from tomorrow.';
   html += pWords;
   const btns = (pick ? ['<button data-fit="' + pick[0] + '">Take ' + pick[1] + '</button>'] : []).concat(leave ? ['<button data-leave="' + leave.i + '">Leave the ' + esc(leave.it.name.toLowerCase()) + '</button>'] : []);
@@ -1128,6 +1139,8 @@ function renderEditor(notes) {
     // When it was eaten. Prefilled with the clock it was logged on; a change is read on THIS browser's clock.
     + '<div class="row" style="margin-top:10px"><label for="ed-time" style="margin:0;flex:0 0 auto">Eaten at</label><input type="time" id="ed-time" value="' + esc(editTime(ED.meal)) + '" style="flex:0 0 auto;width:auto;padding:8px 10px">'
     + (ED.meal.zone && ED.meal.zone !== ZONE ? '<small class="muted">logged in ' + esc(zoneTag(ED.meal.zone, new Date(ED.meal.created_at))) + '; a change is read in ' + esc(zoneTag(ZONE, new Date())) + '</small>' : '<span></span>') + '</div>'
+    // Eaten, or planned? A plan counts against the day's budget and never as eaten, until it is confirmed.
+    + '<div class="edstate"><label><input type="radio" name="ed-state" value="eaten"' + (ED.meal.planned ? '' : ' checked') + ' /> Eaten</label><label><input type="radio" name="ed-state" value="planned"' + (ED.meal.planned ? ' checked' : '') + ' /> Planned — not yet, but it counts against the day</label></div>'
     + '<div class="row"><input id="fix" placeholder="Wrong food? e.g. “that’s chicken, not pork”"><button id="fixbtn" style="flex:0 0 auto">Fix</button></div>'
     + '<p class="muted small">' + esc(CFG.honesty || '') + '</p>'
     + '<div class="row" style="margin-top:10px"><button class="ghost danger" id="discard">' + (ED.fresh ? 'Discard' : 'Delete') + '</button><button class="primary" id="savemeal" style="flex:2">Save</button></div>');
@@ -1163,7 +1176,9 @@ function renderEditor(notes) {
     const items = ED.items.map((it) => { const s = scaled(it); return { ...it, ...s, base: undefined }; });
     if (!items.length) return $('discard').onclick();
     const time = ($('ed-time') && $('ed-time').value) || '';
-    const r = await api('meal/' + ED.meal.id, { method: 'PATCH', json: { items, ...(time && time !== editTime(ED.meal) ? { time } : {}) } });
+    const planned = ((document.querySelector('input[name="ed-state"]:checked') || {}).value || 'eaten') === 'planned';
+    const flip = planned !== Boolean(ED.meal.planned);
+    const r = await api('meal/' + ED.meal.id, { method: 'PATCH', json: { items, ...(time && time !== editTime(ED.meal) ? { time } : {}), ...(flip ? { planned } : {}) } });
     if (!r.ok) return toast(r.reason || 'Couldn’t save.');
     closeSheet(); toast('Logged'); await refresh(); if (tab === 'chat') scrollThread();
   };
