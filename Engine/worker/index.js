@@ -12,7 +12,7 @@ const HAS_GUIDE = Object.values(FOLDER_PROJECTS).some((p) => p && p.tour);
 import { handleIdentity, identify, linkByCode, signInMethods, adminNeedsCode, adminCodeOk, graceMinutesFor } from "../identity/index.js";
 import { ensureIdentitySchema, userByEmail as idUserByEmail, listPending as idListPending } from "../identity/devices.js";
 import { listThreads, putThread, renameThread, deleteThread, usersWithHistory, ensureChatSchema } from "./chats.js";
-import { addToList, removeFromList, listFor as allowlistFor, listCounts as allowlistCounts, hasKey as allowlistKeySet, isAllowed, blindFor, GLOBAL_SCOPE } from "./allowlist.js";
+import { addToList, removeFromList, listFor as allowlistFor, listCounts as allowlistCounts, hasKey as allowlistKeySet, isAllowed, blindFor, GLOBAL_SCOPE, createInvite, listInvites, disableInvite } from "./allowlist.js";
 import { ensureExpirySchema, cleanUntil, asDateInput, setPersonUntil, setKeyUntil, keyRows, timelineFor, datedPeople, resolve as resolveExpiry, expiryFor, stateOf, noticeFor, LAPSE_MODES, LAPSE_LINES, cleanExpiryConfig, EXPIRY_BUILT_IN } from "./expiry.js";
 import { buildSystemPrompt, PROMPT_FILES, ROOT_PROMPT_FILES } from "./prompt.js";
 import { complete, gatewayStatus } from "./gateway.js";
@@ -227,6 +227,17 @@ export default {
         const { body: b, error } = await readJson(request, { max: 8 * 1024 }); if (error) return error;
         const r = request.method === "POST" ? await addToList(env, b.scope, b.email, "admin", cleanUntil(b.until)) : await removeFromList(env, b.scope, b.email);
         if (r.ok) await logAdminEvent(env, request, request.method === "POST" ? (r.existed ? "access-extend" : "allowlist-add") : "allowlist-remove", r.scope === GLOBAL_SCOPE ? "every bot" : r.scope, `${r.email}${request.method === "POST" ? ` · invitation ${r.was ? String(r.was).slice(0, 10) : "unlimited"} → ${r.until ? String(r.until).slice(0, 10) : "unlimited"}` : ""}${request.method === "DELETE" && !r.removed ? " (wasn't on it)" : ""}`, r.email);
+        return json(r, r.ok ? 200 : r.status || 400);
+      }
+      // Invite codes (allow mode): a ticket that puts whoever redeems it on the list, with a date.
+      // GET ?scope=<bot|*> · POST {scope, until, note, maxUses} · DELETE {code, on} (disable, or re-enable with on:true).
+      if (url.pathname === "/api/admin/invites") {
+        if (!env.DB) return json({ error: "Invites need the D1 database (wrangler.jsonc → d1_databases)." }, 503);
+        if (request.method === "GET") { const r = await listInvites(env, url.searchParams.get("scope") || GLOBAL_SCOPE); return json({ ...r, keySet: allowlistKeySet(env) }, r.ok ? 200 : r.status || 400); }
+        if (request.method !== "POST" && request.method !== "DELETE") return json({ error: "method" }, 405);
+        const { body: b, error } = await readJson(request, { max: 8 * 1024 }); if (error) return error;
+        const r = request.method === "POST" ? await createInvite(env, { scope: b.scope, until: cleanUntil(b.until), note: b.note, maxUses: b.maxUses, who: "admin" }) : await disableInvite(env, b.code, b.on === undefined ? true : !b.on);
+        if (r.ok) await logAdminEvent(env, request, request.method === "POST" ? "invite-make" : (r.disabled ? "invite-disable" : "invite-enable"), r.scope === GLOBAL_SCOPE ? "every bot" : r.scope, `${r.code}${request.method === "POST" ? ` · ends ${r.until ? String(r.until).slice(0, 10) : "never"} · ${r.maxUses === 1 ? "one person" : `up to ${r.maxUses}`}${b.note ? ` · ${String(b.note).slice(0, 80)}` : ""}` : ""}`);
         return json(r, r.ok ? 200 : r.status || 400);
       }
       // See what a visitor sees — READ ONLY. Their threads and turns, exactly as their page has them

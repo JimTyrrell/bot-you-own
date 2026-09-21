@@ -29,6 +29,7 @@
 
 import { deviceHash, userForDevice, userById, userByEmail, pendingFor, bindDevice, cleanEmail, ensureIdentitySchema, nowIso, deviceCount, join as joinDevice, linkByCode, touch, cleanGrace, DEFAULT_GRACE_MINUTES, recordSignup, cleanPhone, pepperOf, adoptDevice } from "./devices.js";
 import { SIGNUP_BUILT_IN } from "../worker/settings.js";
+import { redeemInvite } from "../worker/allowlist.js";
 import { DISPOSABLE } from "../worker/signups.js";
 import { keyIsActive, noteKeyUse } from "../worker/tour.js";
 
@@ -201,6 +202,14 @@ export async function handleIdentity(request, env, url, { bot, allowed = async (
       return json({ ok: true, bots: people.length });
     }
 
+    // ---- INVITE: a code the owner handed out. This person, already joined by email, goes on the list. ----
+    if (path === "invite") {
+      if (!me) return json({ error: "who", reason: "Sign in with your email first, then use the invite code." }, 401);
+      const r = await redeemInvite(env, { bot: bot.id, email: me.email, code: body.code });
+      if (!r.ok) return json({ error: "invite", reason: r.reason }, 403);
+      console.log(JSON.stringify({ event: "invite-redeemed", bot: bot.id, code: r.code, scope: r.scope }));
+      return json({ ok: true, scope: r.scope, until: r.until });
+    }
     // ---- JOIN: email + this device. The first device just joins; a second one waits for a link. ----
     if (path === "join") {
       const email = cleanEmail(body.email);

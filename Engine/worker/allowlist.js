@@ -22,6 +22,10 @@
 //   · Nothing here sends email. The list is who the owner typed in, nothing more.
 // ============================================================================
 
+import { randomCode } from "../identity/devices.js";
+// Invite codes (v3.13): a ticket the owner hands out. Redeemed with an email, that email goes on the
+// list for the invite's scope with the invite's end date. Single use unless the owner says otherwise.
+const INVITES = `CREATE TABLE IF NOT EXISTS invites (code TEXT PRIMARY KEY, scope TEXT NOT NULL, expires_at TEXT, note TEXT, max_uses INTEGER NOT NULL DEFAULT 1, uses INTEGER NOT NULL DEFAULT 0, disabled INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, created_by TEXT, last_used_at TEXT, last_email_enc TEXT)`;
 const TABLE = `CREATE TABLE IF NOT EXISTS allowlist (scope TEXT NOT NULL, email_hmac TEXT NOT NULL, email_enc TEXT NOT NULL, added_at TEXT NOT NULL, added_by TEXT, expires_at TEXT, PRIMARY KEY (scope, email_hmac))`;
 export const GLOBAL_SCOPE = "*";
 const EMAIL_SHAPE = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
@@ -77,6 +81,7 @@ let SCHEMA_OK = false;
 async function ensure(env) {
   if (SCHEMA_OK) return;
   await env.DB.prepare(TABLE).run();
+  await env.DB.prepare(INVITES).run();
   try {
     const info = (await env.DB.prepare(`PRAGMA table_info(allowlist)`).all()).results || [];
     if (info.length && !info.some((c) => c.name === "expires_at")) await env.DB.prepare(`ALTER TABLE allowlist ADD COLUMN expires_at TEXT`).run();
@@ -161,6 +166,65 @@ export async function listFor(env, scope) {
   for (const r of rows) { let email = "(unreadable — the key changed)"; try { email = await unseal(k, r.email_enc); } catch {} out.push({ email, added_at: r.added_at, added_by: r.added_by, expires_at: r.expires_at || null }); }
   return { ok: true, scope, keySet: true, rows: out };
 }
+// --- INVITE CODES. The owner's side: make, list, disable. The visitor's side: redeem. ------------
+//     A code is eight characters from the read-aloud alphabet (no 0/O/1/I), shown as XXXX-XXXX —
+//     letters, so it never looks like a workshop key (SO-1234-5678, digits).
+const cleanInviteCode = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+const fmtCode = (raw) => raw.slice(0, 4) + "-" + raw.slice(4);
+export async function createInvite(env, { scope, until = null, note = "", maxUses = 1, who = "admin" } = {}) {
+  scope = cleanScope(scope);
+  if (!scope) return { ok: false, status: 400, error: "scope (a bot id or *) is required" };
+  if (!hasKey(env)) return { ok: false, status: 503, error: "ALLOWLIST_KEY is not set", reason: "Set the ALLOWLIST_KEY secret first. An invite puts someone on the list, and there is no list without it." };
+  await ensure(env);
+  const code = randomCode(8);
+  const max = Number.isFinite(Number(maxUses)) && Number(maxUses) >= 1 ? Math.min(1000, Math.round(Number(maxUses))) : 1;
+  await env.DB.prepare(`INSERT INTO invites (code, scope, expires_at, note, max_uses, uses, disabled, created_at, created_by) VALUES (?, ?, ?, ?, ?, 0, 0, ?, ?)`)
+    .bind(code, scope, until, String(note || "").slice(0, 80), max, new Date().toISOString(), String(who).slice(0, 60)).run();
+  return { ok: true, code: fmtCode(code), scope, until, maxUses: max };
+}
+export async function listInvites(env, scope) {
+  scope = cleanScope(scope);
+  if (!scope) return { ok: false, status: 400, error: "which scope?" };
+  await ensure(env);
+  const k = await keys(env);
+  const rows = (await env.DB.prepare(`SELECT * FROM invites WHERE scope = ? ORDER BY created_at DESC LIMIT 200`).bind(scope).all()).results || [];
+  const out = [];
+  for (const r of rows) {
+    let last = ""; if (r.last_email_enc && k) { try { last = await unseal(k, r.last_email_enc); } catch { last = "(unreadable — the key changed)"; } }
+    out.push({ code: fmtCode(r.code), scope: r.scope, until: r.expires_at || null, note: r.note || "", maxUses: r.max_uses, uses: r.uses, disabled: Boolean(r.disabled), created_at: r.created_at, last_used_at: r.last_used_at || null, last_email: last });
+  }
+  return { ok: true, scope, rows: out };
+}
+export async function disableInvite(env, code, on = true) {
+  await ensure(env);
+  const raw = cleanInviteCode(code);
+  const row = await env.DB.prepare(`SELECT scope FROM invites WHERE code = ?`).bind(raw).first();
+  if (!row) return { ok: false, status: 404, error: "no such invite" };
+  await env.DB.prepare(`UPDATE invites SET disabled = ? WHERE code = ?`).bind(on ? 1 : 0, raw).run();
+  return { ok: true, code: fmtCode(raw), scope: row.scope, disabled: Boolean(on) };
+}
+// The visitor's side. Claims a use FIRST (one UPDATE guarded by uses < max_uses, so two people with the
+// same single-use code can't both get in), then puts the email on the list. Fails closed like the rest.
+export async function redeemInvite(env, { bot, email, code }) {
+  try {
+    const raw = cleanInviteCode(code); email = cleanEmail(email);
+    if (raw.length !== 8) return { ok: false, reason: "That doesn't look like an invite code." };
+    if (!email) return { ok: false, reason: "Sign in with your email first, then use the code." };
+    const k = await keys(env);
+    if (!k) return { ok: false, reason: "The list isn't set up yet. Ask the owner." };
+    await ensure(env);
+    const inv = await env.DB.prepare(`SELECT * FROM invites WHERE code = ?`).bind(raw).first();
+    if (!inv || inv.disabled) return { ok: false, reason: "That invite isn't valid." };
+    if (inv.scope !== GLOBAL_SCOPE && inv.scope !== cleanScope(bot)) return { ok: false, reason: "That invite is for a different bot." };
+    if (inv.expires_at && Date.parse(inv.expires_at) < Date.now()) return { ok: false, reason: "That invite has ended." };
+    const claim = await env.DB.prepare(`UPDATE invites SET uses = uses + 1, last_used_at = ?, last_email_enc = ? WHERE code = ? AND disabled = 0 AND uses < max_uses`).bind(new Date().toISOString(), await seal(k, email), raw).run();
+    if (!Number(claim?.meta?.changes || 0)) return { ok: false, reason: "That invite has already been used." };
+    const added = await addToList(env, inv.scope, email, `invite ${fmtCode(raw)}`, inv.expires_at || null);
+    if (!added.ok) { await env.DB.prepare(`UPDATE invites SET uses = uses - 1 WHERE code = ?`).bind(raw).run(); return { ok: false, reason: added.reason || added.error || "Couldn't add you to the list." }; }
+    return { ok: true, scope: inv.scope, until: inv.expires_at || null, code: fmtCode(raw), email };
+  } catch (err) { console.error("invite redeem failed — refusing", err?.message || err); return { ok: false, reason: "The invite couldn't be checked. Nothing was opened." }; }
+}
+
 // How many are on each list — for the Settings table.
 export async function listCounts(env) {
   if (!env.DB) return {};

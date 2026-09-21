@@ -177,3 +177,15 @@ hood → Settings lists, per bot, which methods are on, its return window if it 
 one, and how many are on its allowlist.
 Tests: `node Engine/tests/identity.mjs` (ID tokens, TOTP vectors from RFC 6238
 Appendix B, the CBOR decoder, passkey verification and its refusals, the QR encoder).
+
+## Invite codes (access mode "allow")
+
+A ticket the owner hands out. Under the hood → Security → Members, with **Only emails on
+the list** chosen: *Make a code* gives `7K3M-9QRT` (letters, so it never looks like a
+workshop key). It ends never or on a date, and it is for one person unless you say up to
+5, 25, or anyone who has it. The visitor signs in with their email as usual, meets the
+"invited people only" screen, types the code, and that email goes on the list for the
+code's scope (this bot, or every bot) with the code's end date. A single-use code claims
+its use before it adds anyone, so two people with the same code cannot both get in.
+Switching a code off does not remove anyone it already let in — that is the list.
+Routes: `GET/POST/DELETE /api/admin/invites`, `POST /api/id/invite {bot, code}`.

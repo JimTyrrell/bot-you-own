@@ -378,6 +378,9 @@
   .ready li div { min-width:0; flex:1; } .ready small { color:var(--muted); font-size:12px; display:block; margin-top:3px; }
   .seccmd { margin:6px 0 0; font-size:12px; white-space:pre-wrap; word-break:break-all; }
   #secbody h5 { margin:16px 0 4px; font-size:13.5px; }
+  .inviterow { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  .inviterow select, .inviterow input { margin:0; padding:6px 8px; border:1px solid var(--edge); border-radius:8px; background:var(--bg); color:var(--text); font:inherit; font-size:13px; } .inviterow input[type=text] { flex:1; min-width:160px; }
+  .lockinvite { display:flex; gap:8px; margin:8px 0 0; } .lockinvite[hidden] { display:none; } .lockinvite input { flex:1; margin:0; text-transform:uppercase; } .lockinvite input::placeholder { text-transform:none; } .lockinvite button { flex:0 0 auto; }
   #cfgpreview { display:flex; flex-direction:column; min-width:0; }
   #cfgpreview .ptitle { padding:10px 16px; border-bottom:1px solid var(--edge); font-weight:600; font-size:14px; display:flex; gap:10px; align-items:center; }
   #plog { flex:1; overflow:auto; padding:18px; display:flex; flex-direction:column; gap:14px; }
@@ -567,6 +570,7 @@ document.addEventListener('DOMContentLoaded', function () {
   <p id="lprivacy" class="lockprivacy" hidden></p>
   <div style="display:flex;gap:8px"><button type="submit" id="lockgo" style="flex:1">Continue</button><button type="button" id="lockback" style="flex:1;background:var(--panel);color:var(--text)" hidden>Back</button></div>
   <button type="button" id="lockcfg" hidden>✎ Configure this bot</button>
+  <div id="linvitewrap" class="lockinvite" hidden><input id="linvite" type="text" placeholder="Invite code, e.g. 7K3M-9QRT" autocomplete="off" maxlength="9" /><button type="button" id="linvitego">Use the code</button></div>
   <button type="button" id="lockswitch" hidden style="background:var(--panel);color:var(--text)">Use a different email</button>
   <div id="lockmsg"></div>
 </form></div>
@@ -844,12 +848,12 @@ function showLock(msg, l) {
   $('pass').hidden = !needKey; $('adminkey').hidden = !needAdmin; $('email').hidden = !needEmail; $('lockgo').hidden = !!lock.draft || !!lock.list;
   drawSignup(needEmail && !lock.list);
   const welcome = needEmail && !needKey && !lock.list && !lock.draft && !lock.admin;   // the plain sign-up gate: sell it a little
-  $('lockswitch').hidden = !lock.list;
+  $('lockswitch').hidden = !lock.list; $('linvitewrap').hidden = !lock.list;
   // Back: to the bot list when we have one, else (a direct link to a locked bot) home to the default bot.
   $('lockback').hidden = !((state.projects && state.projects.length) || new URLSearchParams(location.search).get('project'));
   $('locktitle').textContent = lock.draft ? 'This bot is a draft' : lock.admin ? 'Owner only' : lock.list ? 'Invited people only' : welcome && SIGNUP.title ? SIGNUP.title : 'Before we start';
   $('lockhint').textContent = lock.draft ? 'It only answers in the Configure preview. The owner can publish it from ✎ Configure.'
-    : lock.list ? (lock.name || 'This bot') + ' is for people on its list. You\'re signed in as ' + (VISITOR || 'nobody') + '. Ask ' + (state.cfg?.owner || 'the owner') + ' to add that address, or use a different email.'
+    : lock.list ? (lock.name || 'This bot') + ' is for people on its list. You\'re signed in as ' + (VISITOR || 'nobody') + '. Got an invite code? Type it below and that address goes on the list. Otherwise ask ' + (state.cfg?.owner || 'the owner') + ' to add it, or use a different email.'
     : lock.admin ? (lock.name ? lock.name + ' opens' : 'This bot opens') + ' with the admin code only.'
     : needKey && needEmail ? 'Enter the passphrase and your email address.'
     : welcome && SIGNUP.blurb ? SIGNUP.blurb
@@ -863,6 +867,20 @@ function showLock(msg, l) {
 $('lockcfg').onclick = () => { $('lock').classList.remove('show'); openConfigure(lock.project); };
 $('gateclearlink').onclick = (e) => { e.preventDefault(); forgetGate(); };
 $('lockswitch').onclick = () => signOut();
+// An invite code at the "invited people only" screen: the signed-in email goes on the list, then the bot opens.
+$('linvitego').onclick = async () => {
+  const code = ($('linvite').value || '').trim(); if (!code) { $('linvite').focus(); return; }
+  $('linvitego').disabled = true; $('lockmsg').textContent = 'Checking the code…';
+  try {
+    const r = await fetch('/api/id/invite', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(lock.project) }, body: JSON.stringify({ bot: lock.project, code }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { $('lockmsg').textContent = r.status === 429 ? 'Too many tries. Wait a minute.' : (d.reason || 'That code didn\'t work.'); return; }
+    $('lockmsg').textContent = ''; $('linvite').value = ''; lock.list = false;
+    $('lock').classList.remove('show'); boot(lock.project);
+  } catch { $('lockmsg').textContent = 'Could not reach the server. Try again.'; }
+  finally { $('linvitego').disabled = false; }
+};
+$('linvite').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('linvitego').click(); } });
 $('lockback').onclick = () => { if (!(state.projects && state.projects.length)) { location.href = location.pathname; return; } $('lock').classList.remove('show'); const p = state.projects?.find((x) => x.id === state.cfg?.defaultProject) || state.projects?.[0]; if (p && p.id !== state.project?.id) selectProject(p); };
 // A second browser typing a known email: the server hands it a 6-character code instead of
 // the chat. The owner types the code (under the hood → Leads) and this page, which asks
@@ -2646,7 +2664,7 @@ function drawSecurity(d) {
       { v: 'email', label: 'Type an email and you’re in', hint: 'The sign-up gate below applies. ' + esc(line('email')) },
       { v: 'allow', label: 'Only emails on the list', hint: esc(line('allow')) + (d.allowlist?.keySet ? '' : ' <b style="color:var(--danger)">ALLOWLIST_KEY is not set, so this refuses everyone until it is.</b>') },
     ], d.access.default === 'allow' ? 'allow' : 'email') + overNote
-      + (d.access.default === 'allow' ? '<div id="allowbox"><p class="thinking"><span>Reading the list</span></p></div>' : '<p class="sechint">Choose <b>Only emails on the list</b> and the list appears here.</p>')
+      + (d.access.default === 'allow' || (d.bots || []).some((b) => b.effective === 'allow') ? '<div id="allowbox"><p class="thinking"><span>Reading the list</span></p></div><div id="invitebox"></div>' : '<p class="sechint">Choose <b>Only emails on the list</b> and the list appears here, with invite codes you can hand out. (A single bot can be put on the list from its own Configure screen; the list shows here then too.)</p>')
       + '<h5>When a person’s date passes</h5><p class="sechint">Nobody has a date unless you give them one — a person, a list entry or the passphrase. <b>Never</b> is the default everywhere.</p>' + secRadios('sec_lapse', (d.expiryModes || []).map((m) => ({ v: m.id, label: m.id === 'tell' ? 'Tell them, and lock them out' : m.id === 'readonly' ? 'Read-only: they keep their history, nothing new' : 'Silent: refused as if they had never joined', hint: esc(m.line) })), e.onLapse)
       + '<div class="row2 secnums">' + secField('sec_gracedays', 'Days of grace after the date', '0 = none: it bites the moment the date passes', e.graceDays) + secField('sec_warndays', 'Days of warning before it', '0 = no countdown', e.warnDays) + '</div>'
       + '<div class="row2 secnums">' + secField('sec_defdays', 'New people get, in days', '0 = never expires. 84 = twelve weeks from the day they join', e.defaultDays) + '<div></div></div>'
@@ -2703,6 +2721,34 @@ function drawSecurity(d) {
     } catch (err) { msg.textContent = 'Not saved: ' + err.message; }
   }; }));
   if ($('allowbox')) renderAllowlist(d);
+  if ($('invitebox')) renderInvites(d);
+}
+// Invite codes for the list the allowlist box is showing (this bot / every bot). Make one, see who used it, switch it off.
+async function renderInvites(d) {
+  const box = $('invitebox'); if (!box) return;
+  const scope = allowScope === 'all' ? '*' : state.project.id;
+  try {
+    const r = await fetch('/api/admin/invites?scope=' + encodeURIComponent(scope), { headers: adminHeaders() }); const a = await r.json(); if (!r.ok) throw new Error(a.error || r.status);
+    box.innerHTML = '<h5>Invite codes for ' + (scope === '*' ? 'every bot' : esc(state.project.name)) + '</h5><p class="sechint">A ticket you hand out. The person signs in with their email, types the code on the “invited people only” screen, and that email goes on this list with the code’s end date. One person unless you say otherwise. Follows the this-bot / every-bot switch above.</p>'
+      + '<div class="inviterow"><select id="inv_end"><option value="never">Ends: never</option><option value="date">Ends: on a date…</option></select><input type="date" id="inv_date" hidden /><select id="inv_uses"><option value="1">One person</option><option value="5">Up to 5 people</option><option value="25">Up to 25 people</option><option value="1000">Anyone who has it</option></select><input type="text" id="inv_note" placeholder="Note to self, e.g. spring cohort" maxlength="80" /><button class="iconbtn" id="inv_make"' + (a.keySet ? '' : ' disabled title="Set ALLOWLIST_KEY first"') + '>Make a code</button></div><p id="inv_msg" class="sechint"></p>'
+      + (!a.rows.length ? '<p class="sechint">No codes yet.</p>' : '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">' + a.rows.map((row) => '<tr style="border-top:1px solid var(--edge)' + (row.disabled ? ';opacity:.55' : '') + '"><td style="padding:6px 8px 6px 0;white-space:nowrap"><code><b>' + esc(row.code) + '</b></code>' + (row.note ? '<br><span style="color:var(--muted)">' + esc(row.note) + '</span>' : '') + '</td><td style="padding:6px 8px;white-space:nowrap">' + (row.until ? untilChip(row.until) : '<span style="color:var(--muted)">never ends</span>') + '</td><td style="padding:6px 8px;color:var(--muted)">' + (row.uses >= row.maxUses ? 'used' : row.uses + ' of ' + (row.maxUses >= 1000 ? '∞' : row.maxUses) + ' used') + (row.last_email ? '<br>last: ' + esc(row.last_email) + (row.last_used_at ? ' · ' + esc(whenAt(row.last_used_at)) : '') : '') + (row.disabled ? '<br><b>off</b>' : '') + '</td><td style="padding:6px 0;text-align:right;white-space:nowrap"><button class="iconbtn" data-inv="' + esc(row.code) + '" data-on="' + (row.disabled ? '1' : '0') + '">' + (row.disabled ? 'Switch on' : 'Switch off') + '</button></td></tr>').join('') + '</table></div>');
+    $('inv_end').onchange = () => { $('inv_date').hidden = $('inv_end').value !== 'date'; if (!$('inv_date').hidden) $('inv_date').focus(); };
+    $('inv_make').onclick = async () => {
+      const until = $('inv_end').value === 'date' ? $('inv_date').value : '';
+      if ($('inv_end').value === 'date' && !until) { $('inv_msg').textContent = 'Pick the day it ends, or choose “never”.'; $('inv_date').focus(); return; }
+      $('inv_make').disabled = true; $('inv_msg').textContent = 'Making…';
+      const r2 = await fetch('/api/admin/invites', { method: 'POST', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ scope, until, maxUses: Number($('inv_uses').value) || 1, note: $('inv_note').value }) });
+      const j = await r2.json().catch(() => ({})); $('inv_make').disabled = false;
+      if (!r2.ok) { $('inv_msg').textContent = j.reason || j.error || 'Not made.'; return; }
+      renderAdminEvents(); await renderInvites(d);
+      $('inv_msg').innerHTML = 'The code is <code style="font-size:15px"><b>' + esc(j.code) + '</b></code> — copy it now and send it.';
+    };
+    box.querySelectorAll('button[data-inv]').forEach((b) => { b.onclick = async () => {
+      b.disabled = true;
+      await fetch('/api/admin/invites', { method: 'DELETE', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ code: b.dataset.inv, on: b.dataset.on === '1' }) }).catch(() => {});
+      renderAdminEvents(); renderInvites(d);
+    }; });
+  } catch (err) { box.innerHTML = '<p style="color:var(--danger)">Could not read the invite codes (' + esc(err.message) + ').</p>'; }
 }
 // The allowlist, decrypted, for one scope at a time: this bot, or every bot ("*"). Add / remove.
 let allowScope = 'this';
@@ -2719,7 +2765,7 @@ async function renderAllowlist(d) {
         : '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">' + a.rows.map((row) => '<tr style="border-top:1px solid var(--edge)"><td style="padding:6px 8px 6px 0;word-break:break-all"><b>' + esc(row.email) + '</b></td><td style="padding:6px 8px;white-space:nowrap;color:var(--muted)">added ' + esc(whenAt(row.added_at)) + '</td><td style="padding:6px 8px;white-space:nowrap">' + untilChip(row.expires_at) + '</td><td style="padding:6px 0;text-align:right"><button class="iconbtn" data-remove="' + esc(row.email) + '">Remove</button></td></tr>').join('') + '</table></div>');
     $('allowtabs').onclick = async (e) => {
       const b = e.target.closest('button'); if (!b) return;
-      if (b.dataset.scope) { allowScope = b.dataset.scope; renderAllowlist(d); return; }
+      if (b.dataset.scope) { allowScope = b.dataset.scope; renderAllowlist(d); if ($('invitebox')) renderInvites(d); return; }
       if (b.id === 'al_add') {
         const email = $('al_email').value.trim(); if (!email) return; $('al_msg').textContent = 'Adding…';
         const until = ($('al_until') || {}).value || '';
