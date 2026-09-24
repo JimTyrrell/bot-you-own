@@ -117,7 +117,7 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
     return handleCoach(request, env, url, cfg, p.slice(admin.length));
   }
 
-  if (p === api + "config") return json({ enabled: true, id: bot.id, name: cfg.name, coachName: cfg.coachName, honesty: cfg.honesty, signIn: cfg.signIn, methods: { passkeys: cfg.methods.passkeys, totp: cfg.methods.totp, providers: cfg.signIn.map((s) => s.provider) }, dailyPhotoLimit: cfg.dailyPhotoLimit, maxPhotoBytes: cfg.maxPhotoBytes, api, page });
+  if (p === api + "config") return json({ enabled: true, id: bot.id, name: cfg.name, coachName: cfg.coachName, honesty: cfg.honesty, signIn: cfg.signIn, methods: { passkeys: cfg.methods.passkeys, totp: cfg.methods.totp, providers: cfg.signIn.map((s) => s.provider) }, dailyPhotoLimit: cfg.dailyPhotoLimit, maxPhotoBytes: cfg.maxPhotoBytes, photosKept: Boolean(env.PHOTOS), api, page });
   if (!env.DB) return json({ error: "The food log needs the D1 database (wrangler.jsonc → d1_databases)." }, 503);
   await ensureTrackSchema(env);
   if (cfg.pepper === DEV_PEPPER) console.warn("FOODLOG_PEPPER is not set — user ids use the dev pepper. Set it before real people use this: npx wrangler secret put FOODLOG_PEPPER");
@@ -580,7 +580,7 @@ const photoKey = (userId, mealId, i) => `meals/${userId}/${mealId}/${i}.jpg`;
 async function servePhoto(env, userId, mealId, i) {
   const obj = env.PHOTOS ? await env.PHOTOS.get(photoKey(userId, mealId, i)) : null;
   if (!obj) return json({ error: "no such photo" }, 404);
-  return new Response(obj.body, { headers: { "content-type": obj.httpMetadata?.contentType || "image/jpeg", "cache-control": "private, max-age=86400" } });
+  return new Response(obj.body, { headers: { "content-type": obj.httpMetadata?.contentType || "image/jpeg", "cache-control": "private, no-store" } });
 }
 async function forgetPhotos(env, userId, mealId) {
   if (!env.PHOTOS) return;

@@ -8,6 +8,7 @@
     "discover": "node Engine/scripts/discover.mjs",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "deploy:photos": "node Engine/scripts/deploy-photos.mjs",
     "test": "node Engine/tests/break-it.mjs",
     "test:one": "node Engine/tests/break-it.mjs --project"
   },

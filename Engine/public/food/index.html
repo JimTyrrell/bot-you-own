@@ -185,14 +185,15 @@
   .mph img { width:100%; height:100%; object-fit:cover; display:block; } .mph i { width:16px; height:16px; border:3px solid var(--edge); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; }
   .zoom { position:fixed; inset:0; z-index:40; background:rgba(0,0,0,.92); display:flex; align-items:center; justify-content:center; animation:fadein .15s; }
   .zoom[hidden] { display:none; }
-  .zbar { position:absolute; top:calc(10px + env(safe-area-inset-top)); left:14px; right:14px; display:flex; justify-content:space-between; align-items:center; color:#ddd; font-size:14px; z-index:2; }
-  .zx { width:40px; height:40px; padding:0; border-radius:50%; background:rgba(255,255,255,.14); color:#fff; font-size:18px; }
+  .zbar { position:absolute; top:calc(10px + env(safe-area-inset-top)); left:14px; right:14px; display:flex; justify-content:space-between; align-items:center; color:#fff; font-size:14px; z-index:2; text-shadow:0 1px 3px #000; pointer-events:none; }
+  .zbar button { pointer-events:auto; }
+  .zx { width:40px; height:40px; padding:0; border-radius:50%; background:rgba(0,0,0,.6); border:1px solid rgba(255,255,255,.35); color:#fff; font-size:18px; box-shadow:0 1px 6px rgba(0,0,0,.4); }
   .zstage { width:100%; height:100%; overflow:hidden; display:flex; align-items:center; justify-content:center; touch-action:none; cursor:zoom-in; }
   .zstage.zoomed { cursor:zoom-out; }
   .zstage img { max-width:100%; max-height:100%; object-fit:contain; transition:transform .12s ease-out; user-select:none; -webkit-user-drag:none; }
-  .znav { position:absolute; top:50%; transform:translateY(-50%); width:44px; height:44px; padding:0; border-radius:50%; background:rgba(255,255,255,.14); color:#fff; font-size:26px; z-index:2; }
+  .znav { position:absolute; top:50%; transform:translateY(-50%); width:44px; height:44px; padding:0; border-radius:50%; background:rgba(0,0,0,.6); border:1px solid rgba(255,255,255,.35); color:#fff; font-size:26px; z-index:2; box-shadow:0 1px 6px rgba(0,0,0,.4); }
   .zprev { left:10px; } .znext { right:10px; }
-  .zhint { position:absolute; bottom:calc(14px + env(safe-area-inset-bottom)); left:0; right:0; text-align:center; color:#aaa; font-size:12px; margin:0; }
+  .zhint { position:absolute; bottom:calc(14px + env(safe-area-inset-bottom)); left:0; right:0; text-align:center; color:#ddd; font-size:12px; margin:0; text-shadow:0 1px 3px #000; pointer-events:none; }
   .edq { margin:4px 0 10px; padding:10px 12px; border-radius:12px; background:var(--panel); border-left:3px solid #d97706; font-size:14px; } .edq button { flex:1 1 auto; padding:8px 12px; background:var(--bg); border:1px solid var(--edge); }
   .whenhead { margin:14px 0 0; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; } .whenhead small { text-transform:none; letter-spacing:0; }
   .item .nm { display:flex; justify-content:space-between; gap:8px; font-weight:600; }
@@ -273,7 +274,7 @@
       <input id="email" type="email" inputmode="email" autocomplete="username webauthn" placeholder="you@example.com">
       <button class="primary" id="joinbtn" style="width:100%;margin-top:14px">Start logging</button>
       <div class="signin" id="signin-join"></div>
-      <p class="muted small" style="margin-top:12px">Privacy: your meal photos are kept with your log, so you can look back at them. Only you, your household and your coach can see them, and deleting a meal deletes its photos.</p>
+      <p class="muted small" id="privacy" style="margin-top:12px">Privacy: your meal photos are kept with your log, so you can look back at them. Only you, your household and your coach can see them, and deleting a meal deletes its photos.</p>
     </div>
   </section>
 
@@ -686,6 +687,7 @@ const idApi = (path, json = {}) => api(path, { base: '/api/id/', json: { bot: BO
   renderIdentity();
   if (CFG.coachName) $('coachline').textContent = 'Your coach: ' + CFG.coachName;
   $('honesty').textContent = CFG.honesty || '';
+  if (!CFG.photosKept) $('privacy').textContent = 'Privacy: photos are read once and thrown away — only a thumbnail and the numbers are kept, with your email. Your coach can see your log; nobody else can.';
   renderSignIn();
   if (!S.email) {
     const mealLink = location.pathname.slice(PAGE.length).match(/^\/meal\/([^/]+)\/?$/);
