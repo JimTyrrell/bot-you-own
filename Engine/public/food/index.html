@@ -119,6 +119,9 @@
   .say textarea:focus { outline:none; }
   .tray { display:flex; gap:8px; overflow-x:auto; padding:4px 0 8px; }
   .tray .th { position:relative; flex:none; width:64px; height:64px; border-radius:12px; overflow:hidden; background:var(--edge); }
+  .tray.sending { opacity:.45; pointer-events:none; }
+  .tray .th.wait { display:flex; align-items:center; justify-content:center; }
+  .tray .th.wait i { width:18px; height:18px; border:3px solid var(--bg); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; }
   .tray .th img { width:100%; height:100%; object-fit:cover; display:block; }
   .tray .th button { position:absolute; top:3px; right:3px; width:22px; height:22px; border-radius:50%; padding:0; font-size:13px; line-height:1; background:rgba(0,0,0,.6); color:#fff; }
   .say .bar { display:flex; align-items:center; gap:8px; margin-top:6px; }
@@ -1092,6 +1095,7 @@ $('say').addEventListener('input', () => { growSay(); keepSet({ text: $('say').v
 $('say').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('sayform').requestSubmit(); } });
 $('sayform').onsubmit = async (e) => {
   e.preventDefault();
+  if (LOADING) { $('saygo').disabled = true; while (LOADING) await sleep(150); $('saygo').disabled = false; }   // never send half the photos
   const text = $('say').value.trim(); if (!text && !ATTACH.length) return;
   if (ATTACH.length) {
     $('saygo').disabled = true; $('say').value = ''; growSay(); keepSet({ text, sentAt: Date.now() });
@@ -1191,10 +1195,12 @@ $('pick').onchange = () => { const fs = [...$('pick').files]; $('pick').value = 
 // "2 scoops" sets the amount, "plus my protein shake" adds what isn't pictured, "call it my stack" names it.
 const MAX_IN_BOX = 10;
 let ATTACH = [];                                   // [{ photo, thumb, url }] — shrunk already
+let LOADING = 0;                                   // photos still being opened/shrunk: shown as spinners, and ↑ waits for them
 const MEAL_PHOTOS = {};                            // meal id → the photos it was read from (the Fix line re-reads them)
 function drawTray() {
   const t = $('tray'); t.hidden = !ATTACH.length;
-  t.innerHTML = ATTACH.map((a, i) => '<div class="th"><img src="' + a.url + '" alt=""><button type="button" data-unattach="' + i + '" title="Remove">✕</button></div>').join('');
+  t.hidden = !ATTACH.length && !LOADING;
+  t.innerHTML = ATTACH.map((a, i) => '<div class="th"><img src="' + a.url + '" alt=""><button type="button" data-unattach="' + i + '" title="Remove">✕</button></div>').join('') + '<div class="th wait"><i></i></div>'.repeat(LOADING);
   t.querySelectorAll('[data-unattach]').forEach((b) => b.onclick = () => { const [a] = ATTACH.splice(+b.dataset.unattach, 1); URL.revokeObjectURL(a.url); drawTray(); keepAttach(); });
   $('say').placeholder = ATTACH.length ? 'Add words: how much, what else, a name…' : 'Say what you ate, or ask…';
   padForDock();
@@ -1206,24 +1212,26 @@ async function addPhotos(files) {
   const room = MAX_IN_BOX - ATTACH.length;
   if (room <= 0) return toast('That’s ' + MAX_IN_BOX + ' photos — the most for one meal.');
   if (list.length > room) toast('Added ' + room + ' — ' + MAX_IN_BOX + ' photos is the most for one meal.', 3500);
-  for (const f of list.slice(0, room)) {
+  const take = list.slice(0, room); LOADING += take.length; drawTray();
+  for (const f of take) {
     try {
       const file = await readablePhoto(f);
       const [photo, thumb] = await Promise.all([shrink(file, 1024, 0.85), shrink(file, 256, 0.7)]);
-      ATTACH.push({ photo, thumb, url: URL.createObjectURL(thumb) }); drawTray();
+      ATTACH.push({ photo, thumb, url: URL.createObjectURL(thumb) });
     } catch (e) { toast(e && e.message === 'converter' ? 'Couldn’t load the photo converter — check the connection.' : 'Couldn’t open one of those photos.', 4000); }
+    finally { LOADING--; drawTray(); }
   }
   keepAttach(); $('say').focus();
 }
 async function sendPhotos(text) {
-  const pics = ATTACH.slice(), n = pics.length;
+  const pics = ATTACH.slice(), n = pics.length; $('tray').classList.add('sending');
   const thinking = document.createElement('div'); thinking.className = 'thinking'; thinking.innerHTML = '<i></i> Reading ' + (n === 1 ? 'the photo' : n + ' photos') + (text ? ' and your words' : '') + '…'; $('thread').appendChild(thinking); scrollThread();
   const fd = new FormData();
   pics.forEach((a, i) => fd.append('photo', a.photo, 'photo' + (i + 1) + '.jpg'));
   fd.append('thumb', pics[0].thumb, 'thumb.jpg'); fd.append('kind', 'food'); fd.append('text', text); fd.append('date', day);
   fd.append('tz', String(TZ)); fd.append('zone', ZONE); fd.append('planned', day > localDate() ? '1' : '');
   const r = await api('photo', { body: fd });
-  thinking.remove();
+  thinking.remove(); $('tray').classList.remove('sending');
   if (!r.ok) { if (!r.offline) keepSet({ sentAt: null }); return { ok: false, reason: r.reason }; }
   pics.forEach((a) => URL.revokeObjectURL(a.url)); ATTACH = []; drawTray(); keepAttach();
   MEAL_PHOTOS[r.meal.id] = pics.map(({ photo, thumb }) => ({ photo, thumb }));
