@@ -151,7 +151,20 @@
   .sheet[hidden] { display:none; }
   .sheet .box { background:var(--bg); width:100%; max-width:480px; margin:0 auto; border-radius:24px 24px 0 0; padding:14px 16px calc(18px + env(safe-area-inset-bottom)); max-height:92dvh; overflow:auto; }
   .sheet .grip { width:40px; height:4px; border-radius:4px; background:var(--edge); margin:0 auto 12px; }
-  .item { border-bottom:1px solid var(--edge); padding:12px 0; }
+  .item { border-bottom:1px solid var(--edge); }
+  .item .irow { display:flex; width:100%; align-items:center; gap:10px; padding:10px 0; background:transparent; border-radius:0; text-align:left; }
+  .item .irow .in { flex:1; min-width:0; } .item .irow b { font-weight:600; } .item .irow small { color:var(--muted); }
+  .item .irow em { display:block; font-style:normal; font-size:12px; color:var(--muted); margin-top:1px; }
+  .item .irow .ik { font-weight:700; white-space:nowrap; } .item .irow .ik::after { content:' ›'; color:var(--muted); font-weight:400; }
+  .item.open .irow .ik::after { content:' ⌄'; }
+  .item .mults { padding:0 0 10px; }
+  .edmeta { display:flex; align-items:center; gap:10px; margin:6px 0 8px; flex-wrap:wrap; }
+  .edmeta input[type=time] { width:auto; padding:8px 10px; }
+  .chk { display:inline-flex; align-items:center; gap:6px; margin:0; font-size:14px; color:var(--text); }
+  .chk input { width:18px; height:18px; padding:0; margin:0; accent-color:var(--accent); }
+  .edfix { display:flex; gap:8px; } .edfix input { padding:10px 12px; font-size:15px; } .edfix button { flex:none; padding:10px 14px; }
+  .edfoot { position:sticky; bottom:calc(-18px - env(safe-area-inset-bottom)); display:flex; gap:10px; margin:10px -16px calc(-18px - env(safe-area-inset-bottom)); padding:10px 16px calc(12px + env(safe-area-inset-bottom)); background:var(--bg); border-top:1px solid var(--edge); }
+  .edfoot .primary { flex:2; }
   .whenhead { margin:14px 0 0; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; } .whenhead small { text-transform:none; letter-spacing:0; }
   .item .nm { display:flex; justify-content:space-between; gap:8px; font-weight:600; }
   .item .nm small { color:var(--muted); font-weight:400; }
@@ -162,9 +175,9 @@
   .item .mults .g { flex:2; min-width:92px; display:flex; align-items:center; gap:4px; background:var(--panel); border-radius:10px; padding:0 8px; }
   .item .mults .g input { padding:8px 4px; border:0; background:transparent; text-align:right; width:100%; }
   .item .mults .g span { font-size:12px; color:var(--muted); }
-  .total { display:flex; justify-content:space-between; font-weight:700; padding:12px 0; }
+  .total { display:flex; justify-content:space-between; align-items:baseline; font-weight:700; padding:10px 0 8px; } .total small { font-weight:400; color:var(--muted); font-size:12px; margin-left:6px; }
   /* What fits: the plate against what is left today, said before Save rather than after. */
-  .fit { margin:2px 0 8px; padding:10px 12px; border-radius:12px; background:var(--panel); font-size:13.5px; line-height:1.45; border-left:3px solid var(--accent); }
+  .fit { margin:2px 0 8px; padding:8px 12px; border-radius:12px; background:var(--panel); font-size:13.5px; line-height:1.45; border-left:3px solid var(--accent); }
   .fit.tight { border-left-color:#d97706; } .fit.over { border-left-color:var(--danger); }
   .fit .mults button { font-weight:600; background:var(--bg); border:1px solid var(--edge); }
   .thinking { display:flex; align-items:center; gap:10px; color:var(--muted); padding:20px 0; justify-content:center; }
@@ -1309,16 +1322,16 @@ function fitAdvice() {
   const rows = ED.items.map((it, i) => ({ i, it, s: scaled(it) }));
   const plate = rows.reduce((a, x) => a + x.s.kcal, 0), plateP = rows.reduce((a, x) => a + x.s.protein_g, 0);
   const needP = t.protein_g ? Math.max(0, Math.round(t.protein_g - eatenP)) : null;
-  const pWords = needP !== null ? ' Protein: this gives ' + Math.round(plateP) + ' of the ' + needP + ' you still need.' : '';
+  const pWords = needP !== null ? ' · protein ' + Math.round(plateP) + ' of ' + needP + ' still to go' : '';
   const keptWords = kept > 0 ? ' (' + kfmt(kept) + ' kept for what’s planned)' : '';
-  if (left <= 0) return '<div class="fit over"><b>' + kfmt(-left) + ' over</b> for today already' + keptWords + '. Log it as it is, or trim it.' + pWords + '</div>';
-  if (plate <= left) return '<div class="fit"><b>Fits.</b> ' + kfmt(left) + ' left today' + keptWords + ', this is ' + kfmt(plate) + ' — ' + kfmt(left - plate) + ' after.' + pWords + '</div>';
+  if (left <= 0) return '<div class="fit over"><b>' + kfmt(-left) + ' over</b> today already' + keptWords + pWords + '</div>';
+  if (plate <= left) return '<div class="fit"><b>Fits</b> · ' + kfmt(left - plate) + ' left after' + keptWords + pWords + '</div>';
   const pick = FRACTIONS.find(([v]) => v <= left / plate) || null;
   // Leave one thing? Only the item worth the least protein per calorie (never the chicken), and only if that alone gets under.
   const worst = rows.length > 1 ? rows.slice().sort((a, b) => (b.s.kcal / (b.s.protein_g + 1)) - (a.s.kcal / (a.s.protein_g + 1)))[0] : null;
   const leave = worst && plate - worst.s.kcal <= left ? worst : null;
-  let html = '<div class="fit tight"><b>' + kfmt(left) + ' left today</b>' + keptWords + ', this is ' + kfmt(plate) + '.';
-  html += pick ? ' About <b>' + pick[1] + '</b> fits.' : ' Only a few bites fit — under a meal’s worth. Eat something sensible and take it from tomorrow.';
+  let html = '<div class="fit tight"><b>' + kfmt(left) + ' left</b>' + keptWords + ' — ';
+  html += pick ? 'about <b>' + pick[1] + '</b> of this fits.' : 'only a few bites of this fit.';
   html += pWords;
   const btns = (pick ? ['<button data-fit="' + pick[0] + '">Take ' + pick[1] + '</button>'] : []).concat(leave ? ['<button data-leave="' + leave.i + '">Leave the ' + esc(leave.it.name.toLowerCase()) + '</button>'] : []);
   return html + (btns.length ? '<div class="mults" style="margin-top:8px">' + btns.join('') + '</div>' : '') + '</div>';
@@ -1386,29 +1399,31 @@ function fixSummary(before, after) {
 }
 function renderEditor(notes) {
   if (ED.meal.id && ED.orig) { const now = JSON.stringify(ED.items); keepSet({ editor: now === ED.orig ? null : { mealId: ED.meal.id, items: ED.items } }); }
-  const rows = ED.items.map((it, i) => { const s = scaled(it); return '<div class="item" data-i="' + i + '"><div class="nm"><span>' + esc(it.name) + ' <small>' + esc(it.portion || '') + '</small></span><span>' + s.kcal + ' kcal</span></div>'
-    + '<div class="macros">P ' + s.protein_g.toFixed(0) + ' g · C ' + s.carbs_g.toFixed(0) + ' g · F ' + s.fat_g.toFixed(0) + ' g' + (it.grams ? ' · ' + gramsNice(it.grams) + ' g / ' + ozOf(it.grams) + ' oz' : '') + (it.confidence != null && it.confidence < 0.6 ? ' · <span style="color:var(--c)">not sure</span>' : '') + '</div>'
-    + '<div class="mults">' + [0.5, 1, 1.5, 2].map((m) => '<button data-m="' + m + '" class="' + (activeMult(it) === m ? 'on' : '') + '">' + ({ 0.5: '½×', 1: '1×', 1.5: '1½×', 2: '2×' }[m]) + '</button>').join('')
+  // One line per food; tap it for the portion controls (only one open at a time).
+  const rows = ED.items.map((it, i) => { const s = scaled(it), open = ED.open === i; return '<div class="item' + (open ? ' open' : '') + '" data-i="' + i + '">'
+    + '<button type="button" class="irow" data-open="1"><span class="in"><b>' + esc(it.name) + '</b> <small>' + esc(it.portion || (it.grams ? gramsNice(it.grams) + ' g' : '')) + '</small><em>P ' + s.protein_g.toFixed(0) + ' · C ' + s.carbs_g.toFixed(0) + ' · F ' + s.fat_g.toFixed(0) + (it.confidence != null && it.confidence < 0.6 ? ' · <span style="color:#d97706">not sure</span>' : '') + '</em></span><span class="ik">' + s.kcal + '</span></button>'
+    + (!open ? '' : '<div class="mults">' + [0.5, 1, 1.5, 2].map((m) => '<button data-m="' + m + '" class="' + (activeMult(it) === m ? 'on' : '') + '">' + ({ 0.5: '½×', 1: '1×', 1.5: '1½×', 2: '2×' }[m]) + '</button>').join('')
     + '<div class="g" title="Grams">⚖️<input type="number" inputmode="decimal" value="' + (it.grams ? Math.round(it.grams) : '') + '" data-g="1" placeholder="g"><span>g</span></div>'
-    + '<button data-rm="1" class="ghost" style="flex:.5">✕</button></div></div>'; }).join('');
+    + '<button data-rm="1" class="ghost" style="flex:.5" title="Remove">✕</button></div>') + '</div>'; }).join('');
   const tot = ED.items.reduce((a, it) => { const s = scaled(it); a.kcal += s.kcal; a.p += s.protein_g; a.c += s.carbs_g; a.f += s.fat_g; return a; }, { kcal: 0, p: 0, c: 0, f: 0 });
   sheet('<div class="row" style="justify-content:space-between"><h2 style="margin:0">' + (ED.fresh ? 'Here’s what I see' : 'Edit meal') + '</h2>' + (ED.meal.thumb ? '<img src="' + ED.meal.thumb + '" style="width:44px;height:44px;border-radius:10px;object-fit:cover;flex:none">' : '') + '</div>'
-    + (notes ? '<p class="muted small">' + esc(notes) + '</p>' : '') + rows
-    + '<div class="total"><span>Total</span><span>' + tot.kcal + ' kcal · P ' + tot.p.toFixed(0) + ' · C ' + tot.c.toFixed(0) + ' · F ' + tot.f.toFixed(0) + '</span></div>'
+    + (notes ? '<p class="muted small" style="margin:6px 0 2px">' + esc(notes) + '</p>' : '') + rows
+    + '<div class="total"><span>Total <small>P ' + tot.p.toFixed(0) + ' · C ' + tot.c.toFixed(0) + ' · F ' + tot.f.toFixed(0) + '</small></span><span>' + tot.kcal + ' kcal</span></div>'
     + fitAdvice()
     // When it was eaten. Prefilled with the clock it was logged on; a change is read on THIS browser's clock.
-    + '<div class="row" style="margin-top:10px"><label for="ed-time" style="margin:0;flex:0 0 auto">Eaten at</label><input type="time" id="ed-time" value="' + esc(editTime(ED.meal)) + '" style="flex:0 0 auto;width:auto;padding:8px 10px">'
-    + (ED.meal.zone && ED.meal.zone !== ZONE ? '<small class="muted">logged in ' + esc(zoneTag(ED.meal.zone, new Date(ED.meal.created_at))) + '; a change is read in ' + esc(zoneTag(ZONE, new Date())) + '</small>' : '<span></span>') + '</div>'
-    // Eaten, or planned? A plan counts against the day's budget and never as eaten, until it is confirmed.
-    + '<div class="edstate"><label><input type="radio" name="ed-state" value="eaten"' + (ED.meal.planned ? '' : ' checked') + ' /> Eaten</label><label><input type="radio" name="ed-state" value="planned"' + (ED.meal.planned ? ' checked' : '') + ' /> Planned — not yet, but it counts against the day</label></div>'
-    + '<div class="row"><input id="fix" placeholder="Wrong food? e.g. “that’s chicken, not pork”"><button id="fixbtn" style="flex:0 0 auto">Fix</button></div>'
-    + '<p class="muted small">' + esc(CFG.honesty || '') + '</p>'
-    + '<div class="row" style="margin-top:10px"><button class="ghost danger" id="discard">' + (ED.fresh ? 'Discard' : 'Delete') + '</button><button class="primary" id="savemeal" style="flex:2">Save</button></div>');
+    // When, and eaten or planned (a plan counts against the day, never as eaten, until it's confirmed) — one line.
+    + '<div class="edmeta"><input type="time" id="ed-time" value="' + esc(editTime(ED.meal)) + '" title="When you ate it">'
+    + '<label class="chk" title="Not eaten yet — it counts against the day until you tap Had it"><input type="checkbox" id="ed-planned"' + (ED.meal.planned ? ' checked' : '') + '> Planned</label>'
+    + (ED.meal.zone && ED.meal.zone !== ZONE ? '<small class="muted">logged in ' + esc(zoneTag(ED.meal.zone, new Date(ED.meal.created_at))) + '</small>' : '') + '</div>'
+    + '<div class="edfix"><input id="fix" placeholder="Something wrong? “that’s chicken, not pork”" title="' + esc(CFG.honesty || '') + '"><button id="fixbtn">Fix</button></div>'
+    + '<div class="edfoot"><button class="ghost danger" id="discard">' + (ED.fresh ? 'Discard' : 'Delete') + '</button><button class="primary" id="savemeal">Save</button></div>');
   $('sheetbody').querySelectorAll('.item').forEach((el) => {
     const it = ED.items[+el.dataset.i];
-    el.querySelectorAll('[data-m]').forEach((b) => b.onclick = () => { it.mult = +b.dataset.m; it.grams = it.base.grams ? Math.round(it.base.grams * it.mult) : 0; it.portion = amountLabel(it); renderEditor(); });
-    const g = el.querySelector('[data-g]'); g.onchange = () => { it.grams = Math.max(0, +g.value || 0); if (it.base.grams) it.mult = it.grams / it.base.grams; it.portion = amountLabel(it); renderEditor(); };
-    el.querySelector('[data-rm]').onclick = () => { ED.items.splice(+el.dataset.i, 1); renderEditor(); };
+    el.querySelector('[data-open]').onclick = () => { ED.open = ED.open === +el.dataset.i ? null : +el.dataset.i; renderEditor(notes); };
+    if (ED.open !== +el.dataset.i) return;
+    el.querySelectorAll('[data-m]').forEach((b) => b.onclick = () => { it.mult = +b.dataset.m; it.grams = it.base.grams ? Math.round(it.base.grams * it.mult) : 0; it.portion = amountLabel(it); renderEditor(notes); });
+    const g = el.querySelector('[data-g]'); g.onchange = () => { it.grams = Math.max(0, +g.value || 0); if (it.base.grams) it.mult = it.grams / it.base.grams; it.portion = amountLabel(it); renderEditor(notes); };
+    el.querySelector('[data-rm]').onclick = () => { ED.items.splice(+el.dataset.i, 1); ED.open = null; renderEditor(notes); };
   });
   $('fixbtn').onclick = async () => {
     const correction = $('fix').value.trim(); if (!correction) return;
@@ -1436,7 +1451,7 @@ function renderEditor(notes) {
     const items = ED.items.map((it) => { const s = scaled(it); return { ...it, ...s, base: undefined }; });
     if (!items.length) return $('discard').onclick();
     const time = ($('ed-time') && $('ed-time').value) || '';
-    const planned = ((document.querySelector('input[name="ed-state"]:checked') || {}).value || 'eaten') === 'planned';
+    const planned = Boolean($('ed-planned') && $('ed-planned').checked);
     const flip = planned !== Boolean(ED.meal.planned);
     const r = await api('meal/' + ED.meal.id, { method: 'PATCH', json: { items, ...(time && time !== editTime(ED.meal) ? { time } : {}), ...(flip ? { planned } : {}) } });
     if (!r.ok) return toast(r.reason || 'Couldn’t save.');
