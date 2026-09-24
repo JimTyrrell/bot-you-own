@@ -342,33 +342,35 @@ const slim = (items) => items.map(({ name, portion, grams, kcal, protein_g, carb
 function listFrom(v) { try { const x = typeof v === "string" ? JSON.parse(v) : v; return Array.isArray(x) ? x : []; } catch { return []; } }
 
 // --- PHOTO: one call to the vision model, four kinds of picture. -----------------------
+const MAX_PHOTOS = 6;
 async function photo(request, env, cfg, me) {
   let form;
   try { form = await request.formData(); } catch { return json({ error: "bad request", reason: "Expected a multipart form with a photo." }, 400); }
-  const f = form.get("photo");
-  if (!f || typeof f.arrayBuffer !== "function") return json({ error: "no photo", reason: "No photo in the request." }, 400);
-  if (f.size > cfg.maxPhotoBytes) return json({ error: "too big", reason: `That photo is ${(f.size / 1048576).toFixed(1)} MB; the limit is ${(cfg.maxPhotoBytes / 1048576).toFixed(0)} MB. The page should have shrunk it — reload and try again.` }, 413);
+  // One photo or several (the page sends every photo in the box as "photo"), plus the words typed with them.
+  const files = form.getAll("photo").filter((f) => f && typeof f.arrayBuffer === "function").slice(0, MAX_PHOTOS);
+  if (!files.length) return json({ error: "no photo", reason: "No photo in the request." }, 400);
+  for (const f of files) if (f.size > cfg.maxPhotoBytes) return json({ error: "too big", reason: `That photo is ${(f.size / 1048576).toFixed(1)} MB; the limit is ${(cfg.maxPhotoBytes / 1048576).toFixed(0)} MB. The page should have shrunk it — reload and try again.` }, 413);
   const kind = ["food", "barcode", "label", "receipt"].includes(form.get("kind")) ? form.get("kind") : "food";
   const date = pickDate(form.get("date"));
   const correction = String(form.get("correction") || "").trim().slice(0, 200);
+  const said = String(form.get("text") || "").trim().slice(0, 600);
   const mealId = String(form.get("mealId") || "").trim();
   // A correction arrives with what's on screen now, so it can't undo an earlier one.
   const current = sanitiseItems(listFrom(form.get("current")), { source: "photo" });
   const revising = kind === "food" && Boolean(correction) && current.length > 0;
 
-  // The daily cap: every vision call counts, whatever kind.
+  // The daily cap: every photo the model looks at counts, whatever kind.
   const used = (await env.DB.prepare(`SELECT photos FROM track_usage WHERE user_id = ? AND date = ?`).bind(me.id, todayUtc()).first())?.photos || 0;
-  if (used >= cfg.dailyPhotoLimit) return json({ error: "daily-limit", reason: `That's ${cfg.dailyPhotoLimit} photos today — the daily limit. You can still type a meal.` }, 429);
-  await env.DB.prepare(`INSERT INTO track_usage (user_id, date, photos) VALUES (?, ?, 1) ON CONFLICT(user_id, date) DO UPDATE SET photos = photos + 1`).bind(me.id, todayUtc()).run();
+  if (used + files.length > cfg.dailyPhotoLimit) return json({ error: "daily-limit", reason: used >= cfg.dailyPhotoLimit ? `That's ${cfg.dailyPhotoLimit} photos today — the daily limit. You can still type a meal.` : `That would pass today's limit of ${cfg.dailyPhotoLimit} photos (${cfg.dailyPhotoLimit - used} left). Send fewer, or type it.` }, 429);
+  await env.DB.prepare(`INSERT INTO track_usage (user_id, date, photos) VALUES (?, ?, ?) ON CONFLICT(user_id, date) DO UPDATE SET photos = photos + ?`).bind(me.id, todayUtc(), files.length, files.length).run();
 
-  const bytes = await f.arrayBuffer();
-  const mime = /^image\/(png|webp)$/.test(f.type) ? f.type : "image/jpeg";
+  const images = await Promise.all(files.map(async (f) => ({ bytes: await f.arrayBuffer(), mime: /^image\/(png|webp)$/.test(f.type) ? f.type : "image/jpeg" })));
   const thumb = await cleanThumb(form.get("thumb"));
 
   let out;
   try {
-    const prompt = kind === "food" ? (revising ? PROMPTS.revise(slim(current), correction, true) : PROMPTS.food(correction)) : PROMPTS[kind];
-    out = await runVision(env, cfg, { image: bytes, mime, prompt, maxTokens: kind === "receipt" ? 1500 : 900 });
+    const prompt = kind === "food" ? (revising ? PROMPTS.revise(slim(current), correction, true) : files.length > 1 || said ? PROMPTS.meal(said, files.length) : PROMPTS.food(correction)) : PROMPTS[kind];
+    out = await runVision(env, cfg, { images, prompt, maxTokens: kind === "receipt" ? 1500 : 900 + 150 * (files.length - 1) });
   } catch (err) {
     console.error("foodlog vision failed", err?.message || err);
     return json({ error: "model", reason: "The model couldn't look at that just now. Try again, or type the meal." }, 502);
@@ -382,8 +384,14 @@ async function photo(request, env, cfg, me) {
     if (!items.length) return json({ error: "no food", reason: parsed?.notes ? `I couldn't find food in that: ${String(parsed.notes).slice(0, 140)}` : "I couldn't make out any food in that photo. Try closer, with more light — or type it.", raw: out.text.slice(0, 300) }, 422);
     const meal = mealId ? await updateMealItems(env, me, mealId, items) : await insertMeal(env, me, { date, items, source: "photo", thumb, tz: form.get("tz"), zone: form.get("zone"), planned: form.get("planned") });
     if (!meal) return json({ error: "no such meal" }, 404);
+    // The words sent with the photos are part of the day's conversation, before the reaction to them.
+    if (said && !mealId) await addWords(env, me, meal.date, "user", "said", said, meal.id, meal.created_at);
     const after = mealId ? await editedMeal(env, me, meal, { tzOffsetMin: form.get("tz") }) : await afterMeal(env, me, meal, { tzOffsetMin: form.get("tz") });
-    return json({ ok: true, meal, notes: String(parsed?.notes || "").slice(0, 200), honesty: HONESTY, totals: after.totals });
+    // "Make it a named meal: snack" — name the favourite this meal just taught.
+    const askedName = String(parsed?.name || "").trim().slice(0, 40);
+    let named = null;
+    if (askedName && after.favourite?.id) { await nameFavourite(env, me, after.favourite.id, askedName); named = askedName; }
+    return json({ ok: true, meal, notes: String(parsed?.notes || "").slice(0, 200), honesty: HONESTY, totals: after.totals, named, photos: files.length });
   }
   if (kind === "barcode") {
     const digits = String(parsed?.digits || "").replace(/\D/g, "");

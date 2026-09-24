@@ -117,6 +117,10 @@
   /* 16px text: anything smaller makes iOS zoom the page when the box is tapped. ~6 lines, then it scrolls. */
   .say textarea { display:block; width:100%; padding:6px 0; border:0; border-radius:0; background:transparent; resize:none; font-size:16px; line-height:1.4; max-height:calc(6 * 1.4em + 12px); overflow-y:auto; }
   .say textarea:focus { outline:none; }
+  .tray { display:flex; gap:8px; overflow-x:auto; padding:4px 0 8px; }
+  .tray .th { position:relative; flex:none; width:64px; height:64px; border-radius:12px; overflow:hidden; background:var(--edge); }
+  .tray .th img { width:100%; height:100%; object-fit:cover; display:block; }
+  .tray .th button { position:absolute; top:3px; right:3px; width:22px; height:22px; border-radius:50%; padding:0; font-size:13px; line-height:1; background:rgba(0,0,0,.6); color:#fff; }
   .say .bar { display:flex; align-items:center; gap:8px; margin-top:6px; }
   .say .bar .sp { flex:1; }
   .say button { flex:none; width:40px; height:40px; padding:0; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:18px; }
@@ -377,6 +381,7 @@
   <div class="favs" id="favs"></div>
   <!-- The box gets the whole width and grows as it wraps; the buttons sit on a bar under it. -->
   <form class="say" id="sayform" autocomplete="off">
+    <div class="tray" id="tray" hidden></div>
     <textarea id="say" rows="1" placeholder="Say what you ate, or ask…" maxlength="600" enterkeyhint="send"></textarea>
     <div class="bar">
       <button type="button" class="snap" id="snapbtn" title="Take a photo or pick one from your library">📷</button>
@@ -1026,6 +1031,11 @@ function landedSince(at, text) {
 async function restoreKept() {
   if (restoreKept.done || viewUser) return; restoreKept.done = true;
   const k = keepGet(), box = $('say');
+  const att = await blobGet('attach');
+  if (att && att.items && att.items.length) {
+    if (k.sentAt && landedSince(k.sentAt, k.text)) await blobPut('attach', null);
+    else { ATTACH = att.items.map(({ photo, thumb }) => ({ photo, thumb, url: URL.createObjectURL(thumb) })); drawTray(); if (k.sentAt && !k.text) toast('Those photos hadn’t been read — they’re still in the box. Press ↑.', 5000); }
+  }
   if (k.text && !box.value) {
     if (!k.sentAt) { box.value = k.text; growSay(); }
     else if (landedSince(k.sentAt, k.text)) keepSet({ text: '', sentAt: null });
@@ -1067,7 +1077,15 @@ $('say').addEventListener('input', () => { growSay(); keepSet({ text: $('say').v
 $('say').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('sayform').requestSubmit(); } });
 $('sayform').onsubmit = async (e) => {
   e.preventDefault();
-  const text = $('say').value.trim(); if (!text) return;
+  const text = $('say').value.trim(); if (!text && !ATTACH.length) return;
+  if (ATTACH.length) {
+    $('saygo').disabled = true; $('say').value = ''; growSay(); keepSet({ text, sentAt: Date.now() });
+    const r = await sendPhotos(text);
+    $('saygo').disabled = false;
+    if (r.ok) keepSet({ text: $('say').value, sentAt: null });
+    else { if (!$('say').value) { $('say').value = text; growSay(); } keepSet({ text: $('say').value, sentAt: null }); toast((r.reason || 'That didn’t work.') + ' Your photos and words are still in the box.', 5000); }
+    return;
+  }
   // The words a chip put there, untouched → that exact favourite. Edited ("…, half of it") → the usual path, which still matches it.
   if (PENDING_FAV && text === PENDING_FAV.text) { const id = PENDING_FAV.id; PENDING_FAV = null; $('say').value = ''; growSay(); keepSet({ text: '', sentAt: null }); return repeatFav(id); }
   PENDING_FAV = null;
@@ -1148,10 +1166,58 @@ document.querySelectorAll('.chips button').forEach((b) => b.onclick = () => {
   if (a === 'staples') return openStaples();
   camKind = a; $('cam').click();
 });
-$('cam').onchange = () => { const fs = [...$('cam').files]; $('cam').value = ''; takePhotos(fs, camKind); };
+$('cam').onchange = () => { const fs = [...$('cam').files]; $('cam').value = ''; if (camKind === 'food') addPhotos(fs); else takePhotos(fs, camKind); };
 $('pick').onchange = () => { const fs = [...$('pick').files]; $('pick').value = ''; takePhotos(fs, camKind); };
 // Several photos at once: read one at a time, each reviewed like a single one ("Photo 2 of 4"),
 // the next starting when that one's sheet closes. The ones still waiting are kept (IndexedDB) for a reload.
+// ---------- photos in the box: several photos + your words = ONE meal, read together ----------
+// 📷 (camera or library, several at once), drop or paste put photos here; nothing is read until ↑.
+// Then every photo and the words go in one request, so the front of a tub and its label are one item,
+// "2 scoops" sets the amount, "plus my protein shake" adds what isn't pictured, "call it my stack" names it.
+const MAX_IN_BOX = 6;
+let ATTACH = [];                                   // [{ photo, thumb, url }] — shrunk already
+const MEAL_PHOTOS = {};                            // meal id → the photos it was read from (the Fix line re-reads them)
+function drawTray() {
+  const t = $('tray'); t.hidden = !ATTACH.length;
+  t.innerHTML = ATTACH.map((a, i) => '<div class="th"><img src="' + a.url + '" alt=""><button type="button" data-unattach="' + i + '" title="Remove">✕</button></div>').join('');
+  t.querySelectorAll('[data-unattach]').forEach((b) => b.onclick = () => { const [a] = ATTACH.splice(+b.dataset.unattach, 1); URL.revokeObjectURL(a.url); drawTray(); keepAttach(); });
+  $('say').placeholder = ATTACH.length ? 'Add words: how much, what else, a name…' : 'Say what you ate, or ask…';
+  padForDock();
+}
+const keepAttach = () => blobPut('attach', ATTACH.length ? { userId: S.userId, at: Date.now(), items: ATTACH.map(({ photo, thumb }) => ({ photo, thumb })) } : null);
+async function addPhotos(files) {
+  const list = imagesIn(files);
+  if (!list.length) return;
+  const room = MAX_IN_BOX - ATTACH.length;
+  if (room <= 0) return toast('That’s ' + MAX_IN_BOX + ' photos — the most for one meal.');
+  if (list.length > room) toast('Added ' + room + ' — ' + MAX_IN_BOX + ' photos is the most for one meal.', 3500);
+  for (const f of list.slice(0, room)) {
+    try {
+      const file = await readablePhoto(f);
+      const [photo, thumb] = await Promise.all([shrink(file, 1024, 0.85), shrink(file, 256, 0.7)]);
+      ATTACH.push({ photo, thumb, url: URL.createObjectURL(thumb) }); drawTray();
+    } catch (e) { toast(e && e.message === 'converter' ? 'Couldn’t load the photo converter — check the connection.' : 'Couldn’t open one of those photos.', 4000); }
+  }
+  keepAttach(); $('say').focus();
+}
+async function sendPhotos(text) {
+  const pics = ATTACH.slice(), n = pics.length;
+  const thinking = document.createElement('div'); thinking.className = 'thinking'; thinking.innerHTML = '<i></i> Reading ' + (n === 1 ? 'the photo' : n + ' photos') + (text ? ' and your words' : '') + '…'; $('thread').appendChild(thinking); scrollThread();
+  const fd = new FormData();
+  pics.forEach((a, i) => fd.append('photo', a.photo, 'photo' + (i + 1) + '.jpg'));
+  fd.append('thumb', pics[0].thumb, 'thumb.jpg'); fd.append('kind', 'food'); fd.append('text', text); fd.append('date', day);
+  fd.append('tz', String(TZ)); fd.append('zone', ZONE); fd.append('planned', day > localDate() ? '1' : '');
+  const r = await api('photo', { body: fd });
+  thinking.remove();
+  if (!r.ok) { if (!r.offline) keepSet({ sentAt: null }); return { ok: false, reason: r.reason }; }
+  pics.forEach((a) => URL.revokeObjectURL(a.url)); ATTACH = []; drawTray(); keepAttach();
+  MEAL_PHOTOS[r.meal.id] = pics.map(({ photo, thumb }) => ({ photo, thumb }));
+  await refresh(); scrollThread();
+  if (r.named) toast('Saved as “' + r.named + '” — tap it in the chips next time.', 4000);
+  openEditor(r.meal, { fresh: true, notes: r.notes });
+  return { ok: true };
+}
+
 let PHOTO_OF = '';
 const sheetClosed = () => new Promise((res) => { if ($('sheet').hidden) return res(); const t = setInterval(() => { if ($('sheet').hidden) { clearInterval(t); res(); } }, 250); });
 async function takePhotos(files, kind) {
@@ -1174,8 +1240,8 @@ const imageIn = (list) => [...(list || [])].find((f) => f && ((f.type || '').sta
 const canTakePhoto = () => !$('s-home').hidden && !viewUser && !DAY?.readOnly;
 document.addEventListener('dragover', (e) => { if (canTakePhoto() && [...(e.dataTransfer?.items || [])].some((i) => i.kind === 'file')) { e.preventDefault(); document.body.classList.add('dropping'); } });
 document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) document.body.classList.remove('dropping'); });
-document.addEventListener('drop', (e) => { document.body.classList.remove('dropping'); const fs = imagesIn(e.dataTransfer?.files); if (!fs.length || !canTakePhoto()) return; e.preventDefault(); takePhotos(fs, 'food'); });
-document.addEventListener('paste', (e) => { const fs = imagesIn([...(e.clipboardData?.items || [])].map((i) => i.kind === 'file' ? i.getAsFile() : null)); if (!fs.length || !canTakePhoto()) return; e.preventDefault(); takePhotos(fs, 'food'); });
+document.addEventListener('drop', (e) => { document.body.classList.remove('dropping'); const fs = imagesIn(e.dataTransfer?.files); if (!fs.length || !canTakePhoto()) return; e.preventDefault(); addPhotos(fs); });
+document.addEventListener('paste', (e) => { const fs = imagesIn([...(e.clipboardData?.items || [])].map((i) => i.kind === 'file' ? i.getAsFile() : null)); if (!fs.length || !canTakePhoto()) return; e.preventDefault(); addPhotos(fs); });
 
 // iPhone photos are often HEIC. The iPhone itself hands the page a JPEG, and Safari on a Mac opens HEIC;
 // Chrome and Firefox on a computer can't. For those, and only then, load the converter (our own copy, 1.3 MB).
@@ -1214,7 +1280,7 @@ async function handlePhoto(file, kind) {
     const r = await api('photo', { body: fd });
     if (!r.offline) blobPut('photo', null);                // the server answered: nothing left to keep
     if (!r.ok) { closeSheet(); return toast(r.reason || 'That didn’t work.', 4000); }
-    if (kind === 'food') return openEditor(r.meal, { fresh: true, notes: r.notes });
+    if (kind === 'food') { MEAL_PHOTOS[r.meal.id] = [{ photo, thumb }]; return openEditor(r.meal, { fresh: true, notes: r.notes }); }
     if (kind === 'barcode') return openProduct(r.product);
     if (kind === 'label') return openProduct(r.product, r.previous);
     if (kind === 'receipt') { closeSheet(); toast('Receipt saved' + (r.shared ? ' to the household' : '')); return openReceipts(); }
@@ -1352,7 +1418,7 @@ function renderEditor(notes) {
     // correction changes only what it's about. The server enforces it (mergeCorrection).
     const before = ED.items;
     const current = before.map((it) => { const s = scaled(it); return { ...it, ...s, base: undefined }; });
-    if (ED.meal.source === 'photo' && lastPhoto) { const fd = new FormData(); fd.append('photo', lastPhoto.photo, 'photo.jpg'); fd.append('thumb', lastPhoto.thumb, 'thumb.jpg'); fd.append('kind', 'food'); fd.append('correction', correction); fd.append('mealId', ED.meal.id); fd.append('current', JSON.stringify(current)); r = await api('photo', { body: fd }); }
+    if (ED.meal.source === 'photo' && MEAL_PHOTOS[ED.meal.id]) { const fd = new FormData(); MEAL_PHOTOS[ED.meal.id].forEach((a, i) => fd.append('photo', a.photo, 'photo' + (i + 1) + '.jpg')); fd.append('thumb', MEAL_PHOTOS[ED.meal.id][0].thumb, 'thumb.jpg'); fd.append('kind', 'food'); fd.append('correction', correction); fd.append('mealId', ED.meal.id); fd.append('current', JSON.stringify(current)); r = await api('photo', { body: fd }); }
     else r = await api('text', { json: { text: before.map((i) => i.name).join(', ') || correction, correction, mealId: ED.meal.id, current } });
     if (!r.ok) { toast(r.reason || 'Couldn’t re-estimate.'); return renderEditor(); }
     // An item the correction left alone keeps its portion buttons exactly as they were.

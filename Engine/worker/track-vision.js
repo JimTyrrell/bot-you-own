@@ -22,6 +22,9 @@ const NO_THINK = { chat_template_kwargs: { enable_thinking: false } };
 // --- The prompts. Each one asks for JSON and nothing else. --------------------
 const FOOD_SHAPE = `{"items":[{"name":"","portion":"","grams":0,"kcal":0,"protein_g":0,"carbs_g":0,"fat_g":0,"confidence":0.0}],"notes":""}`;
 export const PROMPTS = {
+  // Photos + the person's words, sent together: ONE eating occasion. The words are the instructions
+  // (amounts, extra foods not pictured, a name to save it under); the photos are the evidence.
+  meal: (said, n) => `You are a careful nutrition estimator. You are given ${n === 1 ? "a photo" : n + " photos"}${said ? " and the person's own words" : ""} about ONE meal or drink they are having now. Answer ONLY with a JSON object, no prose, no code fence, exactly this shape:\n${FOOD_SHAPE.replace('"notes":""', '"notes":"","name":""')}\nRules:\n- ${n > 1 ? "The photos together are ONE meal. They may show different parts of it (the chicken, the rice, the salad) or the same thing more than once (a tub's front and its nutrition label, a plate from two angles). List every distinct food or drink ONCE, never once per photo.\n- " : ""}If the person gives a weight or amount for a food (\"rice 180 g\", \"150g chicken\", \"half the salad\"), use it exactly: a weight goes in \"grams\" and the numbers are for that weight.\n- If a nutrition label is visible, use its per-serving numbers exactly, times the number of servings the person says (\"2 scoops\" = 2 servings). Put the amount in "portion".\n- The person's words win about WHAT and HOW MUCH. If they mention something not in any photo (\"plus my protein shake\"), add it as its own item with your best estimate.\n- Supplements with no calories (creatine, electrolytes) are still items, with 0 kcal.\n- "name": only if they ask to save or name this (\"call it my morning stack\", \"make it a named meal: snack\"), the short name they gave; otherwise "".\n- If there is no food or drink at all, return an empty items list and say why in notes.${said ? `\nThe person says: "${said.replace(/"/g, "'")}"` : ""}`,
   // The Fix line: a correction to an estimate the person has ALREADY checked. They may
   // have fixed other items before — an earlier correction, the portion buttons, typed
   // grams — so the model sees the whole current list and is told to change only what
@@ -35,10 +38,13 @@ export const PROMPTS = {
 };
 
 // --- One call. `image` is raw bytes (ArrayBuffer/Uint8Array) or null for text-only.
-export async function runVision(env, cfg, { image = null, mime = "image/jpeg", prompt, maxTokens = 900 }) {
+// images: [{ bytes, mime }] — several photos of one eating occasion go to the model in ONE call, so the
+// front of a tub and its nutrition label are seen together (and counted once). `image` is the single-photo form.
+export async function runVision(env, cfg, { image = null, mime = "image/jpeg", images = null, prompt, maxTokens = 900 }) {
   if (!env.AI) throw new Error("No Workers AI binding (wrangler.jsonc → ai).");
   const content = [{ type: "text", text: prompt }];
-  if (image) content.push({ type: "image_url", image_url: { url: `data:${mime};base64,${toBase64(image)}` } });
+  const all = images && images.length ? images : image ? [{ bytes: image, mime }] : [];
+  for (const im of all) content.push({ type: "image_url", image_url: { url: `data:${im.mime || "image/jpeg"};base64,${toBase64(im.bytes)}` } });
   const t0 = Date.now();
   const r = await env.AI.run(cfg.model, {
     messages: [
@@ -50,7 +56,7 @@ export async function runVision(env, cfg, { image = null, mime = "image/jpeg", p
   });
   const text = String(r?.choices?.[0]?.message?.content ?? r?.response ?? r?.description ?? "");
   const usage = r?.usage || null;
-  console.log(JSON.stringify({ event: "foodlog-vision", model: cfg.model, ms: Date.now() - t0, image: Boolean(image), neurons: usage?.neurons ?? null, tokens: usage?.total_tokens ?? null }));
+  console.log(JSON.stringify({ event: "foodlog-vision", model: cfg.model, ms: Date.now() - t0, images: all.length, neurons: usage?.neurons ?? null, tokens: usage?.total_tokens ?? null }));
   return { text, usage };
 }
 

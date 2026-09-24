@@ -94,6 +94,8 @@ export function reactionFor(meal, totals, targets, { repeat = false, name = "", 
 // ---------------------------------------------------------------- the day's turns
 // Meals (from track_meals) and words (track_day_chat), merged by time. The page draws
 // a card for a meal and a bubble for words; a reaction row points at its meal.
+// At the same moment: the words sent with photos, then the meal they made, then everything else.
+const rank = (t) => (t.type === "text" && t.kind === "said" ? 0 : t.type === "meal" ? 1 : 2);
 export async function dayChat(env, who, date) {
   await ensureDaySchema(env);
   const meals = ((await env.DB.prepare(`SELECT * FROM track_meals WHERE user_id = ? AND date = ? ORDER BY created_at`).bind(who.id, date).all()).results || []).map(mealRow);
@@ -101,7 +103,7 @@ export async function dayChat(env, who, date) {
   const turns = [
     ...meals.map((m) => ({ type: "meal", at: m.created_at, meal: m })),
     ...rows.map((r) => ({ type: "text", id: r.id, at: r.created_at, role: r.role, kind: r.kind, text: r.text, mealId: r.meal_id || null })),
-  ].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.type === "meal" ? -1 : 1));
+  ].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : rank(a) - rank(b)));
   const plannedMeals = meals.filter((m) => m.planned);
   return { date, turns, totals: totalsOf(meals.filter((m) => !m.planned)), planned: { ...totalsOf(plannedMeals), meals: plannedMeals.length }, targets: who.targets };
 }
@@ -112,9 +114,9 @@ async function dayNumbers(env, who, date) {
   return { totals: totalsOf(rows.filter((r) => !r.planned)), planned: { ...totalsOf(plannedRows), meals: plannedRows.length } };
 }
 function mealRow(r) { const items = parseItems(r.items_json); return { id: r.id, date: r.date, time: r.time, items, kcal: r.kcal, protein_g: r.protein_g, carbs_g: r.carbs_g, fat_g: r.fat_g, thumb: r.thumb, source: r.source, created_at: r.created_at, zone: r.tz || null, tzOffset: r.tz_offset ?? null, planned: Boolean(r.planned) }; }
-export async function addWords(env, who, date, role, kind, text, mealId = null) {
+export async function addWords(env, who, date, role, kind, text, mealId = null, at = null) {
   await ensureDaySchema(env);
-  const now = nowIso();
+  const now = at || nowIso();
   await env.DB.prepare(`INSERT INTO track_day_chat (user_id, date, role, kind, text, meal_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(who.id, date, role, kind, String(text).slice(0, 2000), mealId, now).run();
   return { type: "text", at: now, role, kind, text: String(text).slice(0, 2000), mealId };
 }
