@@ -38,6 +38,13 @@
   .row { display:flex; gap:10px; align-items:center; } .row > * { flex:1; }
   .card { background:var(--panel); border-radius:20px; padding:16px; margin:12px 0; }
   .screen[hidden] { display:none; }
+  .sect { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:22px 4px 6px; }
+  .list { background:var(--panel); border-radius:16px; overflow:hidden; margin:8px 0; }
+  .list > button { display:flex; width:100%; align-items:center; justify-content:space-between; gap:10px; text-align:left; background:transparent; border-radius:0; padding:14px 16px; border-bottom:1px solid var(--edge); }
+  .list > button:last-child { border-bottom:0; }
+  .list > button::after { content:'›'; color:var(--muted); font-size:20px; line-height:1; }
+  .list > button.danger::after { content:''; }
+  .list > button small { display:block; color:var(--muted); font-size:12px; margin-top:2px; }
   .sitebar { position:sticky; top:0; z-index:6; display:flex; align-items:center; gap:10px;
     padding:9px 16px; background:var(--bg); border-bottom:1px solid var(--edge); font-size:13px; }
   .siteback { color:var(--text); text-decoration:none; font-weight:600; }
@@ -338,17 +345,19 @@
 
   <!-- HOUSEHOLD & SETTINGS -->
   <section class="screen" id="s-settings" hidden>
-    <div class="top"><button class="back" data-go="home">‹ Back</button><h1>Household</h1><span></span></div>
+    <div class="top"><button class="back" data-go="home">‹ Back</button><h1>Settings</h1><span></span></div>
+    <div class="sect">Account</div>
+    <div class="card"><b id="whoami" style="word-break:break-all"></b><p class="muted small" id="whodevices" style="margin:4px 0 0"></p></div>
+    <div class="list"><button data-go="targets"><span>🎯 Targets<small id="settargets">calories and macros</small></span></button></div>
+    <div class="sect">Household</div>
     <div id="hh"></div>
-    <h2>This device</h2>
+    <div class="sect">Signing in on another device</div>
     <div class="card">
-      <p class="small" id="whoami"></p>
       <div class="signin" id="passkey-settings" hidden><button id="pk-register">Set up a passkey on this device</button><p class="muted small" style="margin:2px 0 6px" id="pk-note">Your phone's own lock (Face ID, fingerprint, PIN) then opens the log on a new device — no coach needed. Passkeys are tied to this site's address.</p></div>
       <div class="signin" id="totp-settings" hidden><button id="totp-setup">Set up an authenticator app</button><div id="totpbox" hidden><canvas id="totpqr" style="display:block;margin:8px auto;background:#fff;border-radius:8px"></canvas><p class="muted small center" id="totpsecret" style="word-break:break-all"></p><div class="row"><input id="totpconfirm" inputmode="numeric" autocomplete="one-time-code" placeholder="six digits from the app" maxlength="7"><button id="totpok" style="flex:0 0 auto">Confirm</button></div></div><p class="muted small" style="margin:2px 0 6px">Google Authenticator, 1Password, Authy… scan once; then a new device is linked by typing the six digits. Nothing is ever emailed.</p></div>
       <div class="signin" id="signin-settings"></div>
-      <button data-go="targets" style="width:100%;margin-top:6px">Change targets</button>
-      <button class="ghost danger" id="forget" style="width:100%;margin-top:6px">Forget me on this browser</button>
     </div>
+    <div class="list" style="margin-top:22px"><button class="danger" id="forget"><span>Sign out on this device<small>your log is kept — sign back in with your email</small></span></button></div>
   </section>
 
   <!-- The second way out. The bar at the top is where people look for "back", but on a tall
@@ -525,9 +534,11 @@ function showOffline(reason) {
   $('offlinewhy').textContent = reason || OFFLINE_REASON;
   show('offline');
 }
-function onLinked(me) {
+function onLinked(me, signedIn) {
+  // A fresh sign-in always starts on today's log (not wherever the page was when they signed out).
+  if (signedIn) { day = localDate(); viewUser = null; paintTab('chat'); try { history.replaceState(null, '', PAGE); } catch {} }
   S.userId = me.userId; S.email = me.email; S.targets = me.targets; S.household = me.household; S.pending = null; save();
-  $('whoami').textContent = S.email + ' · ' + (me.devices || 1) + ' device' + ((me.devices || 1) === 1 ? '' : 's');
+  $('whoami').textContent = S.email; $('whodevices').textContent = 'Signed in on ' + (me.devices || 1) + ' device' + ((me.devices || 1) === 1 ? '' : 's') + '.';
   if (!S.targets) { show('targets'); prefillTargets(); return; }
   route();
 }
@@ -539,7 +550,7 @@ $('joinbtn').onclick = async () => {
   $('joinbtn').disabled = true;
   const j = await api('join', { json: { email } });
   $('joinbtn').disabled = false;
-  if (j.linked) { S.email = email; return onLinked(j); }
+  if (j.linked) { S.email = email; return onLinked(j, true); }
   if (j.code) { S.email = email; S.pending = j.code; save(); return showPending(j); }
   toast(j.reason || 'Couldn’t start. Try again.');
 };
@@ -548,10 +559,10 @@ function showPending(j) {
   $('pendingcode').textContent = j.code;
   show('pending');
   clearInterval(showPending._t);
-  showPending._t = setInterval(async () => { const me = await api('me'); if (me.linked) { clearInterval(showPending._t); toast('Linked!'); onLinked(me); } }, 5000);
+  showPending._t = setInterval(async () => { const me = await api('me'); if (me.linked) { clearInterval(showPending._t); toast('Linked!'); onLinked(me, true); } }, 5000);
 }
-$('pendingreset').onclick = () => { S = { deviceKey: S.deviceKey }; save(); location.reload(); };
-$('forget').onclick = () => { if (confirm('Forget this browser? Your log stays with your coach; you can link again with a passkey, a sign-in, your authenticator code, or the coach\'s link.')) { localStorage.removeItem(LS); location.reload(); } };
+$('pendingreset').onclick = () => { S = { deviceKey: S.deviceKey }; save(); location.href = PAGE; };
+$('forget').onclick = () => { if (confirm('Sign out on this device? Your log is kept. To come back, sign in with your email.')) { localStorage.removeItem(LS); location.href = PAGE; } };
 
 // ---------- passkeys and authenticator codes (Engine/identity/, docs/IDENTITY.md) ----------
 // Order on the join screen: passkey → Google/Microsoft/Apple → email + device → six digits / coach code.
@@ -573,7 +584,7 @@ async function passkeyLogin(conditional = false) {
   const r = await idApi('passkey/login', { challenge: o.challenge, id: cred.id, response: { clientDataJSON: b64u.enc(cred.response.clientDataJSON), authenticatorData: b64u.enc(cred.response.authenticatorData), signature: b64u.enc(cred.response.signature) } });
   if (!r.linked) return toast(r.reason || 'Passkey refused.');
   S.email = r.email; save(); toast('Linked with your passkey');
-  const me = await api('me'); if (me.linked) onLinked(me);
+  const me = await api('me'); if (me.linked) onLinked(me, true);
 }
 $('pk-login').onclick = () => passkeyLogin(false);
 $('pk-login2').onclick = () => passkeyLogin(false);
@@ -590,7 +601,7 @@ $('pk-register').onclick = async () => {
 $('totplink').onclick = async () => {
   const r = await idApi('totp/link', { email: S.email || $('email').value.trim(), code: $('totpcode').value });
   if (!r.linked) return toast(r.reason || 'That code didn\'t match.');
-  toast('Linked'); const me = await api('me'); if (me.linked) onLinked(me);
+  toast('Linked'); const me = await api('me'); if (me.linked) onLinked(me, true);
 };
 $('totp-setup').onclick = async () => {
   let r = await idApi('totp/setup');
@@ -640,7 +651,7 @@ async function signIn(s) {
     if (!idToken) return;
     closeSheet();
     const out = await api('signin', { json: { provider: s.provider, idToken } });
-    if (out.linked) { toast('Linked!'); onLinked(out); } else toast(out.reason || 'Sign-in refused.');
+    if (out.linked) { toast('Linked!'); onLinked(out, true); } else toast(out.reason || 'Sign-in refused.');
   } catch (e) { toast('Sign-in didn’t complete.'); }
 }
 
@@ -783,13 +794,13 @@ $('prevday').onclick = () => { day = shift(day, -1); refresh(); };
 $('nextday').onclick = () => { day = shift(day, 1); refresh(); };
 $('daylabel').onclick = () => { day = localDate(); refresh(); };
 $('menubtn').onclick = () => openMenu();
-function openMenu() { sheet('<h2 style="margin-top:0">Menu</h2>'
-  + '<button style="width:100%;margin:4px 0" onclick="closeSheet();openReceipts()">🧾 Receipts</button>'
-  + '<button style="width:100%;margin:4px 0" onclick="closeSheet();openSettings()">👥 Household & settings</button>'
-  + '<button style="width:100%;margin:4px 0" onclick="closeSheet();show(\'targets\');prefillTargets()">🎯 Targets</button>'
-  + '<button style="width:100%;margin:4px 0" onclick="closeSheet();openWeight()">⚖️ Weight (log, graph, import)</button>'
-  + '<button style="width:100%;margin:4px 0" onclick="closeSheet();openStaples()">★ Staples (rename, forget)</button>'
-  + (viewUser ? '<button class="primary" style="width:100%;margin:4px 0" onclick="closeSheet();goHome()">← Back to my log</button>' : ''), '/menu'); }
+// Your log first (the things you look at), then one Settings row (the things you change).
+function openMenu() { sheet((viewUser ? '<button class="primary" style="width:100%;margin:0 0 12px" onclick="closeSheet();goHome()">← Back to my log</button>' : '')
+  + '<div class="sect" style="margin-top:0">Your log</div><div class="list">'
+  + '<button onclick="closeSheet();openWeight()"><span>⚖️ Weight<small>log, graph, import</small></span></button>'
+  + '<button onclick="closeSheet();openStaples()"><span>★ Staples<small>rename or forget your regulars</small></span></button>'
+  + '<button onclick="closeSheet();openReceipts()"><span>🧾 Receipts</span></button></div>'
+  + '<div class="list"><button onclick="closeSheet();openSettings()"><span>⚙️ Settings<small>targets, household, signing in, sign out</small></span></button></div>', '/menu'); }
 
 function renderDay() {
   const t = DAY.targets || {}, tot = DAY.totals;
@@ -1543,6 +1554,7 @@ async function openSettings() {
   const hl = $('hleave'); if (hl) hl.onclick = async () => { if (!confirm('Leave the household?')) return; await api('household/leave', { json: {} }); openSettings(); };
   $('hh').querySelectorAll('[data-view]').forEach((el) => el.onclick = () => { viewUser = { id: el.dataset.view, name: el.dataset.name }; day = localDate(); show('home'); refresh(); });
   $('whoami').textContent = S.email;
+  const t = S.targets || {}; $('settargets').textContent = t.kcal ? Math.round(t.kcal).toLocaleString() + ' kcal · P ' + Math.round(t.protein_g || 0) + ' · C ' + Math.round(t.carbs_g || 0) + ' · F ' + Math.round(t.fat_g || 0) : 'calories and macros';
 }
 </script>
 </body>
