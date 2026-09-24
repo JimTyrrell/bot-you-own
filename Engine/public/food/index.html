@@ -85,6 +85,7 @@
   .meal img, .meal .ph { width:56px; height:56px; border-radius:12px; object-fit:cover; background:var(--edge); display:flex; align-items:center; justify-content:center; font-size:22px; flex:none; }
   .meal .b { flex:1; min-width:0; } .meal .b .t { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .meal .b .m { font-size:12px; color:var(--muted); }
+  .meal .b .said { font-size:13px; color:var(--muted); margin-top:4px; overflow-wrap:anywhere; }
   .meal .k { font-weight:700; white-space:nowrap; }
   .meal .x { background:transparent; color:var(--muted); padding:8px; }
   .meal.planned { background:transparent; border:1px dashed var(--edge); } .meal.planned .k, .meal.planned .t { color:var(--muted); }
@@ -1028,15 +1029,20 @@ function mealWhen(m) {
   return isNaN(at) ? m.time : (clockOf(at) || m.time);
 }
 // A planned meal is drawn hollow with a "Had it" button: one tap makes it eaten, at the time it is tapped.
-function mealCard(m) {
+function mealCard(m, said = '') {
   return '<div class="meal' + (m.planned ? ' planned' : '') + '" data-id="' + m.id + '">' + (m.thumb ? '<img src="' + m.thumb + '" alt="">' : '<div class="ph">' + (m.planned ? '📅' : ({ text: '⌨️', barcode: '▥', label: '🏷', receipt: '🧾', repeat: '⟲' }[m.source] || '🍽')) + '</div>')
-    + '<div class="b"><div class="t">' + (m.planned ? '<span class="tag">Planned</span> ' : '') + esc(m.items.map((i) => i.name).join(', ')) + '</div><div class="m">' + (m.planned ? 'P ' : mealWhen(m) + ' · P ') + Math.round(m.protein_g) + ' · C ' + Math.round(m.carbs_g) + ' · F ' + Math.round(m.fat_g) + '</div></div><div class="k">' + Math.round(m.kcal) + '</div>'
+    + '<div class="b"><div class="t">' + (m.planned ? '<span class="tag">Planned</span> ' : '') + esc(m.items.map((i) => i.name).join(', ')) + '</div><div class="m">' + (m.planned ? 'P ' : mealWhen(m) + ' · P ') + Math.round(m.protein_g) + ' · C ' + Math.round(m.carbs_g) + ' · F ' + Math.round(m.fat_g) + '</div>' + (said ? '<div class="said">“' + esc(said) + '”</div>' : '') + '</div><div class="k">' + Math.round(m.kcal) + '</div>'
     + (DAY.readOnly ? '' : (m.planned ? '<button class="had" data-had="' + m.id + '" title="I had it — log it as eaten now">Had it</button>' : '') + '<button class="x" data-del="' + m.id + '" title="Delete">✕</button>') + '</div>';
 }
 function renderThread() {
   const turns = (CHAT && CHAT.turns) || [];
+  // One bundle per meal: the words sent with it sit inside its card. Its "Logged. … left today" line is left
+  // out — the card has the kcal and the ring at the top has what's left and the protein.
+  const said = {};
+  turns.forEach((x) => { if (x.kind === 'said' && x.mealId) said[x.mealId] = (said[x.mealId] ? said[x.mealId] + ' ' : '') + x.text; });
   $('thread').innerHTML = turns.map((x) => {
-    if (x.type === 'meal') return mealCard(x.meal);
+    if (x.type === 'meal') return mealCard(x.meal, said[x.meal.id]);
+    if (x.mealId && (x.kind === 'said' || x.kind === 'reaction')) return '';
     if (x.kind === 'reaction') return '<div class="react">' + esc(x.text) + '</div>';
     return '<div class="turn ' + (x.role === 'user' ? 'me' : 'coach') + '"><div class="bub">' + esc(x.text) + '</div></div>';
   }).join('');
