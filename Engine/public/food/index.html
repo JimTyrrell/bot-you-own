@@ -111,9 +111,14 @@
   .sum .foot { color:var(--muted); font-size:12px; margin-top:8px; display:flex; justify-content:space-between; align-items:center; }
   .wrow { display:flex; justify-content:space-between; gap:8px; padding:9px 0; border-bottom:1px solid var(--edge); font-size:14px; } .wrow .d { font-weight:600; min-width:62px; } .wrow .muted { flex:1; text-align:right; }
   /* the composer */
-  .say { display:flex; gap:8px; align-items:center; margin:8px 0; }
-  .say input { flex:1; padding:12px 14px; border-radius:999px; }
-  .say button { flex:none; width:44px; height:44px; padding:0; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:18px; }
+  .say { margin:8px 0; padding:8px 8px 8px 16px; background:var(--panel); border:1px solid var(--edge); border-radius:24px; }
+  .say:focus-within { border-color:var(--accent); }
+  /* 16px text: anything smaller makes iOS zoom the page when the box is tapped. ~6 lines, then it scrolls. */
+  .say textarea { display:block; width:100%; padding:6px 0; border:0; border-radius:0; background:transparent; resize:none; font-size:16px; line-height:1.4; max-height:calc(6 * 1.4em + 12px); overflow-y:auto; }
+  .say textarea:focus { outline:none; }
+  .say .bar { display:flex; align-items:center; gap:8px; margin-top:6px; }
+  .say .bar .sp { flex:1; }
+  .say button { flex:none; width:40px; height:40px; padding:0; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:18px; }
   .say button.go { background:var(--accent); color:#fff; }
   .say button.on { background:var(--danger); color:#fff; }
   .favs { display:flex; gap:8px; overflow-x:auto; padding:4px 0; scrollbar-width:none; } .favs::-webkit-scrollbar { display:none; }
@@ -133,7 +138,7 @@
   /* the dock */
   .dock { position:fixed; left:0; right:0; bottom:0; padding:10px 16px calc(12px + env(safe-area-inset-bottom)); background:linear-gradient(to top, var(--bg) 70%, transparent); z-index:6; }
   .dock .in { max-width:480px; margin:0 auto; }
-  .snap { flex:none; width:44px; height:44px; padding:0; border-radius:50%; background:var(--accent); color:#fff; display:flex; align-items:center; justify-content:center; font-size:20px; box-shadow:0 6px 18px rgba(16,163,127,.35); }
+  .snap { flex:none; width:40px; height:40px; padding:0; border-radius:50%; background:var(--accent); color:#fff; display:flex; align-items:center; justify-content:center; font-size:20px; }
   .chips { display:flex; gap:8px; overflow-x:auto; padding:2px 0 2px; scrollbar-width:none; } .chips::-webkit-scrollbar { display:none; }
   .chips button { flex:none; padding:7px 12px; border-radius:999px; font-size:13px; background:var(--panel); border:1px solid var(--edge); }
   /* sheets */
@@ -369,11 +374,15 @@
 <!-- THE DOCK: favourites, one composer for "what I ate" and "what should I eat", the camera, the other ways in -->
 <div class="dock" id="dock" hidden><div class="in">
   <div class="favs" id="favs"></div>
+  <!-- The box gets the whole width and grows as it wraps; the buttons sit on a bar under it. -->
   <form class="say" id="sayform" autocomplete="off">
-    <button type="button" class="snap" id="snapbtn" title="Snap a plate">📷</button>
-    <input id="say" placeholder="Say what you ate, or ask…" maxlength="600">
-    <button type="button" id="micbtn" title="Say it out loud" hidden>🎤</button>
-    <button type="submit" class="go" id="saygo" title="Send">↑</button>
+    <textarea id="say" rows="1" placeholder="Say what you ate, or ask…" maxlength="600" enterkeyhint="send"></textarea>
+    <div class="bar">
+      <button type="button" class="snap" id="snapbtn" title="Snap a plate">📷</button>
+      <button type="button" id="micbtn" title="Say it out loud" hidden>🎤</button>
+      <span class="sp"></span>
+      <button type="submit" class="go" id="saygo" title="Send">↑</button>
+    </div>
   </form>
   <div class="chips">
     <button data-act="barcode">▥ Barcode</button>
@@ -932,7 +941,7 @@ function loadFav(id, btn) {
   const f = favById(id); if (!f) return;
   markPillUsed(id); if (btn) { btn.classList.remove('pillfresh'); btn.classList.add('pillused'); }
   const text = (f.name || f.label) + ' again';
-  const box = $('say'); box.value = text; PENDING_FAV = { id, text };
+  const box = $('say'); box.value = text; growSay(); PENDING_FAV = { id, text };
   box.focus(); try { box.setSelectionRange(text.length, text.length); } catch {}
   toast('In the box — press ↑ to log it, or change it first.', 2400);
 }
@@ -995,13 +1004,16 @@ async function openStaples() {
 }
 
 // ---------- the composer: one box. "chicken rice again" → a repeat; "2 eggs" → an estimate; "was lunch too much?" → the coach ----------
+function growSay() { const t = $('say'); t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; padForDock(); }
+$('say').addEventListener('input', growSay);
+$('say').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('sayform').requestSubmit(); } });
 $('sayform').onsubmit = async (e) => {
   e.preventDefault();
   const text = $('say').value.trim(); if (!text) return;
   // The words a chip put there, untouched → that exact favourite. Edited ("…, half of it") → the usual path, which still matches it.
-  if (PENDING_FAV && text === PENDING_FAV.text) { const id = PENDING_FAV.id; PENDING_FAV = null; $('say').value = ''; return repeatFav(id); }
+  if (PENDING_FAV && text === PENDING_FAV.text) { const id = PENDING_FAV.id; PENDING_FAV = null; $('say').value = ''; growSay(); return repeatFav(id); }
   PENDING_FAV = null;
-  $('saygo').disabled = true; $('say').value = '';
+  $('saygo').disabled = true; $('say').value = ''; growSay();
   const asking = /\?/.test(text);
   if (asking) appendTurns([{ type: 'text', role: 'user', kind: 'question', text }]);
   const thinking = document.createElement('div'); thinking.className = 'thinking'; thinking.innerHTML = '<i></i> ' + (asking ? 'Thinking…' : 'Working it out…'); $('thread').appendChild(thinking); scrollThread();
