@@ -399,6 +399,11 @@ async function photo(request, env, cfg, me) {
     const fresh = sanitiseItems(steady.items, { source: "photo" });
     const items = revising ? mergeCorrection(current, fresh, correction) : fresh;
     if (revising && !fresh.length) return json({ error: "no food", reason: "I couldn't apply that correction. Try naming the food and the amount, like “8 strawberries”." }, 422);
+    // No food, one photo, nothing half-done: it may be a receipt (there is no separate Receipt button any more).
+    if (!items.length && !revising && !mealId && files.length === 1) {
+      const rec = await readReceipt(env, cfg, me, images, thumb);
+      if (rec) return json({ ok: true, kind: "receipt", ...rec });
+    }
     if (!items.length) return json({ error: "no food", reason: parsed?.notes ? `I couldn't find food in that: ${String(parsed.notes).slice(0, 140)}` : "I couldn't make out any food in that photo. Try closer, with more light — or type it.", raw: out.text.slice(0, 300) }, 422);
     const meal = mealId ? await updateMealItems(env, me, mealId, items) : await insertMeal(env, me, { date, items, source: "photo", thumb, tz: form.get("tz"), zone: form.get("zone"), planned: form.get("planned"), at: taken });
     if (!meal) return json({ error: "no such meal" }, 404);
@@ -445,6 +450,17 @@ async function photo(request, env, cfg, me) {
     return json({ ok: true, receipt: await saveReceipt(env, { user: me, householdId: h?.id || null, receipt, thumb }), shared: Boolean(h) });
   }
   return json({ error: "unknown kind" }, 400);
+}
+
+// A photo sent as food that held no food: read it as a receipt. Null if it isn't one.
+async function readReceipt(env, cfg, me, images, thumb) {
+  try {
+    const out = await runVision(env, cfg, { images, prompt: PROMPTS.receipt, maxTokens: 1500 });
+    const receipt = sanitiseReceipt(extractJson(out.text));
+    if (!receipt || receipt.items.length < 2) return null;
+    const h = await householdOf(env, me.id);
+    return { receipt: await saveReceipt(env, { user: me, householdId: h?.id || null, receipt, thumb }), shared: Boolean(h) };
+  } catch (err) { console.warn("receipt fallback failed", err?.message || err); return null; }
 }
 
 // The page sends a ≤256 px JPEG it made itself. We keep it only if it really is

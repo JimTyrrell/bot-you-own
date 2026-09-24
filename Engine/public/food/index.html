@@ -56,6 +56,13 @@
   .siteout a { color:var(--muted); text-decoration:none; padding:10px 14px; display:inline-block; }
   .siteout a:hover { color:var(--text); }
   .top { display:flex; align-items:center; justify-content:space-between; padding:14px 0 6px; position:sticky; top:38px; background:var(--bg); z-index:5; }
+  /* The day screen: scrolling down tucks the site bar and the date row away (scrolling up brings them back);
+     the calorie ring stays pinned at the top. */
+  .sitebar, #s-home > .top { transition:transform .2s ease; }
+  body.tuck .sitebar { transform:translateY(-100%); }
+  body.tuck #s-home > .top { transform:translateY(calc(-100% - 38px)); }
+  #t-chat .mini { position:sticky; top:var(--hdr, 98px); z-index:4; transition:top .2s ease; box-shadow:0 6px 12px -10px rgba(0,0,0,.35); }
+  body.tuck #t-chat .mini { top:env(safe-area-inset-top, 0px); }
   .datenav { display:flex; align-items:center; gap:4px; }
   .datenav button { padding:8px 12px; border-radius:999px; }
   .streak { font-size:13px; color:var(--muted); }
@@ -148,8 +155,6 @@
   .dock { position:fixed; left:0; right:0; bottom:0; padding:10px 16px calc(12px + env(safe-area-inset-bottom)); background:linear-gradient(to top, var(--bg) 70%, transparent); z-index:6; }
   .dock .in { max-width:480px; margin:0 auto; }
   .snap { flex:none; width:40px; height:40px; padding:0; border-radius:50%; background:var(--accent); color:#fff; display:flex; align-items:center; justify-content:center; font-size:20px; }
-  .chips { display:flex; gap:8px; overflow-x:auto; padding:2px 0 2px; scrollbar-width:none; } .chips::-webkit-scrollbar { display:none; }
-  .chips button { flex:none; padding:7px 12px; border-radius:999px; font-size:13px; background:var(--panel); border:1px solid var(--edge); }
   /* sheets */
   .sheet { position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:20; display:flex; align-items:flex-end; }
   .sheet[hidden] { display:none; }
@@ -434,13 +439,6 @@
       <button type="submit" class="go" id="saygo" title="Send">↑</button>
     </div>
   </form>
-  <div class="chips">
-    <button data-act="barcode">▥ Barcode</button>
-    <button data-act="label">🏷 Label</button>
-    <button data-act="receipt">🧾 Receipt</button>
-    <button data-act="weigh">⚖️ Weigh in</button>
-    <button data-act="staples">★ Staples</button>
-  </div>
 </div></div>
 <!-- No capture attribute: the phone offers Take Photo *and* the photo library (a plate from lunch, a label saved earlier). -->
 <input type="file" id="cam" accept="image/*,.heic,.heif" multiple hidden>
@@ -976,7 +974,8 @@ $('menubtn').onclick = () => openMenu();
 // Your log first (the things you look at), then one Settings row (the things you change).
 function openMenu() { sheet((viewUser ? '<button class="primary" style="width:100%;margin:0 0 12px" onclick="closeSheet();goHome()">← Back to my log</button>' : '')
   + '<div class="sect" style="margin-top:0">Your log</div><div class="list">'
-  + '<button onclick="closeSheet();openWeight()"><span>⚖️ Weight<small>log, graph, import</small></span></button>'
+  + '<button onclick="closeSheet();openWeigh()"><span>⚖️ Weigh in<small>today’s weight</small></span></button>'
+  + '<button onclick="closeSheet();openWeight()"><span>📈 Weight<small>graph, table, import</small></span></button>'
   + '<button onclick="closeSheet();openStaples()"><span>★ Staples<small>rename or forget your regulars</small></span></button>'
   + '<button onclick="closeSheet();openReceipts()"><span>🧾 Receipts</span></button></div>'
   + '<div class="list"><button onclick="closeSheet();openSettings()"><span>⚙️ Settings<small>targets, household, signing in, sign out</small></span></button></div>', '/menu'); }
@@ -1053,6 +1052,20 @@ function wireMeals(root) {
   root.querySelectorAll('.meal').forEach((el) => el.onclick = (e) => { if (e.target.dataset.del || e.target.dataset.had) return; if (DAY.readOnly) return; const m = DAY.meals.find((x) => x.id === el.dataset.id); if (m) openEditor(m, { existing: true }); });
   root.querySelectorAll('[data-del]').forEach((b) => b.onclick = async (e) => { e.stopPropagation(); if (!confirm('Delete this meal?')) return; await api('meal/' + b.dataset.del, { method: 'DELETE' }); refresh(); });
 }
+// Tuck the header away while scrolling down the day, bring it back on the way up.
+(() => {
+  let lastY = scrollY;
+  const measure = () => { const a = document.querySelector('.sitebar'), b = document.querySelector('#s-home > .top'); if (a && b && b.offsetHeight) document.documentElement.style.setProperty('--hdr', (a.offsetHeight + b.offsetHeight) + 'px'); };
+  addEventListener('resize', measure); setTimeout(measure, 0);
+  addEventListener('scroll', () => {
+    const y = scrollY, home = !$('s-home').hidden;
+    if (!home || y < 80) document.body.classList.remove('tuck');
+    else if (y > lastY + 6) document.body.classList.add('tuck');
+    else if (y < lastY - 6) document.body.classList.remove('tuck');
+    if (Math.abs(y - lastY) > 6 || y < 80) lastY = y;
+    measure();
+  }, { passive: true });
+})();
 function scrollThread() { requestAnimationFrame(() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' })); }
 // The dock is fixed and its height changes (chips come and go): the page always leaves room for it.
 function padForDock() { const d = $('dock'); if (d.hidden) return; $('app').style.paddingBottom = (d.offsetHeight + 12) + 'px'; }
@@ -1126,12 +1139,30 @@ function renderFavs() {
   const yLabel = day === localDate() ? 'yesterday' : 'the day before';
   // Order: what you usually have NOW, then the copy-a-day buttons, then the rest. On a phone the strip shows
   // about two chips before it scrolls, so the "usually now" one has to be first or it is the one nobody sees.
-  box.innerHTML = FAVS.now.map(favChip).join('')
+  // A food already eaten on this day isn't suggested again on it (the same foods, in any order).
+  const foodsOf = (items) => items.map((i) => String(i.name || '').toLowerCase().trim()).sort().join('|');
+  const had = new Set(((DAY && DAY.meals) || []).filter((m) => !m.planned).map((m) => foodsOf(m.items || [])));
+  const fresh = (f) => !had.has(foodsOf(f.items || []));
+  box.innerHTML = FAVS.now.filter(fresh).map(favChip).join('')
     + (FAVS.yesterday ? '<button class="copy" data-copy="' + FAVS.yesterday.date + '">⟲ Same as ' + yLabel + ' <small>' + FAVS.yesterday.meals + ' meal' + (FAVS.yesterday.meals === 1 ? '' : 's') + ' · ' + FAVS.yesterday.kcal + '</small></button>' : '')
     + (FAVS.lastWeek ? '<button class="copy" data-copy="' + FAVS.lastWeek.date + '">⟲ Same as last ' + new Date(FAVS.lastWeek.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long' }) + '</button>' : '')
-    + FAVS.rest.slice(0, 6).map(favChip).join('');
-  box.querySelectorAll('[data-fav]').forEach((b) => b.onclick = () => loadFav(b.dataset.fav, b));
+    + FAVS.rest.filter(fresh).slice(0, 6).map(favChip).join('')
+    + '<button class="copy" data-staples>★ Staples</button>';
+  box.querySelectorAll('[data-fav]').forEach((b) => {
+    b.onclick = () => { if (b.dataset.held) { delete b.dataset.held; return; } loadFav(b.dataset.fav, b); };
+    // Press and hold (or right-click): stop suggesting it.
+    let t = 0; const cancel = () => clearTimeout(t);
+    b.addEventListener('pointerdown', () => { t = setTimeout(() => { b.dataset.held = '1'; askForget(b.dataset.fav); }, 550); });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach((e) => b.addEventListener(e, cancel));
+    b.oncontextmenu = (e) => { e.preventDefault(); cancel(); askForget(b.dataset.fav); };
+  });
+  box.querySelector('[data-staples]').onclick = () => openStaples();
   box.querySelectorAll('[data-copy]').forEach((b) => b.onclick = () => copyDay(b.dataset.copy));
+}
+function askForget(id) {
+  const f = favById(id); if (!f) return;
+  sheet('<h2 style="margin-top:0">Stop suggesting this?</h2><p class="muted small"><b>' + esc(f.label) + '</b> won’t show in the chips any more. Meals you’ve logged stay as they are; log it again and it can come back.</p><div class="row"><button style="flex:1" onclick="closeSheet()">Keep it</button><button class="primary" style="flex:1" id="forgetgo">Stop suggesting</button></div>');
+  $('forgetgo').onclick = async () => { await api('favourite/' + id, { method: 'DELETE' }); closeSheet(); toast('Won’t suggest ' + f.label + '.'); await refresh(); };
 }
 function favById(id) { return [...(FAVS?.now || []), ...(FAVS?.rest || [])].find((f) => f.id === id); }
 // Log a favourite again: send after a chip, "Log it" in Staples, or Yes on the repeat question. Every fifth time the
@@ -1328,12 +1359,6 @@ function drawWeights(svg, w, unit, sumEl) {
 // ---------- the camera ----------
 let camKind = 'food';
 $('snapbtn').onclick = () => { camKind = 'food'; $('cam').click(); };
-document.querySelectorAll('.chips button').forEach((b) => b.onclick = () => {
-  const a = b.dataset.act;
-  if (a === 'weigh') return openWeigh();
-  if (a === 'staples') return openStaples();
-  camKind = a; $('cam').click();
-});
 $('cam').onchange = () => { const fs = [...$('cam').files]; $('cam').value = ''; if (camKind === 'food') addPhotos(fs); else takePhotos(fs, camKind); };
 $('pick').onchange = () => { const fs = [...$('pick').files]; $('pick').value = ''; takePhotos(fs, camKind); };
 // Several photos at once: read one at a time, each reviewed like a single one ("Photo 2 of 4"),
@@ -1387,6 +1412,7 @@ async function sendPhotos(text) {
   thinking.remove(); $('tray').classList.remove('sending');
   if (!r.ok) { if (!r.offline) keepSet({ sentAt: null }); return { ok: false, reason: r.reason }; }
   pics.forEach((a) => URL.revokeObjectURL(a.url)); ATTACH = []; drawTray(); keepAttach();
+  if (r.kind === 'receipt') { toast('That’s a receipt — saved' + (r.shared ? ' to the household' : '') + '.', 3500); return openReceipts().then(() => ({ ok: true })); }
   MEAL_PHOTOS[r.meal.id] = pics.map(({ photo, thumb }) => ({ photo, thumb }));
   await refresh(); scrollThread();
   if (r.named) toast('Saved as “' + r.named + '” — tap it in the chips next time.', 4000);
@@ -1478,6 +1504,7 @@ async function handlePhoto(file, kind) {
     const r = await api('photo', { body: fd });
     if (!r.offline) blobPut('photo', null);                // the server answered: nothing left to keep
     if (!r.ok) { closeSheet(); return toast(r.reason || 'That didn’t work.', 4000); }
+    if (r.kind === 'receipt') { closeSheet(); toast('That’s a receipt — saved' + (r.shared ? ' to the household' : '') + '.', 3500); return openReceipts(); }
     if (kind === 'food') { MEAL_PHOTOS[r.meal.id] = [{ photo, thumb }]; return openEditor(r.meal, { fresh: true, notes: r.notes }); }
     if (kind === 'barcode') return openProduct(r.product);
     if (kind === 'label') return openProduct(r.product, r.previous);
@@ -1913,7 +1940,7 @@ async function openReceipts() {
   $('rtotals').innerHTML = '<div class="row"><div><div class="muted small">This week</div><b>' + cur + (r.totals?.week ?? 0).toFixed(2) + '</b></div><div><div class="muted small">This month</div><b>' + cur + (r.totals?.month ?? 0).toFixed(2) + '</b></div><div><div class="muted small">All</div><b>' + cur + (r.totals?.all ?? 0).toFixed(2) + '</b></div></div>';
   $('rlist').innerHTML = (r.receipts || []).length ? r.receipts.map((x) => '<div class="receipt"><div class="h"><span>' + esc(x.store) + ' <small class="muted">' + esc(x.date || '') + (x.shared ? ' · ' + esc(x.byName || 'household') : '') + '</small></span><span>' + esc(x.currency) + ' ' + Number(x.total).toFixed(2) + '</span></div>'
     + x.items.map((it) => '<div class="it"><span>' + esc(it.name) + (it.qty > 1 ? ' ×' + it.qty : '') + '</span><span class="muted">' + Number(it.price).toFixed(2) + '</span><button data-add="' + esc(it.name) + '">+ today</button></div>').join('')
-    + '<div class="it" style="justify-content:flex-end"><button class="ghost danger" data-rdel="' + x.id + '">Delete</button></div></div>').join('') : '<p class="muted center">No receipts yet. Tap 🧾 Receipt on the day screen.</p>';
+    + '<div class="it" style="justify-content:flex-end"><button class="ghost danger" data-rdel="' + x.id + '">Delete</button></div></div>').join('') : '<p class="muted center">No receipts yet. Snap one with 📷 — Plate spots that it’s a receipt.</p>';
   $('rlist').querySelectorAll('[data-add]').forEach((b) => b.onclick = async () => { b.disabled = true; const t = await api('text', { json: { text: b.dataset.add, date: localDate() } }); b.disabled = false; if (!t.ok) return toast(t.reason || 'Couldn’t estimate that.'); day = localDate(); openEditor(t.meal, { fresh: true, notes: t.notes }); });
   $('rlist').querySelectorAll('[data-rdel]').forEach((b) => b.onclick = async () => { if (!confirm('Delete this receipt?')) return; await api('receipt/' + b.dataset.rdel, { method: 'DELETE' }); openReceipts(); });
 }
