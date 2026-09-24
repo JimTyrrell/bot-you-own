@@ -502,6 +502,25 @@ async function route() {
   } finally { ROUTING = false; }
 }
 window.addEventListener('popstate', () => { if (S.userId) route(); });
+// ---------- stay current: a tab left open picks up a new deploy ----------
+// A phone keeps Plate open for days; nothing told it the code had changed (it went on reading each
+// photo as its own meal hours after that was fixed). /version.json changes on every deploy: when the
+// page comes back to the front with a different build, it reloads — at a quiet moment, and nothing is
+// lost (the box, photos in it and unsaved edits are all kept across a reload).
+let BUILT = '';
+async function buildNow() { try { return (await (await fetch('/version.json', { cache: 'no-store' })).json()).builtAt || ''; } catch { return ''; } }
+buildNow().then((b) => { BUILT = b; });
+async function checkBuild() {
+  if (!BUILT || document.hidden) return;
+  const b = await buildNow();
+  if (!b || b === BUILT) return;
+  const busy = !$('sheet').hidden || LOADING || $('saygo').disabled || document.querySelector('#thread .thinking');
+  if (busy) return;                                   // mid-review or mid-send: try again next time
+  location.reload();
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkBuild(); });
+window.addEventListener('pageshow', (e) => { if (e.persisted) checkBuild(); });   // Safari's back-forward cache
+setInterval(checkBuild, 10 * 60 * 1000);
 $('sheet').addEventListener('click', (e) => { if (e.target === $('sheet')) closeSheet(); });
 
 if (!S.deviceKey) { const b = crypto.getRandomValues(new Uint8Array(32)); S.deviceKey = [...b].map((x) => x.toString(16).padStart(2, '0')).join(''); save(); }

@@ -21,18 +21,71 @@ export async function lookupBarcode(env, rawCode) {
   if (!code) return { ok: false, reason: "That doesn't look like a valid barcode (check digit failed). Try again, or read the label instead." };
   const cached = await env.DB.prepare(`SELECT json, fetched_at FROM track_products WHERE code = ?`).bind(code).first();
   if (cached && Date.now() - Date.parse(cached.fetched_at) < PRODUCT_TTL_DAYS * 864e5) {
-    try { const p = JSON.parse(cached.json); if (p.notFound) return { ok: false, reason: "That barcode isn't in Open Food Facts. Snap the nutrition label instead.", code }; return { ok: true, product: p, cached: true }; } catch {}
+    try { const p = JSON.parse(cached.json); if (p.notFound) return (await ownProduct(env, code)) || { ok: false, reason: "That barcode isn't in Open Food Facts. Snap the nutrition label instead.", code }; return { ok: true, product: p, cached: true }; } catch {}
   }
   let product = null;
   try {
     const r = await fetch(OFF_URL(code), { headers: { "user-agent": OFF_UA, accept: "application/json" }, signal: AbortSignal.timeout(6000) });
     const data = r.ok ? await r.json() : null;
     if (data?.status === 1 && data.product) product = fromOpenFoodFacts(code, data.product);
-  } catch (err) { console.error("open food facts lookup failed", err?.message || err); return { ok: false, reason: "Couldn't reach the barcode database just now. Snap the label instead, or try again.", code }; }
+  } catch (err) { console.error("open food facts lookup failed", err?.message || err); return (await ownProduct(env, code)) || { ok: false, reason: "Couldn't reach the barcode database just now. Snap the label instead, or try again.", code }; }
   await env.DB.prepare(`INSERT INTO track_products (code, json, fetched_at) VALUES (?, ?, ?) ON CONFLICT(code) DO UPDATE SET json = excluded.json, fetched_at = excluded.fetched_at`)
     .bind(code, JSON.stringify(product || { notFound: true }), nowIso()).run();
-  if (!product) return { ok: false, reason: "That barcode isn't in Open Food Facts. Snap the nutrition label instead.", code };
+  if (!product) return (await ownProduct(env, code)) || { ok: false, reason: "That barcode isn't in Open Food Facts. Snap the nutrition label instead.", code };
   return { ok: true, product, cached: false };
+}
+// ---- Barcodes we've read ourselves ----------------------------------------------------------
+// Open Food Facts doesn't know every product (of the owner's three, only the Celsius). When a photo shows a
+// barcode AND a readable facts panel, the pairing is kept here under "upc:<code>" — never mixed with the
+// Open Food Facts cache — so next time the barcode alone is enough. Looked up only after Open Food Facts
+// misses. Nothing is sent to Open Food Facts (their data is public; contributing would be an opt-in).
+async function ownProduct(env, code) {
+  const row = await env.DB.prepare(`SELECT json FROM track_products WHERE code = ?`).bind("upc:" + code).first();
+  if (!row) return null;
+  try { return { ok: true, product: JSON.parse(row.json), own: true }; } catch { return null; }
+}
+export async function rememberBarcode(env, { code, name, serving_g, per_serving }) {
+  code = validBarcode(code);
+  if (!code || !per_serving) return null;
+  const product = { code, name: String(name || "").slice(0, 80) || `Product ${code}`, brand: "", serving_g: serving_g || null, serving_label: "1 serving", pack_g: null,
+    per_serving, per100: serving_g ? { kcal: Math.round(per_serving.kcal * 100 / serving_g), protein_g: round1(per_serving.protein_g * 100 / serving_g), carbs_g: round1(per_serving.carbs_g * 100 / serving_g), fat_g: round1(per_serving.fat_g * 100 / serving_g) } : null, source: "label" };
+  await env.DB.prepare(`INSERT INTO track_products (code, json, fetched_at) VALUES (?, ?, ?) ON CONFLICT(code) DO UPDATE SET json = excluded.json, fetched_at = excluded.fetched_at`)
+    .bind("upc:" + code, JSON.stringify(product), nowIso()).run();
+  return product;
+}
+// A meal's items with barcodes: a label read teaches the barcode; a barcode without a label is looked up
+// (Open Food Facts, then ours) and its per-serving numbers used for the servings the person said.
+// A barcode read off a photo often loses the small digit printed apart at the left ("8 10167 39200 5" came back
+// as "10167392005"). The check digit fixes exactly one missing leading digit, so try each and keep the one that checks.
+export function repairBarcode(raw) {
+  const d = String(raw || "").replace(/\D/g, "");
+  if (validBarcode(d)) return validBarcode(d);
+  if (d.length === 7 || d.length === 11 || d.length === 12) for (let k = 0; k <= 9; k++) { const c = validBarcode(k + d); if (c) return c; }
+  // Other numbers run in ("Item# 1927215" + the barcode came back as one string): the valid code inside, last one first.
+  if (d.length > 13) for (const n of [13, 12]) for (let i = d.length - n; i >= 0; i--) { const c = validBarcode(d.slice(i, i + n)); if (c) return c; }
+  return null;
+}
+export async function useBarcodes(env, items) {
+  const out = [];
+  for (const it of Array.isArray(items) ? items : []) {
+    const code = repairBarcode(it?.barcode);
+    const servings = Number(it?.servings) > 0 ? Number(it.servings) : 0;
+    if (!code) { out.push(it); continue; }
+    try {
+      if (it.from_label && servings) {
+        const per = (k) => round1((Number(it[k]) || 0) / servings);
+        await rememberBarcode(env, { code, name: it.name, serving_g: Number(it.grams) > 0 ? round1(it.grams / servings) : null, per_serving: { kcal: Math.round((Number(it.kcal) || 0) / servings), protein_g: per("protein_g"), carbs_g: per("carbs_g"), fat_g: per("fat_g") } });
+        out.push(it); continue;
+      }
+      const found = await lookupBarcode(env, code);
+      const p = found.ok ? found.product : null;
+      const ps = p?.per_serving || (p?.per100 && p?.serving_g ? { kcal: p.per100.kcal * p.serving_g / 100, protein_g: p.per100.protein_g * p.serving_g / 100, carbs_g: p.per100.carbs_g * p.serving_g / 100, fat_g: p.per100.fat_g * p.serving_g / 100 } : null);
+      if (!ps) { out.push(it); continue; }
+      const n = servings || 1;
+      out.push({ ...it, kcal: Math.round(ps.kcal * n), protein_g: round1(ps.protein_g * n), carbs_g: round1(ps.carbs_g * n), fat_g: round1(ps.fat_g * n), grams: p.serving_g ? round1(p.serving_g * n) : it.grams, confidence: 0.9, source: "barcode" });
+    } catch (err) { console.warn("barcode step skipped", err?.message || err); out.push(it); }
+  }
+  return out;
 }
 
 function fromOpenFoodFacts(code, p) {

@@ -47,8 +47,8 @@ import { identify, signInMethods, verifyIdToken } from "../identity/index.js";
 import { resolve as resolveExpiry, lapseReply, noticeFor, EXPIRY_BUILT_IN } from "./expiry.js";
 import { join as idJoin, userIdFor, userById as idUserById, bindDevice, linkByCode, deviceCount, listDevices, pendingByEmail, touch as idTouch, DEV_PEPPER, pepperOf } from "../identity/devices.js";
 import { runVision, PROMPTS, extractJson, withBrands, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize, mergeCorrection } from "./track-vision.js";
-import { lookupBarcode, rememberLabel, saveReceipt, listReceipts, deleteReceipt, setWeight, listWeights, importWeights, householdOf, createHousehold, joinHousehold, leaveHousehold, canView } from "./track-extras.js";
-import { ensureDaySchema, dayChat, addWords, afterMeal, editedMeal, confirmedMeal, removedMeal, listFavourites, nameFavourite, forgetFavourite, matchFavourite, repeatMeals, retimeFavourite, localHour, askDay, summaryFor, classifySay, looksLikeFood } from "./track-day.js";
+import { lookupBarcode, useBarcodes, rememberLabel, saveReceipt, listReceipts, deleteReceipt, setWeight, listWeights, importWeights, householdOf, createHousehold, joinHousehold, leaveHousehold, canView } from "./track-extras.js";
+import { ensureDaySchema, dayChat, addWords, afterMeal, editedMeal, confirmedMeal, removedMeal, listFavourites, nameFavourite, forgetFavourite, matchFavourite, recentTwin, repeatMeals, retimeFavourite, localHour, askDay, summaryFor, classifySay, looksLikeFood } from "./track-day.js";
 
 const THUMB_MAX_PX = 256, THUMB_MAX_BYTES = 48 * 1024;
 let HONESTY = "Photo estimates are typically within about 30%. Fix the portion when it's off.";   // per bot: project.json → food.honesty
@@ -378,7 +378,7 @@ async function photo(request, env, cfg, me) {
   const parsed = extractJson(out.text);
 
   if (kind === "food") {
-    const fresh = sanitiseItems(withBrands(parsed?.items, parsed?.photo_text, said), { source: "photo" });
+    const fresh = sanitiseItems(await useBarcodes(env, withBrands(parsed?.items, parsed?.photo_text, said)), { source: "photo" });
     const items = revising ? mergeCorrection(current, fresh, correction) : fresh;
     if (revising && !fresh.length) return json({ error: "no food", reason: "I couldn't apply that correction. Try naming the food and the amount, like “8 strawberries”." }, 422);
     if (!items.length) return json({ error: "no food", reason: parsed?.notes ? `I couldn't find food in that: ${String(parsed.notes).slice(0, 140)}` : "I couldn't make out any food in that photo. Try closer, with more light — or type it.", raw: out.text.slice(0, 300) }, 422);
@@ -388,11 +388,13 @@ async function photo(request, env, cfg, me) {
     if (said && !mealId) await addWords(env, me, meal.date, "user", "said", said, meal.id, meal.created_at);
     const after = mealId ? await editedMeal(env, me, meal, { tzOffsetMin: form.get("tz") }) : await afterMeal(env, me, meal, { tzOffsetMin: form.get("tz") });
     // "Make it a named meal: snack" — name the favourite this meal just taught.
+    const twin = mealId ? null : await recentTwin(env, me, meal);
+    const twinNote = twin ? `You logged this at ${twin.time || "a few minutes ago"} too — Discard if it's the same one. ` : "";
     const askedName = String(parsed?.name || "").trim().slice(0, 40);
     let named = null;
     if (askedName && after.favourite?.id) { await nameFavourite(env, me, after.favourite.id, askedName); named = askedName; }
     // debug=1 (tests): the model's own answer too — the person's own data, nothing more.
-    return json({ ok: true, meal, notes: String(parsed?.notes || "").slice(0, 200), honesty: HONESTY, totals: after.totals, named, photos: files.length, ...(form.get("debug") === "1" ? { raw: out.text.slice(0, 4000) } : {}) });
+    return json({ ok: true, meal, notes: (twinNote + String(parsed?.notes || "")).slice(0, 260), twin, honesty: HONESTY, totals: after.totals, named, photos: files.length, ...(form.get("debug") === "1" ? { raw: out.text.slice(0, 4000) } : {}) });
   }
   if (kind === "barcode") {
     const digits = String(parsed?.digits || "").replace(/\D/g, "");

@@ -62,6 +62,27 @@ const FOOD_HINT = /\b(again|same|usual|log|had|ate|eat|eating|breakfast|lunch|di
 const QUESTION_HINT = /\?|^(what|how|why|should|can|could|is|are|was|were|do|does|did|am|will|would|which|when|where|who)\b/i;
 const mealKey = (items) => items.map((i) => i.name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()).filter(Boolean).sort().join("|").slice(0, 400);
 const fmt = (n) => Math.round(Number(n) || 0).toLocaleString("en-US");
+// The same meal, worded differently ("Orgain Creatine" / "Orgain CREATINE MICRONIZED CREATINE MONOHYDRATE"): as many
+// items, each item's words inside one of the other's (either way round), and calories within 20 kcal or 25%.
+// Exact keys made a second favourite chip for every rewording; this keeps one.
+export function sameMeal(a, b, kcalA, kcalB) {
+  if (!a?.length || a.length !== b?.length) return false;
+  const ka = Number(kcalA) || 0, kb = Number(kcalB) || 0;
+  if (Math.abs(ka - kb) > Math.max(20, 0.25 * Math.max(ka, kb))) return false;
+  const left = b.map((i) => new Set(words(i.name)));
+  return a.every((i) => {
+    const w = new Set(words(i.name)); if (!w.size) return false;
+    const j = left.findIndex((o) => o && o.size && ([...w].every((x) => o.has(x)) || [...o].every((x) => w.has(x))));
+    if (j < 0) return false; left[j] = null; return true;
+  });
+}
+// A meal logged in the last 30 minutes that is this same meal: the review says so, so a double log is caught.
+export async function recentTwin(env, who, meal) {
+  const since = new Date(Date.parse(meal.created_at || nowIso()) - 30 * 60 * 1000).toISOString();
+  const rows = (await env.DB.prepare(`SELECT id, time, kcal, items_json FROM track_meals WHERE user_id = ? AND date = ? AND id != ? AND created_at >= ? ORDER BY created_at DESC LIMIT 10`).bind(who.id, meal.date, meal.id, since).all()).results || [];
+  const twin = rows.find((r) => sameMeal(meal.items || [], parseItems(r.items_json), meal.kcal, r.kcal));
+  return twin ? { id: twin.id, time: twin.time || "" } : null;
+}
 const parseItems = (s) => { try { return JSON.parse(s) || []; } catch { return []; } };
 export const localHour = (createdAt, tzOffsetMin) => { const d = new Date(createdAt); return ((d.getUTCHours() * 60 + d.getUTCMinutes() - (Number(tzOffsetMin) || 0)) / 60 + 24) % 24; };
 // The words for a time of day (the label on a chip). Night wraps past midnight: 1 a.m. is not "morning".
@@ -189,7 +210,16 @@ async function rememberFavourite(env, who, meal, tzOffsetMin, { bump = true } = 
   if (!key) return null;
   const now = nowIso();
   const hour = Math.round(localHour(meal.created_at || now, tzOffsetMin));
-  const have = await env.DB.prepare(`SELECT * FROM track_favourites WHERE user_id = ? AND key = ?`).bind(who.id, key).first();
+  let have = await env.DB.prepare(`SELECT * FROM track_favourites WHERE user_id = ? AND key = ?`).bind(who.id, key).first();
+  if (!have && bump) {
+    const all = (await env.DB.prepare(`SELECT * FROM track_favourites WHERE user_id = ? ORDER BY times_used DESC LIMIT 60`).bind(who.id).all()).results || [];
+    const twin = all.find((r) => sameMeal(items, parseItems(r.items_json), meal.kcal, r.kcal));
+    if (twin) {
+      const hours = String(twin.hours || "").split(",").filter(Boolean).slice(-19).concat(String(hour)).join(",");
+      await env.DB.prepare(`UPDATE track_favourites SET times_used = times_used + 1, last_used = ?, hours = ?, thumb = COALESCE(thumb, ?) WHERE id = ?`).bind(now, hours, meal.thumb || null, twin.id).run();
+      return favOut({ ...twin, times_used: twin.times_used + 1, last_used: now, hours, thumb: twin.thumb || meal.thumb || null });
+    }
+  }
   if (have && !bump) {
     await env.DB.prepare(`UPDATE track_favourites SET thumb = COALESCE(?, thumb), items_json = ?, kcal = ?, protein_g = ?, carbs_g = ?, fat_g = ? WHERE id = ?`)
       .bind(meal.thumb || null, JSON.stringify(items), meal.kcal, meal.protein_g, meal.carbs_g, meal.fat_g, have.id).run();
@@ -219,7 +249,19 @@ export async function listFavourites(env, who, { hour = 12, date = todayUtc() } 
   await ensureDaySchema(env);
   const h = Number(hour), at = Number.isFinite(h) ? ((h % 24) + 24) % 24 : 12;
   const bucket = bucketOf(at);
-  const rows = ((await env.DB.prepare(`SELECT * FROM track_favourites WHERE user_id = ? ORDER BY times_used DESC, last_used DESC LIMIT 60`).bind(who.id).all()).results || []).map((r) => {
+  const raw = (await env.DB.prepare(`SELECT * FROM track_favourites WHERE user_id = ? ORDER BY times_used DESC, last_used DESC LIMIT 60`).bind(who.id).all()).results || [];
+  const kept = [];
+  for (const r of raw) {
+    const twin = kept.find((k) => sameMeal(parseItems(k.items_json), parseItems(r.items_json), k.kcal, r.kcal));
+    if (!twin) { kept.push(r); continue; }
+    twin.times_used += r.times_used; twin.name = twin.name || r.name; twin.last_used = [twin.last_used, r.last_used].sort().pop();
+    twin.hours = String(twin.hours || "").split(",").concat(String(r.hours || "").split(",")).filter(Boolean).slice(-20).join(",");
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE track_favourites SET times_used = ?, name = ?, last_used = ?, hours = ? WHERE id = ?`).bind(twin.times_used, twin.name || null, twin.last_used, twin.hours, twin.id),
+      env.DB.prepare(`DELETE FROM track_favourites WHERE id = ?`).bind(r.id),
+    ]);
+  }
+  const rows = kept.map((r) => {
     const hours = String(r.hours || "").split(",").filter(Boolean).map(Number);
     const near = hours.filter((x) => hoursApart(x, at) <= NEAR_HOURS).length;
     const nearest = hours.length ? Math.min(...hours.map((x) => hoursApart(x, at))) : 24;
