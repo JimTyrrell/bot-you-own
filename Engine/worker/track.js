@@ -398,11 +398,13 @@ async function photo(request, env, cfg, me) {
     // "Make it a named meal: snack" — name the favourite this meal just taught.
     const twin = mealId ? null : await recentTwin(env, me, meal);
     const twinNote = twin ? `You logged this at ${twin.time || "a few minutes ago"} too — Discard if it's the same one. ` : "";
+    // Scale displays in photos are misread often enough (glare, small digits) that the review says where the grams came from.
+    const scaleNote = parsed?.scale_read === true && !/\d/.test(said) ? "Weights read from your scale — tap any that look wrong, or type the weights with the photos. " : "";
     const askedName = String(parsed?.name || "").trim().slice(0, 40);
     let named = null;
     if (askedName && after.favourite?.id) { await nameFavourite(env, me, after.favourite.id, askedName); named = askedName; }
     // debug=1 (tests): the model's own answer too — the person's own data, nothing more.
-    return json({ ok: true, meal, notes: (twinNote + String(parsed?.notes || "")).slice(0, 260), twin, honesty: HONESTY, totals: after.totals, named, photos: files.length, ...(form.get("debug") === "1" ? { raw: out.text.slice(0, 4000) } : {}) });
+    return json({ ok: true, meal, notes: (twinNote + scaleNote + String(parsed?.notes || "")).slice(0, 360), twin, honesty: HONESTY, totals: after.totals, named, photos: files.length, ...(form.get("debug") === "1" ? { raw: out.text.slice(0, 4000) } : {}) });
   }
   if (kind === "barcode") {
     const digits = String(parsed?.digits || "").replace(/\D/g, "");
