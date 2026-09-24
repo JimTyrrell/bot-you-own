@@ -59,6 +59,8 @@
   /* The day screen: scrolling down tucks the site bar and the date row away (scrolling up brings them back);
      the calorie ring stays pinned at the top. */
   .sitebar, #s-home > .top { transition:transform .2s ease; }
+  body.slowtuck .sitebar, body.slowtuck #s-home > .top { transition:transform .7s ease; }
+  body.slowtuck #t-chat .mini { transition:top .7s ease; }
   body.tuck .sitebar { transform:translateY(-100%); }
   body.tuck #s-home > .top { transform:translateY(calc(-100% - 38px)); }
   #t-chat .mini { position:sticky; top:var(--hdr, 98px); z-index:4; transition:top .2s ease; box-shadow:0 6px 12px -10px rgba(0,0,0,.35); }
@@ -956,7 +958,7 @@ async function refresh() {
   if (!d.ok) return toast(d.reason || 'Couldn’t load the day.');
   DAY = d; WEEK = w; CHAT = c.ok ? c : { turns: [] }; FAVS = f && f.ok ? f : null;
   renderDay(); renderFavs(); padForDock();
-  if (!refresh.tucked && SCREEN === 'home') { refresh.tucked = true; requestAnimationFrame(() => tuckHeader()); }
+  if (!refresh.tucked && SCREEN === 'home') { refresh.tucked = true; setTimeout(() => tuckHeader(), 0); }
   if (tab === 'day') loadSummary('day'); if (tab === 'week') loadSummary('week');
   if (tab === 'chat' && day === localDate() && !viewUser) loadYesterday();
 }
@@ -1060,18 +1062,26 @@ function wireMeals(root) {
 // The day opens with it already tucked: the ring is the first thing you see.
 let tuckHeader = () => {};
 (() => {
-  let lastY = scrollY;
+  let lastY = scrollY, holdUntil = 0, settleUntil = 0;
   const measure = () => { const a = document.querySelector('.sitebar'), b = document.querySelector('#s-home > .top'); if (a && b && b.offsetHeight) document.documentElement.style.setProperty('--hdr', (a.offsetHeight + b.offsetHeight) + 'px'); };
   addEventListener('resize', measure); setTimeout(measure, 0);
   addEventListener('scroll', () => {
     const y = scrollY, home = !$('s-home').hidden;
+    if (Date.now() < settleUntil) { lastY = y; return; }      // our own slide into place, not the person
     if (!home || y < 10) document.body.classList.remove('tuck');
-    else if (y > lastY + 6) document.body.classList.add('tuck');
+    else if (y > lastY + 6 && Date.now() > holdUntil) document.body.classList.add('tuck');
     else if (y < lastY - 6) document.body.classList.remove('tuck');
     if (Math.abs(y - lastY) > 6 || y < 10) lastY = y;
     measure();
   }, { passive: true });
-  tuckHeader = () => { measure(); const h = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--hdr')) || 98; if (scrollY < h) scrollTo(0, h); document.body.classList.add('tuck'); lastY = scrollY; };
+  // On opening: the header shows for a moment so people know it's there, then slides away slowly.
+  tuckHeader = () => {
+    holdUntil = Date.now() + 1600;
+    setTimeout(() => {
+      if (!$('s-home').hidden && !document.body.classList.contains('tuck')) { document.body.classList.add('slowtuck'); tuckNow(); setTimeout(() => document.body.classList.remove('slowtuck'), 800); }
+    }, 1600);
+  };
+  const tuckNow = () => { measure(); settleUntil = Date.now() + 900; const h = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--hdr')) || 98; if (scrollY < h) { scrollTo({ top: h, behavior: 'smooth' }); setTimeout(() => { if (scrollY < h - 2) scrollTo(0, h); lastY = scrollY; }, 850); } document.body.classList.add('tuck'); lastY = Math.max(scrollY, h); };
 })();
 // A number box selects all of itself when tapped: type to replace it, or delete once to clear it. (They are
 // text boxes with a number keypad, because iPhones won't select inside a type="number" box.)
@@ -1691,7 +1701,16 @@ function renderEditor(notes) {
   $('sheetbody').querySelectorAll('[data-leave]').forEach((b) => b.onclick = () => { ED.items.splice(Number(b.dataset.leave), 1); renderEditor(notes); });
   if ($('edshare')) $('edshare').onclick = () => shareMeal(ED.meal.id);
   wirePhotoStrip(ED.meal);
-  $('discard').onclick = async () => { await api('meal/' + ED.meal.id, { method: 'DELETE' }); closeSheet(); refresh(); };
+  // Deleting a saved meal asks first, in the sheet: the footer turns into "Delete this meal? Keep it / Delete".
+  // (A fresh read that was never saved is just discarded.)
+  const doDelete = async () => { await api('meal/' + ED.meal.id, { method: 'DELETE' }); closeSheet(); toast('Meal deleted'); refresh(); };
+  $('discard').onclick = () => {
+    if (ED.fresh) return doDelete();
+    const foot = $('sheetbody').querySelector('.edfoot'), was = foot.innerHTML;
+    foot.innerHTML = '<span style="flex:1;align-self:center;font-weight:600">Delete this meal?</span><button id="delno">Keep it</button><button class="primary" id="delyes" style="background:var(--over,#d33);border-color:transparent">Delete</button>';
+    $('delyes').onclick = doDelete;
+    $('delno').onclick = () => { foot.innerHTML = was; renderEditor(notes); };
+  };
   // Save. On an iPhone with the keyboard up, the first tap on a button pinned to the bottom can go to closing
   // the keyboard and never become a click — so the touch itself saves (pointerup on the button), and the
   // click is the fallback. The button says it's saving, and the result says what was saved.
