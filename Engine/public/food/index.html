@@ -38,6 +38,7 @@
   .row { display:flex; gap:10px; align-items:center; } .row > * { flex:1; }
   .card { background:var(--panel); border-radius:20px; padding:16px; margin:12px 0; }
   .screen[hidden] { display:none; }
+  body.dropping .app { outline:3px dashed var(--accent); outline-offset:-8px; border-radius:24px; }
   .sect { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:22px 4px 6px; }
   .list { background:var(--panel); border-radius:16px; overflow:hidden; margin:8px 0; }
   .list > button { display:flex; width:100%; align-items:center; justify-content:space-between; gap:10px; text-align:left; background:transparent; border-radius:0; padding:14px 16px; border-bottom:1px solid var(--edge); }
@@ -378,7 +379,7 @@
   <form class="say" id="sayform" autocomplete="off">
     <textarea id="say" rows="1" placeholder="Say what you ate, or ask…" maxlength="600" enterkeyhint="send"></textarea>
     <div class="bar">
-      <button type="button" class="snap" id="snapbtn" title="Snap a plate">📷</button>
+      <button type="button" class="snap" id="snapbtn" title="Take a photo or pick one from your library">📷</button>
       <button type="button" id="micbtn" title="Say it out loud" hidden>🎤</button>
       <span class="sp"></span>
       <button type="submit" class="go" id="saygo" title="Send">↑</button>
@@ -392,8 +393,9 @@
     <button data-act="staples">★ Staples</button>
   </div>
 </div></div>
-<input type="file" id="cam" accept="image/*" capture="environment" hidden>
-<input type="file" id="pick" accept="image/*" hidden>
+<!-- No capture attribute: the phone offers Take Photo *and* the photo library (a plate from lunch, a label saved earlier). -->
+<input type="file" id="cam" accept="image/*,.heic,.heif" hidden>
+<input type="file" id="pick" accept="image/*,.heic,.heif" hidden>
 
 <!-- THE SHEET: one container, many contents -->
 <div class="sheet" id="sheet" hidden><div class="box"><div class="grip"></div><div id="sheetbody"></div></div></div>
@@ -427,7 +429,7 @@ function show(name) { SCREEN = name; if (name !== 'home') SHEET_PATH = ''; syncU
 // sheet(html, path): a path makes the sheet linkable (PAGE + path); without one the URL stays put.
 function sheet(html, path) { $('sheetbody').innerHTML = html; $('sheet').hidden = false; if (path) { SHEET_PATH = path; syncUrl(true); } }
 function linkSheet(path) { SHEET_PATH = path; syncUrl(true); }
-function closeSheet() { $('sheet').hidden = true; $('sheetbody').innerHTML = ''; if (SHEET_PATH) { SHEET_PATH = ''; syncUrl(true); } }
+function closeSheet() { if (ED && keepGet().editor) keepSet({ editor: null }); $('sheet').hidden = true; $('sheetbody').innerHTML = ''; if (SHEET_PATH) { SHEET_PATH = ''; syncUrl(true); } }
 
 // ---------- addresses: every screen, tab, day and linkable sheet has its own URL ----------
 //   PAGE                         today, chat          PAGE/day | /week | /chat[/YYYY-MM-DD]
@@ -471,6 +473,7 @@ async function route() {
     if (isDate(seg[0])) d = seg.shift();
     day = d; paintTab(t); show('home');
     await refresh();
+    if (!seg.length) restoreKept();
     if (seg[0] === 'meal' && seg[1]) { const m = DAY && DAY.meals.find((x) => x.id === seg[1]); if (m && !DAY.readOnly) openEditor(m, { existing: true }); else toast('That meal isn’t on this day.'); }
     else if (seg[0] === 'menu') openMenu();
     else if (seg[0] === 'staples') await openStaples();
@@ -941,7 +944,7 @@ function loadFav(id, btn) {
   const f = favById(id); if (!f) return;
   markPillUsed(id); if (btn) { btn.classList.remove('pillfresh'); btn.classList.add('pillused'); }
   const text = (f.name || f.label) + ' again';
-  const box = $('say'); box.value = text; growSay(); PENDING_FAV = { id, text };
+  const box = $('say'); box.value = text; growSay(); keepSet({ text, sentAt: null }); PENDING_FAV = { id, text };
   box.focus(); try { box.setSelectionRange(text.length, text.length); } catch {}
   toast('In the box — press ↑ to log it, or change it first.', 2400);
 }
@@ -1004,22 +1007,80 @@ async function openStaples() {
 }
 
 // ---------- the composer: one box. "chicken rice again" → a repeat; "2 eggs" → an estimate; "was lunch too much?" → the coach ----------
+// ---------- nothing half-done is lost on a refresh ----------
+// The words in the box, a message on its way, a photo being read, a recording, portion changes not
+// yet saved: each is kept in this browser until the server has it, then offered back after a reload.
+// Text and editor changes in localStorage; the photo and the audio (blobs) in IndexedDB. Per person.
+const KEEP = 'plate:keep:' + BOT;
+function keepGet() { try { const k = JSON.parse(localStorage.getItem(KEEP) || '{}'); return k.userId === S.userId ? k : {}; } catch { return {}; } }
+function keepSet(patch) { try { localStorage.setItem(KEEP, JSON.stringify({ ...keepGet(), ...patch, userId: S.userId })); } catch {} }
+function idb() { return new Promise((res, rej) => { const o = indexedDB.open('plate-keep', 1); o.onupgradeneeded = () => o.result.createObjectStore('b'); o.onsuccess = () => res(o.result); o.onerror = () => rej(o.error); }); }
+async function blobPut(k, v) { try { const db = await idb(); await new Promise((res, rej) => { const t = db.transaction('b', 'readwrite'); v == null ? t.objectStore('b').delete(k) : t.objectStore('b').put(v, k); t.oncomplete = res; t.onerror = () => rej(t.error); }); } catch {} }
+async function blobGet(k) { try { const db = await idb(); const v = await new Promise((res) => { const r = db.transaction('b').objectStore('b').get(k); r.onsuccess = () => res(r.result || null); r.onerror = () => res(null); }); return v && v.userId === S.userId && Date.now() - v.at < 864e5 ? v : null; } catch { return null; } }
+// Did the server get it after all? A meal made since, or the same words in today's chat.
+function landedSince(at, text) {
+  if ((DAY?.meals || []).some((m) => Date.parse(m.created_at || '') >= at - 5000)) return true;
+  return Boolean(text) && ((CHAT && CHAT.turns) || []).some((t) => t.role === 'user' && t.text === text);
+}
+// Once per page load, after today has drawn: put back whatever was left.
+async function restoreKept() {
+  if (restoreKept.done || viewUser) return; restoreKept.done = true;
+  const k = keepGet(), box = $('say');
+  if (k.text && !box.value) {
+    if (!k.sentAt) { box.value = k.text; growSay(); }
+    else if (landedSince(k.sentAt, k.text)) keepSet({ text: '', sentAt: null });
+    else { box.value = k.text; growSay(); keepSet({ sentAt: null }); toast('That message hadn’t gone through — it’s back in the box. Press ↑ to send it.', 5000); }
+  }
+  const ph = await blobGet('photo');
+  if (ph && ph.kind === 'food' && landedSince(ph.at)) { await blobPut('photo', null); }
+  else if (ph && $('sheet').hidden) {
+    const url = URL.createObjectURL(ph.thumb || ph.photo);
+    sheet('<h2 style="margin-top:0">A photo didn’t finish</h2><img src="' + url + '" style="width:96px;height:96px;object-fit:cover;border-radius:14px;display:block;margin:4px 0 10px"><p class="muted small">It was still being read when the page reloaded.</p><div class="row"><button class="ghost" id="kp-drop">Discard</button><button class="primary" id="kp-go" style="flex:2">Read it now</button></div>');
+    $('kp-drop').onclick = async () => { await blobPut('photo', null); closeSheet(); };
+    $('kp-go').onclick = () => handlePhoto(ph.photo, ph.kind);
+    return;
+  }
+  const au = await blobGet('audio');
+  if (au && au.chunks && au.chunks.length && $('sheet').hidden) {
+    sheet('<h2 style="margin-top:0">A recording didn’t finish</h2><p class="muted small">You were speaking when the page reloaded. Turn what was recorded into words? They go in the box for you to check.</p><div class="row"><button class="ghost" id="ka-drop">Discard</button><button class="primary" id="ka-go" style="flex:2">Turn it into words</button></div>');
+    $('ka-drop').onclick = async () => { await blobPut('audio', null); closeSheet(); };
+    $('ka-go').onclick = async () => {
+      sheet('<div class="thinking"><i></i> Turning it into words…</div>');
+      const r = await transcribe(new Blob(au.chunks, { type: au.type }));
+      closeSheet();
+      if (r.offline) return toast(r.reason);
+      await blobPut('audio', null);
+      if (!r.text) return toast(r.reason || 'I couldn’t make that out.', 4000);
+      box.value = (box.value ? box.value + ' ' : '') + r.text; growSay(); keepSet({ text: box.value, sentAt: null }); box.focus();
+    };
+  }
+}
+async function transcribe(blob) {
+  const fd = new FormData(); fd.append('audio', blob, 'clip.' + ((blob.type.split('/')[1] || 'webm').split(';')[0]));
+  return api('transcribe', { body: fd });
+}
+
 function growSay() { const t = $('say'); t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; padForDock(); }
-$('say').addEventListener('input', growSay);
+$('say').addEventListener('input', () => { growSay(); keepSet({ text: $('say').value, sentAt: null }); });
 $('say').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('sayform').requestSubmit(); } });
 $('sayform').onsubmit = async (e) => {
   e.preventDefault();
   const text = $('say').value.trim(); if (!text) return;
   // The words a chip put there, untouched → that exact favourite. Edited ("…, half of it") → the usual path, which still matches it.
-  if (PENDING_FAV && text === PENDING_FAV.text) { const id = PENDING_FAV.id; PENDING_FAV = null; $('say').value = ''; growSay(); return repeatFav(id); }
+  if (PENDING_FAV && text === PENDING_FAV.text) { const id = PENDING_FAV.id; PENDING_FAV = null; $('say').value = ''; growSay(); keepSet({ text: '', sentAt: null }); return repeatFav(id); }
   PENDING_FAV = null;
-  $('saygo').disabled = true; $('say').value = ''; growSay();
+  $('saygo').disabled = true; $('say').value = ''; growSay(); keepSet({ text, sentAt: Date.now() });
   const asking = /\?/.test(text);
   if (asking) appendTurns([{ type: 'text', role: 'user', kind: 'question', text }]);
   const thinking = document.createElement('div'); thinking.className = 'thinking'; thinking.innerHTML = '<i></i> ' + (asking ? 'Thinking…' : 'Working it out…'); $('thread').appendChild(thinking); scrollThread();
   const r = await api('say', { json: { text, date: day, hour: new Date().getHours() } });
   thinking.remove(); $('saygo').disabled = false;
-  if (!r.ok) { if (asking && CHAT) CHAT.turns.pop(); renderThread(); return toast(r.reason || 'That didn’t work.', 4000); }
+  if (!r.ok) {
+    if (asking && CHAT) CHAT.turns.pop(); renderThread();
+    if (!$('say').value) { $('say').value = text; growSay(); } keepSet({ text: $('say').value, sentAt: null });   // not lost: back in the box
+    return toast((r.reason || 'That didn’t work.') + ' Your words are back in the box.', 4000);
+  }
+  keepSet({ text: $('say').value, sentAt: null });
   if (r.kind === 'answer') { if (asking && CHAT) CHAT.turns.pop(); appendTurns(r.turns); return; }
   if (r.kind === 'meal') return openEditor(r.meal, { fresh: true, notes: r.notes });
   if (r.kind === 'repeat') {
@@ -1050,19 +1111,19 @@ $('sayform').onsubmit = async (e) => {
     const pick = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'].find((t) => MediaRecorder.isTypeSupported?.(t));
     try { rec = new MediaRecorder(stream, pick ? { mimeType: pick } : undefined); } catch { stream.getTracks().forEach((t) => t.stop()); b.hidden = true; return toast('The recorder wouldn’t start here. Typing works as usual.'); }
     chunks = [];
-    rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) { chunks.push(e.data); blobPut('audio', { userId: S.userId, chunks: chunks.slice(), type: rec.mimeType || pick || 'audio/webm', at: Date.now() }); } };
     rec.onstop = async () => {
       stream.getTracks().forEach((t) => t.stop());
       const blob = new Blob(chunks, { type: rec.mimeType || pick || 'audio/webm' }); rec = null;
       b.textContent = '…'; b.disabled = true; box.placeholder = 'Turning it into words…';
       if (blob.size < 100) { idle(); return toast('I didn’t catch anything. Try again.'); }
-      const fd = new FormData(); fd.append('audio', blob, 'clip.' + ((blob.type.split('/')[1] || 'webm').split(';')[0]));
-      const r = await api('transcribe', { body: fd });
+      const r = await transcribe(blob);
       idle();
+      if (!r.offline) blobPut('audio', null);
       if (!r.text) return toast(r.reason || 'I couldn’t make that out. Try again, or type it.', 4000);
       box.value = r.text; $('sayform').requestSubmit();
     };
-    rec.start();
+    rec.start(1000);                                    // a chunk a second, so a reload mid-sentence keeps what was said
     b.classList.add('on'); b.textContent = '■'; box.placeholder = 'Listening… press ■ when you’re done';
     timer = setTimeout(stop, 30000);
   };
@@ -1087,7 +1148,24 @@ document.querySelectorAll('.chips button').forEach((b) => b.onclick = () => {
 });
 $('cam').onchange = () => { const f = $('cam').files[0]; $('cam').value = ''; if (f) handlePhoto(f, camKind); };
 $('pick').onchange = () => { const f = $('pick').files[0]; $('pick').value = ''; if (f) handlePhoto(f, camKind); };
+// On a computer: drop a photo anywhere on the log, or paste one (⌘V / Ctrl+V) — it's read as a plate.
+const imageIn = (list) => [...(list || [])].find((f) => f && ((f.type || '').startsWith('image/') || isHeic(f)));
+const canTakePhoto = () => !$('s-home').hidden && !viewUser && !DAY?.readOnly;
+document.addEventListener('dragover', (e) => { if (canTakePhoto() && [...(e.dataTransfer?.items || [])].some((i) => i.kind === 'file')) { e.preventDefault(); document.body.classList.add('dropping'); } });
+document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) document.body.classList.remove('dropping'); });
+document.addEventListener('drop', (e) => { document.body.classList.remove('dropping'); const f = imageIn(e.dataTransfer?.files); if (!f || !canTakePhoto()) return; e.preventDefault(); handlePhoto(f, 'food'); });
+document.addEventListener('paste', (e) => { const f = imageIn([...(e.clipboardData?.items || [])].map((i) => i.kind === 'file' ? i.getAsFile() : null)); if (!f || !canTakePhoto()) return; e.preventDefault(); handlePhoto(f, 'food'); });
 
+// iPhone photos are often HEIC. The iPhone itself hands the page a JPEG, and Safari on a Mac opens HEIC;
+// Chrome and Firefox on a computer can't. For those, and only then, load the converter (our own copy, 1.3 MB).
+const isHeic = (f) => /image\/hei[cf]/i.test(f.type || '') || /\.hei[cf]$/i.test(f.name || '');
+async function readablePhoto(file) {
+  if (!isHeic(file)) return file;
+  try { (await createImageBitmap(file)).close?.(); return file; } catch {}
+  if (!window.heic2any) await new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = '/vendor/heic2any-0.0.4.min.js'; sc.onload = res; sc.onerror = () => rej(new Error('converter')); document.head.appendChild(sc); });
+  const out = await window.heic2any({ blob: file, toType: 'image/jpeg', quality: 0.9 });
+  return Array.isArray(out) ? out[0] : out;
+}
 // Shrink in the browser: ≤1024 px JPEG over the wire, and a ≤256 px thumbnail for the meal card.
 async function shrink(file, max, quality) {
   const bmp = await (window.createImageBitmap ? createImageBitmap(file) : new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(file); }));
@@ -1099,6 +1177,7 @@ async function shrink(file, max, quality) {
 async function handlePhoto(file, kind) {
   sheet('<div class="thinking"><i></i> ' + ({ food: 'Looking at your plate…', barcode: 'Reading the barcode…', label: 'Reading the label…', receipt: 'Reading the receipt…' }[kind]) + '</div>');
   try {
+    if (isHeic(file)) { sheet('<div class="thinking"><i></i> Opening the iPhone photo…</div>'); file = await readablePhoto(file); sheet('<div class="thinking"><i></i> ' + ({ food: 'Looking at your plate…', barcode: 'Reading the barcode…', label: 'Reading the label…', receipt: 'Reading the receipt…' }[kind]) + '</div>'); }
     const [photo, thumb] = await Promise.all([shrink(file, 1024, 0.85), shrink(file, 256, 0.7)]);
     lastPhoto = { photo, thumb };
     // Barcodes: the browser can often read them itself (Chrome / Android). Free and instant.
@@ -1110,13 +1189,15 @@ async function handlePhoto(file, kind) {
       } catch {}
     }
     const fd = new FormData(); fd.append('photo', photo, 'photo.jpg'); fd.append('thumb', thumb, 'thumb.jpg'); fd.append('kind', kind); fd.append('date', day); fd.append('tz', String(TZ)); fd.append('zone', ZONE); fd.append('planned', day > localDate() ? '1' : '0');
+    await blobPut('photo', { userId: S.userId, photo, thumb, kind, at: Date.now() });
     const r = await api('photo', { body: fd });
+    if (!r.offline) blobPut('photo', null);                // the server answered: nothing left to keep
     if (!r.ok) { closeSheet(); return toast(r.reason || 'That didn’t work.', 4000); }
     if (kind === 'food') return openEditor(r.meal, { fresh: true, notes: r.notes });
     if (kind === 'barcode') return openProduct(r.product);
     if (kind === 'label') return openProduct(r.product, r.previous);
     if (kind === 'receipt') { closeSheet(); toast('Receipt saved' + (r.shared ? ' to the household' : '')); return openReceipts(); }
-  } catch (e) { closeSheet(); toast('Couldn’t read that photo.'); }
+  } catch (e) { closeSheet(); toast(e && e.message === 'converter' ? 'Couldn’t load the photo converter — check the connection and try again.' : 'Couldn’t read that photo.', 4000); }
 }
 
 // ---------- the editor: fix the portion with a tap ----------
@@ -1159,6 +1240,9 @@ function fitAdvice() {
 function editTime(m) { return (m.zone || (m.tzOffset !== null && m.tzOffset !== undefined)) ? (m.time || '') : (clockOf(new Date(m.created_at || 0)) || m.time || ''); }
 function openEditor(meal, { fresh = false, existing = false, notes = '' } = {}) {
   ED = { meal, fresh, items: meal.items.map((it) => ({ ...it, mult: it.mult || 1, base: it.base || { grams: it.grams, kcal: it.kcal, protein_g: it.protein_g, carbs_g: it.carbs_g, fat_g: it.fat_g, mult: it.mult || 1, portion: it.portion } })) };
+  const kept = keepGet().editor;
+  if (kept && meal.id && kept.mealId === meal.id && Array.isArray(kept.items)) { ED.items = kept.items; notes = 'Your changes from before the reload are back — Save to keep them.'; }
+  ED.orig = JSON.stringify(ED.items);
   renderEditor(notes);
   if (meal.id && !viewUser) linkSheet('/meal/' + meal.id);
 }
@@ -1214,6 +1298,7 @@ function fixSummary(before, after) {
   return lines.length ? lines.join('. ') + '.' : 'Nothing changed. Name the food the way it’s listed above, and the amount you want.';
 }
 function renderEditor(notes) {
+  if (ED.meal.id && ED.orig) { const now = JSON.stringify(ED.items); keepSet({ editor: now === ED.orig ? null : { mealId: ED.meal.id, items: ED.items } }); }
   const rows = ED.items.map((it, i) => { const s = scaled(it); return '<div class="item" data-i="' + i + '"><div class="nm"><span>' + esc(it.name) + ' <small>' + esc(it.portion || '') + '</small></span><span>' + s.kcal + ' kcal</span></div>'
     + '<div class="macros">P ' + s.protein_g.toFixed(0) + ' g · C ' + s.carbs_g.toFixed(0) + ' g · F ' + s.fat_g.toFixed(0) + ' g' + (it.grams ? ' · ' + gramsNice(it.grams) + ' g / ' + ozOf(it.grams) + ' oz' : '') + (it.confidence != null && it.confidence < 0.6 ? ' · <span style="color:var(--c)">not sure</span>' : '') + '</div>'
     + '<div class="mults">' + [0.5, 1, 1.5, 2].map((m) => '<button data-m="' + m + '" class="' + (activeMult(it) === m ? 'on' : '') + '">' + ({ 0.5: '½×', 1: '1×', 1.5: '1½×', 2: '2×' }[m]) + '</button>').join('')
