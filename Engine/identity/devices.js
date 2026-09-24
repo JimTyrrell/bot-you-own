@@ -111,7 +111,11 @@ export async function bindDevice(env, bot, { userId, email, keyHash, label }) {
   const now = nowIso();
   const ops = [
     env.DB.prepare(`INSERT OR IGNORE INTO id_users (id, bot, email, created_at, last_seen) VALUES (?, ?, ?, ?, ?)`).bind(userId, bot, email, now, now),
-    env.DB.prepare(`INSERT OR IGNORE INTO id_devices (key_hash, bot, user_id, label, created_at) VALUES (?, ?, ?, ?, ?)`).bind(keyHash, bot, userId, String(label || "device").slice(0, 60), now),
+    // A device already bound to a real person stays theirs; one bound to an id with no user row
+    // (left by the pre-5ee4d36 pepper bug) is re-pointed, or /me and /day 401 while /join says linked.
+    env.DB.prepare(`INSERT INTO id_devices (key_hash, bot, user_id, label, created_at) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(key_hash, bot) DO UPDATE SET user_id = excluded.user_id, label = excluded.label
+      WHERE id_devices.user_id NOT IN (SELECT id FROM id_users)`).bind(keyHash, bot, userId, String(label || "device").slice(0, 60), now),
     env.DB.prepare(`DELETE FROM id_pending WHERE key_hash = ? AND bot = ?`).bind(keyHash, bot),
   ];
   await env.DB.batch(ops);

@@ -405,7 +405,7 @@ function shift(date, n) { const d = new Date(date + 'T12:00:00'); d.setDate(d.ge
 const $ = (id) => document.getElementById(id);
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
 function toast(msg, ms = 2600) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(t._t); t._t = setTimeout(() => t.hidden = true, ms); }
-function show(name) { document.querySelectorAll('.screen').forEach((s) => s.hidden = s.id !== 's-' + name); $('dock').hidden = name !== 'home' || Boolean(viewUser); window.scrollTo(0, 0); }
+function show(name) { if (name === 'join' && S.email && !$('email').value) $('email').value = S.email; document.querySelectorAll('.screen').forEach((s) => s.hidden = s.id !== 's-' + name); $('dock').hidden = name !== 'home' || Boolean(viewUser); window.scrollTo(0, 0); }
 function sheet(html) { $('sheetbody').innerHTML = html; $('sheet').hidden = false; }
 function closeSheet() { $('sheet').hidden = true; $('sheetbody').innerHTML = ''; }
 $('sheet').addEventListener('click', (e) => { if (e.target === $('sheet')) closeSheet(); });
@@ -702,7 +702,13 @@ async function refresh() {
   const q = viewUser ? '&user=' + viewUser.id : '';
   const hour = new Date().getHours();
   const [d, w, c, f] = await Promise.all([api('day?date=' + day + q), api('week?end=' + day + q), api('chat?date=' + day + q), viewUser ? Promise.resolve(null) : api('favourites?date=' + day + '&hour=' + hour)]);
-  if (d.status === 401) { S.userId = null; save(); return location.reload(); }
+  // Not signed in after all: re-join once with the remembered email, then stop. A reload here
+  // looped forever when /join said linked but the device still pointed elsewhere.
+  if (d.status === 401) {
+    S.userId = null; save();
+    if (!refresh.rejoined && S.email) { refresh.rejoined = true; const j = await api('join', { json: { email: S.email } }); if (j.linked) return onLinked(j); if (j.code) { S.pending = j.code; save(); return showPending(j); } }
+    toast('This phone isn’t signed in yet. Tap the button to try again.', 5000); return show('join');
+  }
   if (!d.ok) return toast(d.reason || 'Couldn’t load the day.');
   DAY = d; WEEK = w; CHAT = c.ok ? c : { turns: [] }; FAVS = f && f.ok ? f : null;
   renderDay(); renderFavs(); padForDock();
