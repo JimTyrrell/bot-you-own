@@ -43,6 +43,12 @@
     { "binding": "DB", "database_name": "bot-you-own-logs", "database_id": "cc9d43d1-46fa-4c1e-8501-a0565bdd7b77" }
   ],
 
+  // Plate keeps each meal's photos (so a scale can be zoomed into later) in R2: meals/<user>/<meal>/<n>.jpg.
+  // Deleting a meal deletes them. Without this binding Plate keeps only the thumbnail, as before.
+  "r2_buckets": [
+    { "binding": "PHOTOS", "bucket_name": "bot-you-own-photos" }
+  ],
+
   // Handoff emails (project.json → handoffActions.email) go through Cloudflare Email
   // Sending. OFF by default because it only works with a domain you've onboarded:
   //   1. npx wrangler email sending enable yourdomain.com   (or dashboard → Email → Sending)

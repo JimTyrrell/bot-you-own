@@ -78,7 +78,7 @@ export async function ensureTrackSchema(env) {
   try {
     const have = new Set(((await env.DB.prepare(`PRAGMA table_info(track_meals)`).all()).results || []).map((c) => c.name));
     // planned (v3.13): a meal that has not happened yet. Counts against the day's budget, never as eaten.
-    for (const [col, decl] of [["tz", "TEXT"], ["tz_offset", "INTEGER"], ["planned", "INTEGER DEFAULT 0"]]) if (!have.has(col)) await env.DB.prepare(`ALTER TABLE track_meals ADD COLUMN ${col} ${decl}`).run();
+    for (const [col, decl] of [["tz", "TEXT"], ["tz_offset", "INTEGER"], ["planned", "INTEGER DEFAULT 0"], ["photos", "INTEGER DEFAULT 0"]]) if (!have.has(col)) await env.DB.prepare(`ALTER TABLE track_meals ADD COLUMN ${col} ${decl}`).run();
   } catch (err) { console.warn("meal zone columns not added (times will show in UTC)", err?.message || err); }
   await ensureDaySchema(env);
   TRACK_SCHEMA_OK = true;
@@ -195,6 +195,12 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
     return textMeal(env, cfg, me, body);
   }
   if (sub === "meal" && request.method === "POST") return saveMeal(env, me, body);
+  const pm = sub.match(/^meal\/([^/]+)\/photo\/(\d{1,2})$/);
+  if (pm) {
+    const row = await env.DB.prepare(`SELECT user_id FROM track_meals WHERE id = ?`).bind(pm[1]).first();
+    if (!row || (row.user_id !== me.id && !(await canView(env, me.id, row.user_id)))) return json({ error: "no such photo" }, 404);
+    return servePhoto(env, row.user_id, pm[1], pm[2]);
+  }
   if (sub.startsWith("meal/")) {
     const id = sub.slice(5);
     const row = await env.DB.prepare(`SELECT id, user_id FROM track_meals WHERE id = ?`).bind(id).first();
@@ -208,7 +214,7 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
       return json({ ok: true, meal: await readMeal(env, id), mine, owner: row.user_id, ownerName: owner?.name || "" });
     }
     if (row.user_id !== me.id) return json({ error: "not yours", reason: "You can look at a household member's day, but only they can change it." }, 403);
-    if (request.method === "DELETE") { await removedMeal(env, me, id); await env.DB.prepare(`DELETE FROM track_meals WHERE id = ?`).bind(id).run(); return json({ ok: true }); }
+    if (request.method === "DELETE") { await forgetPhotos(env, me.id, id); await removedMeal(env, me, id); await env.DB.prepare(`DELETE FROM track_meals WHERE id = ?`).bind(id).run(); return json({ ok: true }); }
     if (request.method === "PATCH") {
       const items = sanitiseItems(body.items);
       if (!items.length) return json({ error: "no items", reason: "A meal needs at least one food. Delete it instead." }, 400);
@@ -396,6 +402,14 @@ async function photo(request, env, cfg, me) {
     if (!items.length) return json({ error: "no food", reason: parsed?.notes ? `I couldn't find food in that: ${String(parsed.notes).slice(0, 140)}` : "I couldn't make out any food in that photo. Try closer, with more light — or type it.", raw: out.text.slice(0, 300) }, 422);
     const meal = mealId ? await updateMealItems(env, me, mealId, items) : await insertMeal(env, me, { date, items, source: "photo", thumb, tz: form.get("tz"), zone: form.get("zone"), planned: form.get("planned"), at: taken });
     if (!meal) return json({ error: "no such meal" }, 404);
+    // Keep the photos with a new meal (R2), so they can be looked at — and a scale zoomed into — later.
+    if (!mealId && env.PHOTOS) {
+      try {
+        await Promise.all(images.map((im, i) => env.PHOTOS.put(photoKey(me.id, meal.id, i), im.bytes, { httpMetadata: { contentType: im.mime } })));
+        await env.DB.prepare(`UPDATE track_meals SET photos = ? WHERE id = ?`).bind(images.length, meal.id).run();
+        meal.photos = images.length;
+      } catch (err) { console.warn("photos not kept", err?.message || err); }
+    }
     // The words sent with the photos are part of the day's conversation, before the reaction to them.
     if (said && !mealId) await addWords(env, me, meal.date, "user", "said", said, meal.id, meal.created_at);
     const after = mealId ? await editedMeal(env, me, meal, { tzOffsetMin: form.get("tz") }) : await afterMeal(env, me, meal, { tzOffsetMin: form.get("tz") });
@@ -561,11 +575,22 @@ async function updateMealItems(env, me, id, items) {
   await env.DB.prepare(`UPDATE track_meals SET items_json = ?, kcal = ?, protein_g = ?, carbs_g = ?, fat_g = ? WHERE id = ?`).bind(JSON.stringify(items), t.kcal, t.protein_g, t.carbs_g, t.fat_g, id).run();
   return readMeal(env, id);
 }
+// ---- a meal's photos (R2) ----
+const photoKey = (userId, mealId, i) => `meals/${userId}/${mealId}/${i}.jpg`;
+async function servePhoto(env, userId, mealId, i) {
+  const obj = env.PHOTOS ? await env.PHOTOS.get(photoKey(userId, mealId, i)) : null;
+  if (!obj) return json({ error: "no such photo" }, 404);
+  return new Response(obj.body, { headers: { "content-type": obj.httpMetadata?.contentType || "image/jpeg", "cache-control": "private, max-age=86400" } });
+}
+async function forgetPhotos(env, userId, mealId) {
+  if (!env.PHOTOS) return;
+  try { const l = await env.PHOTOS.list({ prefix: `meals/${userId}/${mealId}/` }); if (l.objects.length) await env.PHOTOS.delete(l.objects.map((o) => o.key)); } catch (err) { console.warn("photos not deleted", err?.message || err); }
+}
 async function readMeal(env, id) {
   const r = await env.DB.prepare(`SELECT * FROM track_meals WHERE id = ?`).bind(id).first();
   return r ? mealOut(r) : null;
 }
-function mealOut(r) { let items = []; try { items = JSON.parse(r.items_json); } catch {} return { id: r.id, date: r.date, time: r.time, items, kcal: r.kcal, protein_g: r.protein_g, carbs_g: r.carbs_g, fat_g: r.fat_g, thumb: r.thumb, source: r.source, created_at: r.created_at, zone: r.tz || null, tzOffset: r.tz_offset ?? null, planned: Boolean(r.planned) }; }
+function mealOut(r) { let items = []; try { items = JSON.parse(r.items_json); } catch {} return { id: r.id, date: r.date, time: r.time, items, kcal: r.kcal, protein_g: r.protein_g, carbs_g: r.carbs_g, fat_g: r.fat_g, thumb: r.thumb, source: r.source, created_at: r.created_at, zone: r.tz || null, tzOffset: r.tz_offset ?? null, planned: Boolean(r.planned), photos: Number(r.photos) || 0 }; }
 
 // --- THE DAY and THE WEEK. -------------------------------------------------------------
 async function dayView(env, who, date, { readOnly = false } = {}) {
@@ -639,6 +664,8 @@ function cleanTargets(t) {
 
 // --- THE COACH (admin token). One bot's clients only. ------------------------------------
 async function handleCoach(request, env, url, cfg, sub) {
+  const cp = sub.match(/^meal\/([^/]+)\/photo\/(\d{1,2})$/);
+  if (cp) { const row = await env.DB.prepare(`SELECT user_id FROM track_meals WHERE id = ?`).bind(cp[1]).first(); return row ? servePhoto(env, row.user_id, cp[1], cp[2]) : json({ error: "no such photo" }, 404); }
   // A meal link opened by the coach: whose meal it is, so the coach page can open that client.
   if (sub.startsWith("meal/")) {
     const row = await env.DB.prepare(`SELECT user_id, date FROM track_meals WHERE id = ?`).bind(sub.slice(5)).first();

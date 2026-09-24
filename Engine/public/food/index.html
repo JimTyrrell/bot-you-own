@@ -180,6 +180,19 @@
   .edfix { display:flex; gap:8px; } .edfix input { padding:10px 12px; font-size:15px; } .edfix button { flex:none; padding:10px 14px; }
   .edfoot { position:sticky; bottom:calc(-18px - env(safe-area-inset-bottom)); display:flex; gap:10px; margin:10px -16px calc(-18px - env(safe-area-inset-bottom)); padding:10px 16px calc(12px + env(safe-area-inset-bottom)); background:var(--bg); border-top:1px solid var(--edge); }
   .edfoot .primary { flex:2; }
+  .mphotos { display:flex; gap:8px; overflow-x:auto; margin:10px 0 4px; }
+  .mph { flex:none; width:72px; height:72px; padding:0; border-radius:12px; overflow:hidden; background:var(--panel); cursor:zoom-in; display:flex; align-items:center; justify-content:center; }
+  .mph img { width:100%; height:100%; object-fit:cover; display:block; } .mph i { width:16px; height:16px; border:3px solid var(--edge); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; }
+  .zoom { position:fixed; inset:0; z-index:40; background:rgba(0,0,0,.92); display:flex; align-items:center; justify-content:center; animation:fadein .15s; }
+  .zoom[hidden] { display:none; }
+  .zbar { position:absolute; top:calc(10px + env(safe-area-inset-top)); left:14px; right:14px; display:flex; justify-content:space-between; align-items:center; color:#ddd; font-size:14px; z-index:2; }
+  .zx { width:40px; height:40px; padding:0; border-radius:50%; background:rgba(255,255,255,.14); color:#fff; font-size:18px; }
+  .zstage { width:100%; height:100%; overflow:hidden; display:flex; align-items:center; justify-content:center; touch-action:none; cursor:zoom-in; }
+  .zstage.zoomed { cursor:zoom-out; }
+  .zstage img { max-width:100%; max-height:100%; object-fit:contain; transition:transform .12s ease-out; user-select:none; -webkit-user-drag:none; }
+  .znav { position:absolute; top:50%; transform:translateY(-50%); width:44px; height:44px; padding:0; border-radius:50%; background:rgba(255,255,255,.14); color:#fff; font-size:26px; z-index:2; }
+  .zprev { left:10px; } .znext { right:10px; }
+  .zhint { position:absolute; bottom:calc(14px + env(safe-area-inset-bottom)); left:0; right:0; text-align:center; color:#aaa; font-size:12px; margin:0; }
   .edq { margin:4px 0 10px; padding:10px 12px; border-radius:12px; background:var(--panel); border-left:3px solid #d97706; font-size:14px; } .edq button { flex:1 1 auto; padding:8px 12px; background:var(--bg); border:1px solid var(--edge); }
   .whenhead { margin:14px 0 0; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; } .whenhead small { text-transform:none; letter-spacing:0; }
   .item .nm { display:flex; justify-content:space-between; gap:8px; font-weight:600; }
@@ -260,7 +273,7 @@
       <input id="email" type="email" inputmode="email" autocomplete="username webauthn" placeholder="you@example.com">
       <button class="primary" id="joinbtn" style="width:100%;margin-top:14px">Start logging</button>
       <div class="signin" id="signin-join"></div>
-      <p class="muted small" style="margin-top:12px">Privacy: photos are read once and thrown away — only a thumbnail and the numbers are kept, with your email. Your coach can see your log; nobody else can.</p>
+      <p class="muted small" style="margin-top:12px">Privacy: your meal photos are kept with your log, so you can look back at them. Only you, your household and your coach can see them, and deleting a meal deletes its photos.</p>
     </div>
   </section>
 
@@ -432,6 +445,7 @@
 <input type="file" id="pick" accept="image/*,.heic,.heif" multiple hidden>
 
 <!-- THE SHEET: one container, many contents -->
+<div class="zoom" id="zoom" hidden><div class="zbar"><span id="zcount"></span><button type="button" class="zx" id="zx" aria-label="Close">✕</button></div><div class="zstage" id="zstage"><img id="zimg" alt=""></div><button type="button" class="znav zprev" id="zprev" aria-label="Previous">‹</button><button type="button" class="znav znext" id="znext" aria-label="Next">›</button><p class="zhint" id="zhint"></p></div>
 <div class="sheet" id="sheet" hidden><div class="box" role="dialog" aria-modal="true"><div class="grip"></div><button type="button" class="sheetx" id="sheetx" title="Close" aria-label="Close">✕</button><div id="sheetbody"></div></div></div>
 <div id="toast" class="toast" hidden></div>
 
@@ -530,11 +544,67 @@ async function openSharedMeal(id) {
 function openMealView(m) {
   const who = (DAY && DAY.name) || (viewUser && viewUser.name) || '';
   sheet('<div class="row" style="justify-content:space-between"><h2 style="margin:0">' + (who ? esc(who) + '’s meal' : 'Meal') + '</h2>' + (m.thumb ? '<img src="' + m.thumb + '" style="width:44px;height:44px;border-radius:10px;object-fit:cover;flex:none">' : '') + '</div>'
-    + '<p class="muted small" style="margin:6px 0 2px">' + esc(new Date(m.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })) + (m.time ? ' · ' + esc(m.time) : '') + (m.planned ? ' · planned' : '') + '</p>'
+    + photoStrip(m) + '<p class="muted small" style="margin:6px 0 2px">' + esc(new Date(m.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })) + (m.time ? ' · ' + esc(m.time) : '') + (m.planned ? ' · planned' : '') + '</p>'
     + m.items.map((it) => '<div class="item"><div class="irow ro" style="cursor:default"><span class="in"><b>' + esc(it.name) + '</b> <small>' + esc(it.portion || (it.grams ? Math.round(it.grams) + ' g' : '')) + '</small><em>P ' + Math.round(it.protein_g) + ' · C ' + Math.round(it.carbs_g) + ' · F ' + Math.round(it.fat_g) + '</em></span><span class="ik" style="font-weight:700">' + Math.round(it.kcal) + '</span></div></div>').join('')
     + '<div class="total"><span>Total <small>P ' + Math.round(m.protein_g) + ' · C ' + Math.round(m.carbs_g) + ' · F ' + Math.round(m.fat_g) + '</small></span><span>' + Math.round(m.kcal) + ' kcal</span></div>'
     + '<div class="edfoot"><button class="ghost" onclick="closeSheet()">Close</button><button class="primary" onclick="shareMeal(\'' + esc(m.id) + '\')">Share link</button></div>', '/meal/' + m.id);
+  wirePhotoStrip(m);
 }
+// ---------- a meal's photos: a strip, and a viewer you can zoom into (the scale's digits) ----------
+// Photos load with this browser's key (an <img src> can't send it), so each becomes a blob URL, kept per page.
+const PHOTO_URLS = {};
+async function photoUrl(meal, i) {
+  const k = meal.id + '/' + i; if (PHOTO_URLS[k]) return PHOTO_URLS[k];
+  const r = await fetch(API + 'meal/' + encodeURIComponent(meal.id) + '/photo/' + i, { headers: { 'x-device-key': S.deviceKey } });
+  if (!r.ok) return null;
+  return (PHOTO_URLS[k] = URL.createObjectURL(await r.blob()));
+}
+function photoStrip(meal) {
+  if (!meal || !meal.photos) return '';
+  return '<div class="mphotos">' + Array.from({ length: meal.photos }, (_, i) => '<button type="button" class="mph" data-ph="' + i + '" aria-label="Photo ' + (i + 1) + '"><i></i></button>').join('') + '</div>';
+}
+function wirePhotoStrip(meal) {
+  $('sheetbody').querySelectorAll('[data-ph]').forEach(async (b) => {
+    const i = +b.dataset.ph; b.onclick = () => openZoom(meal, i);
+    const u = await photoUrl(meal, i); if (u) b.innerHTML = '<img src="' + u + '" alt="">';
+  });
+}
+// The viewer. Computer: click zooms in where you click and the zoomed spot follows the mouse; the wheel zooms;
+// ← → move between photos; Esc or ✕ closes. Phone: tap zooms where you tap, pinch zooms, drag looks around,
+// swipe (not zoomed) moves between photos, ✕ closes.
+const Z = { meal: null, i: 0, s: 1, ox: 50, oy: 50, pts: new Map(), pinch: 0, moved: false, x0: 0, y0: 0 };
+function zoomDraw() { const im = $('zimg'); im.style.transformOrigin = Z.ox + '% ' + Z.oy + '%'; im.style.transform = 'scale(' + Z.s + ')'; $('zstage').classList.toggle('zoomed', Z.s > 1); }
+async function openZoom(meal, i) {
+  Z.meal = meal; Z.i = (i + meal.photos) % meal.photos; Z.s = 1; Z.ox = Z.oy = 50; zoomDraw();
+  $('zoom').hidden = false; $('zcount').textContent = meal.photos > 1 ? (Z.i + 1) + ' / ' + meal.photos : '';
+  $('zprev').hidden = $('znext').hidden = meal.photos < 2;
+  $('zhint').textContent = matchMedia('(hover: hover)').matches ? 'Click to zoom · move the mouse to look around · scroll to zoom more' : 'Tap to zoom · pinch · drag to look around';
+  $('zimg').src = (await photoUrl(meal, Z.i)) || '';
+}
+function closeZoom() { $('zoom').hidden = true; Z.pts.clear(); }
+$('zx').onclick = closeZoom;
+$('zprev').onclick = () => openZoom(Z.meal, Z.i - 1);
+$('znext').onclick = () => openZoom(Z.meal, Z.i + 1);
+document.addEventListener('keydown', (e) => { if ($('zoom').hidden) return; if (e.key === 'Escape') { e.stopImmediatePropagation(); closeZoom(); } else if (e.key === 'ArrowLeft') $('zprev').onclick(); else if (e.key === 'ArrowRight') $('znext').onclick(); }, true);
+(() => {
+  const st = $('zstage'), at = (e) => { const r = $('zimg').getBoundingClientRect(); return [Math.min(100, Math.max(0, (e.clientX - r.left) / r.width * 100)), Math.min(100, Math.max(0, (e.clientY - r.top) / r.height * 100))]; };
+  st.addEventListener('pointerdown', (e) => { Z.pts.set(e.pointerId, [e.clientX, e.clientY]); Z.moved = false; Z.x0 = e.clientX; Z.y0 = e.clientY; if (Z.pts.size === 2) { const [a, b] = [...Z.pts.values()]; Z.pinch = Math.hypot(a[0] - b[0], a[1] - b[1]) / Z.s; } });
+  st.addEventListener('pointermove', (e) => {
+    if (Z.pts.has(e.pointerId)) Z.pts.set(e.pointerId, [e.clientX, e.clientY]);
+    if (Math.hypot(e.clientX - Z.x0, e.clientY - Z.y0) > 8) Z.moved = true;
+    if (Z.pts.size === 2 && Z.pinch) { const [a, b] = [...Z.pts.values()]; Z.s = Math.min(6, Math.max(1, Math.hypot(a[0] - b[0], a[1] - b[1]) / Z.pinch)); zoomDraw(); return; }
+    // Zoomed: the spot under the mouse or finger is the spot you see (hover to look around, or drag).
+    if (Z.s > 1 && (e.pointerType === 'mouse' || Z.pts.size === 1)) { [Z.ox, Z.oy] = at(e); zoomDraw(); }
+  });
+  const up = (e) => {
+    const was = Z.pts.size; Z.pts.delete(e.pointerId); if (was === 2) { Z.pinch = 0; return; }
+    const dx = e.clientX - Z.x0;
+    if (!Z.moved) { if (Z.s > 1) Z.s = 1; else { Z.s = 2.5; [Z.ox, Z.oy] = at(e); } zoomDraw(); }            // tap/click: zoom in there, or back out
+    else if (Z.s === 1 && Math.abs(dx) > 60 && Z.meal.photos > 1) openZoom(Z.meal, Z.i + (dx < 0 ? 1 : -1));  // swipe
+  };
+  st.addEventListener('pointerup', up); st.addEventListener('pointercancel', (e) => Z.pts.delete(e.pointerId));
+  st.addEventListener('wheel', (e) => { e.preventDefault(); Z.s = Math.min(6, Math.max(1, Z.s * (e.deltaY < 0 ? 1.15 : 1 / 1.15))); [Z.ox, Z.oy] = at(e); zoomDraw(); }, { passive: false });
+})();
 // The phone's share sheet where there is one; else the link is copied.
 async function shareMeal(id) {
   const url = location.origin + PAGE + '/meal/' + encodeURIComponent(id);
@@ -1514,7 +1584,7 @@ function renderEditor(notes) {
     + '<button data-rm="1" class="ghost" style="flex:.5" title="Remove">✕</button></div>') + '</div>'; }).join('');
   const tot = ED.items.reduce((a, it) => { const s = scaled(it); a.kcal += s.kcal; a.p += s.protein_g; a.c += s.carbs_g; a.f += s.fat_g; return a; }, { kcal: 0, p: 0, c: 0, f: 0 });
   sheet('<div class="row" style="justify-content:space-between"><h2 style="margin:0">' + (ED.fresh ? 'Here’s what I see' : 'Edit meal') + '</h2><span class="row" style="flex:none;gap:8px">' + (ED.meal.id ? '<button type="button" class="ghost" id="edshare" style="padding:6px 10px" title="Share a link to this meal">Share</button>' : '') + (ED.meal.thumb ? '<img src="' + ED.meal.thumb + '" style="width:44px;height:44px;border-radius:10px;object-fit:cover;flex:none">' : '') + '</span></div>'
-    + (notes ? '<p class="muted small" style="margin:6px 0 2px">' + esc(notes) + '</p>' : '') + rows
+    + photoStrip(ED.meal) + (notes ? '<p class="muted small" style="margin:6px 0 2px">' + esc(notes) + '</p>' : '') + rows
     + '<div class="total"><span>Total <small>P ' + tot.p.toFixed(0) + ' · C ' + tot.c.toFixed(0) + ' · F ' + tot.f.toFixed(0) + '</small></span><span>' + tot.kcal + ' kcal</span></div>'
     + fitAdvice()
     // When it was eaten. Prefilled with the clock it was logged on; a change is read on THIS browser's clock.
@@ -1556,6 +1626,7 @@ function renderEditor(notes) {
   $('sheetbody').querySelectorAll('[data-fit]').forEach((b) => b.onclick = () => { const f = Number(b.dataset.fit); for (const it of ED.items) { if (it.grams) it.grams = Math.round(it.grams * f); it.mult = (it.mult || 1) * f; } renderEditor(notes); });
   $('sheetbody').querySelectorAll('[data-leave]').forEach((b) => b.onclick = () => { ED.items.splice(Number(b.dataset.leave), 1); renderEditor(notes); });
   if ($('edshare')) $('edshare').onclick = () => shareMeal(ED.meal.id);
+  wirePhotoStrip(ED.meal);
   $('discard').onclick = async () => { await api('meal/' + ED.meal.id, { method: 'DELETE' }); closeSheet(); refresh(); };
   $('savemeal').onclick = async () => {
     const items = ED.items.map((it) => { const s = scaled(it); return { ...it, ...s, base: undefined }; });

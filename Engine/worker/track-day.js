@@ -151,7 +151,7 @@ async function dayNumbers(env, who, date) {
   const plannedRows = rows.filter((r) => r.planned);
   return { totals: totalsOf(rows.filter((r) => !r.planned)), planned: { ...totalsOf(plannedRows), meals: plannedRows.length } };
 }
-function mealRow(r) { const items = parseItems(r.items_json); return { id: r.id, date: r.date, time: r.time, items, kcal: r.kcal, protein_g: r.protein_g, carbs_g: r.carbs_g, fat_g: r.fat_g, thumb: r.thumb, source: r.source, created_at: r.created_at, zone: r.tz || null, tzOffset: r.tz_offset ?? null, planned: Boolean(r.planned) }; }
+function mealRow(r) { const items = parseItems(r.items_json); return { id: r.id, date: r.date, time: r.time, items, kcal: r.kcal, protein_g: r.protein_g, carbs_g: r.carbs_g, fat_g: r.fat_g, thumb: r.thumb, source: r.source, created_at: r.created_at, zone: r.tz || null, tzOffset: r.tz_offset ?? null, planned: Boolean(r.planned), photos: Number(r.photos) || 0 }; }
 export async function addWords(env, who, date, role, kind, text, mealId = null, at = null) {
   await ensureDaySchema(env);
   const now = at || nowIso();
