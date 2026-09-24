@@ -160,6 +160,7 @@
   .item .irow em { display:block; font-style:normal; font-size:12px; color:var(--muted); margin-top:1px; }
   .item .irow .ik { font-weight:700; white-space:nowrap; } .item .irow .ik::after { content:' ›'; color:var(--muted); font-weight:400; }
   .item.open .irow .ik::after { content:' ⌄'; }
+  .item .irow.ro .ik::after { content:''; }
   .item .mults { padding:0 0 10px; }
   .edmeta { display:flex; align-items:center; gap:10px; margin:6px 0 8px; flex-wrap:wrap; }
   .edmeta input[type=time] { width:auto; padding:8px 10px; }
@@ -482,6 +483,7 @@ async function route() {
   try {
     const seg = location.pathname.slice(PAGE.length).split('/').filter(Boolean).map(decodeURIComponent);
     SHEET_PATH = ''; closeSheet();                                       // the URL is already the new one: don't rewrite it
+    if (seg[0] === 'meal' && seg[1] && seg.length === 2) return await openSharedMeal(seg[1]);
     if (seg[0] === 'targets') { show('targets'); return prefillTargets(); }
     if (seg[0] === 'weight') { openWeight(); if (seg[1] === 'new') openWeigh(); else if (seg[1] === 'import') openImport(); return; }
     if (seg[0] === 'receipts') return await openReceipts();
@@ -495,13 +497,39 @@ async function route() {
     day = d; paintTab(t); show('home');
     await refresh();
     if (!seg.length) restoreKept();
-    if (seg[0] === 'meal' && seg[1]) { const m = DAY && DAY.meals.find((x) => x.id === seg[1]); if (m && !DAY.readOnly) openEditor(m, { existing: true }); else toast('That meal isn’t on this day.'); }
+    if (seg[0] === 'meal' && seg[1]) { const m = DAY && DAY.meals.find((x) => x.id === seg[1]); if (m && viewUser) openMealView(m); else if (m && !DAY.readOnly) openEditor(m, { existing: true }); else toast('That meal isn’t on this day.'); }
     else if (seg[0] === 'menu') openMenu();
     else if (seg[0] === 'staples') await openStaples();
     else if (seg[0] === 'add' && !viewUser) openText();
   } finally { ROUTING = false; }
 }
 window.addEventListener('popstate', () => { if (S.userId) route(); });
+// ---------- a meal's own link: PAGE/meal/<id> ----------
+// Opens for its owner (the editor, on its day), for someone in their household (read-only, on the owner's
+// day), and for the coach (their client on the coach page). Anyone else is told it isn't theirs.
+async function openSharedMeal(id) {
+  const r = await api('meal/' + encodeURIComponent(id));
+  if (!r.ok) { toast(r.reason || 'That meal isn’t yours or your household’s.', 4000); history.replaceState(null, '', PAGE); return route(); }
+  if (r.mine) { history.replaceState(null, '', PAGE + '/day/' + r.meal.date + '/meal/' + id); return route(); }
+  viewUser = { id: r.owner, name: r.ownerName || '' }; day = r.meal.date; paintTab('day'); show('home');
+  await refresh();
+  openMealView(r.meal);
+}
+function openMealView(m) {
+  const who = (DAY && DAY.name) || (viewUser && viewUser.name) || '';
+  sheet('<div class="row" style="justify-content:space-between"><h2 style="margin:0">' + (who ? esc(who) + '’s meal' : 'Meal') + '</h2>' + (m.thumb ? '<img src="' + m.thumb + '" style="width:44px;height:44px;border-radius:10px;object-fit:cover;flex:none">' : '') + '</div>'
+    + '<p class="muted small" style="margin:6px 0 2px">' + esc(new Date(m.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })) + (m.time ? ' · ' + esc(m.time) : '') + (m.planned ? ' · planned' : '') + '</p>'
+    + m.items.map((it) => '<div class="item"><div class="irow ro" style="cursor:default"><span class="in"><b>' + esc(it.name) + '</b> <small>' + esc(it.portion || (it.grams ? Math.round(it.grams) + ' g' : '')) + '</small><em>P ' + Math.round(it.protein_g) + ' · C ' + Math.round(it.carbs_g) + ' · F ' + Math.round(it.fat_g) + '</em></span><span class="ik" style="font-weight:700">' + Math.round(it.kcal) + '</span></div></div>').join('')
+    + '<div class="total"><span>Total <small>P ' + Math.round(m.protein_g) + ' · C ' + Math.round(m.carbs_g) + ' · F ' + Math.round(m.fat_g) + '</small></span><span>' + Math.round(m.kcal) + ' kcal</span></div>'
+    + '<div class="edfoot"><button class="ghost" onclick="closeSheet()">Close</button><button class="primary" onclick="shareMeal(\'' + esc(m.id) + '\')">Share link</button></div>', '/meal/' + m.id);
+}
+// The phone's share sheet where there is one; else the link is copied.
+async function shareMeal(id) {
+  const url = location.origin + PAGE + '/meal/' + encodeURIComponent(id);
+  if (navigator.share) { try { await navigator.share({ title: 'A meal on ' + (CFG.name || 'Plate'), url }); return; } catch (e) { if (e && e.name === 'AbortError') return; } }
+  try { await navigator.clipboard.writeText(url); toast('Link copied — it opens for you, your household and your coach.', 3500); }
+  catch { toast(url, 8000); }
+}
 // ---------- stay current: a tab left open picks up a new deploy ----------
 // A phone keeps Plate open for days; nothing told it the code had changed (it went on reading each
 // photo as its own meal hours after that was fixed). /version.json changes on every deploy: when the
@@ -571,7 +599,12 @@ const idApi = (path, json = {}) => api(path, { base: '/api/id/', json: { bot: BO
   if (CFG.coachName) $('coachline').textContent = 'Your coach: ' + CFG.coachName;
   $('honesty').textContent = CFG.honesty || '';
   renderSignIn();
-  if (!S.email) return show('join');
+  if (!S.email) {
+    const mealLink = location.pathname.slice(PAGE.length).match(/^\/meal\/([^/]+)\/?$/);
+    let admin = ''; try { admin = localStorage.getItem('adminToken') || ''; } catch {}
+    if (mealLink && admin) { try { const c = await (await fetch(API.replace('/api/', '/api/admin/') + 'meal/' + mealLink[1], { headers: { 'x-admin-token': admin } })).json(); if (c.ok) { location.href = PAGE + '/coach/' + encodeURIComponent(c.client); return; } } catch {} }
+    return show('join');
+  }
   const me = await api('me');
   if (me.offline) return showOffline(me.reason);
   if (me.linked) { onLinked(me); return; }
@@ -593,7 +626,8 @@ function onLinked(me, signedIn) {
   if (signedIn) { day = localDate(); viewUser = null; paintTab('chat'); try { history.replaceState(null, '', PAGE); } catch {} }
   S.userId = me.userId; S.email = me.email; S.targets = me.targets; S.household = me.household; S.pending = null; save();
   $('whoami').textContent = S.email; $('whodevices').textContent = 'Signed in on ' + (me.devices || 1) + ' device' + ((me.devices || 1) === 1 ? '' : 's') + '.';
-  if (!S.targets) { show('targets'); prefillTargets(); return; }
+  // No targets yet: set them first — unless this is a shared meal's link; show them the meal, targets can wait.
+  if (!S.targets && !/\/meal\/[^/]+\/?$/.test(location.pathname)) { show('targets'); prefillTargets(); return; }
   route();
 }
 
@@ -1435,7 +1469,7 @@ function renderEditor(notes) {
     + '<div class="g" title="Grams">⚖️<input type="number" inputmode="decimal" value="' + (it.grams ? Math.round(it.grams) : '') + '" data-g="1" placeholder="g"><span>g</span></div>'
     + '<button data-rm="1" class="ghost" style="flex:.5" title="Remove">✕</button></div>') + '</div>'; }).join('');
   const tot = ED.items.reduce((a, it) => { const s = scaled(it); a.kcal += s.kcal; a.p += s.protein_g; a.c += s.carbs_g; a.f += s.fat_g; return a; }, { kcal: 0, p: 0, c: 0, f: 0 });
-  sheet('<div class="row" style="justify-content:space-between"><h2 style="margin:0">' + (ED.fresh ? 'Here’s what I see' : 'Edit meal') + '</h2>' + (ED.meal.thumb ? '<img src="' + ED.meal.thumb + '" style="width:44px;height:44px;border-radius:10px;object-fit:cover;flex:none">' : '') + '</div>'
+  sheet('<div class="row" style="justify-content:space-between"><h2 style="margin:0">' + (ED.fresh ? 'Here’s what I see' : 'Edit meal') + '</h2><span class="row" style="flex:none;gap:8px">' + (ED.meal.id ? '<button type="button" class="ghost" id="edshare" style="padding:6px 10px" title="Share a link to this meal">Share</button>' : '') + (ED.meal.thumb ? '<img src="' + ED.meal.thumb + '" style="width:44px;height:44px;border-radius:10px;object-fit:cover;flex:none">' : '') + '</span></div>'
     + (notes ? '<p class="muted small" style="margin:6px 0 2px">' + esc(notes) + '</p>' : '') + rows
     + '<div class="total"><span>Total <small>P ' + tot.p.toFixed(0) + ' · C ' + tot.c.toFixed(0) + ' · F ' + tot.f.toFixed(0) + '</small></span><span>' + tot.kcal + ' kcal</span></div>'
     + fitAdvice()
@@ -1475,6 +1509,7 @@ function renderEditor(notes) {
   // "Take three quarters": every item scaled by the fraction, on the grams it has now. "Leave the rice": that item goes.
   $('sheetbody').querySelectorAll('[data-fit]').forEach((b) => b.onclick = () => { const f = Number(b.dataset.fit); for (const it of ED.items) { if (it.grams) it.grams = Math.round(it.grams * f); it.mult = (it.mult || 1) * f; } renderEditor(notes); });
   $('sheetbody').querySelectorAll('[data-leave]').forEach((b) => b.onclick = () => { ED.items.splice(Number(b.dataset.leave), 1); renderEditor(notes); });
+  if ($('edshare')) $('edshare').onclick = () => shareMeal(ED.meal.id);
   $('discard').onclick = async () => { await api('meal/' + ED.meal.id, { method: 'DELETE' }); closeSheet(); refresh(); };
   $('savemeal').onclick = async () => {
     const items = ED.items.map((it) => { const s = scaled(it); return { ...it, ...s, base: undefined }; });

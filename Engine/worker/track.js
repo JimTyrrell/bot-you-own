@@ -198,7 +198,15 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
   if (sub.startsWith("meal/")) {
     const id = sub.slice(5);
     const row = await env.DB.prepare(`SELECT id, user_id FROM track_meals WHERE id = ?`).bind(id).first();
-    if (!row) return json({ error: "no such meal" }, 404);
+    if (!row) return json({ error: "no such meal", reason: "That meal isn't there any more." }, 404);
+    // A meal's own link (/food/meal/<id>): its owner, and anyone who may see the owner's days (household),
+    // can open it. Anyone else is told it doesn't exist, so a link never confirms someone else's meal.
+    if (request.method === "GET") {
+      const mine = row.user_id === me.id;
+      if (!mine && !(await canView(env, me.id, row.user_id))) return json({ error: "no such meal", reason: "That meal isn't yours or your household's." }, 404);
+      const owner = mine ? null : await env.DB.prepare(`SELECT name FROM track_members WHERE user_id = ?`).bind(row.user_id).first();
+      return json({ ok: true, meal: await readMeal(env, id), mine, owner: row.user_id, ownerName: owner?.name || "" });
+    }
     if (row.user_id !== me.id) return json({ error: "not yours", reason: "You can look at a household member's day, but only they can change it." }, 403);
     if (request.method === "DELETE") { await removedMeal(env, me, id); await env.DB.prepare(`DELETE FROM track_meals WHERE id = ?`).bind(id).run(); return json({ ok: true }); }
     if (request.method === "PATCH") {
@@ -622,6 +630,11 @@ function cleanTargets(t) {
 
 // --- THE COACH (admin token). One bot's clients only. ------------------------------------
 async function handleCoach(request, env, url, cfg, sub) {
+  // A meal link opened by the coach: whose meal it is, so the coach page can open that client.
+  if (sub.startsWith("meal/")) {
+    const row = await env.DB.prepare(`SELECT user_id, date FROM track_meals WHERE id = ?`).bind(sub.slice(5)).first();
+    return row ? json({ ok: true, client: row.user_id, date: row.date }) : json({ error: "no such meal" }, 404);
+  }
   if (sub === "clients") return json({ clients: await clientRows(env, cfg.id), coachName: cfg.coachName, name: cfg.name, id: cfg.id });
   if (sub.startsWith("client/") && sub.endsWith("/summary")) {
     const who = await userById(env, cfg.id, sub.slice(7, -8));
