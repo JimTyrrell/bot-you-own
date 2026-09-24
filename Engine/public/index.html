@@ -1050,7 +1050,7 @@ async function enterViewAs(email) {
   viewAs = { bot, email: d.email, threads: (d.threads || []).map((t) => ({ id: t.id, project: bot, title: t.title || '', messages: t.messages || [], attachments: t.attachments || [], ...(t.handoff ? { handoff: t.handoff } : {}), updated_at: t.updated_at })) };
   document.body.classList.add('viewing'); $('viewas').classList.add('show');
   $('viewaswho').textContent = 'Viewing as ' + d.email + ' (read only) · ' + viewAs.threads.length + ' chat' + (viewAs.threads.length === 1 ? '' : 's') + ' on ' + (state.project?.name || bot);
-  $('hood').classList.remove('show'); clearInterval(convTicker); convTicker = null;
+  $('hood').classList.remove('show'); clearInterval(convTicker); convTicker = null; hoodUrl(false);
   input.disabled = true; $('talkbtn').disabled = true;
   if (viewAs.threads.length) loadChat(viewAs.threads[0], true); else { state.chat = { id: 'none', project: bot, title: '', messages: [], attachments: [] }; renderChats(); renderLog(); renderAttachments(); }
 }
@@ -1072,6 +1072,9 @@ function pushUrl(replace) {
 }
 window.addEventListener('popstate', (e) => {
   if (closeOpenOverlays()) return;                         // Back closed a modal; the page underneath is untouched
+  const wantHood = new URLSearchParams(location.search).get('hood'), hoodShown = $('hood').classList.contains('show');
+  if (hoodShown && !wantHood) { $('hood').classList.remove('show'); clearInterval(convTicker); convTicker = null; return; }
+  if (!hoodShown && wantHood && hoodFromUrl()) return;
   const st = e.state || {}; const pid = st.project || new URLSearchParams(location.search).get('project');
   const p = state.projects.find((x) => x.id === pid) || state.projects[0];
   if (!p) return;
@@ -1866,7 +1869,7 @@ function overlayOpen(id) { const el = $(id); if (el.classList.contains('show')) 
 function overlayClose(id, viaHistory) { const el = $(id); if (!el.classList.contains('show')) return; el.classList.remove('show'); if (id === 'introwrap') { try { localStorage.setItem('byo:intro', '1'); } catch {} } if (!viaHistory && history.state && history.state.overlay === id) { try { history.back(); } catch {} } }
 function closeOpenOverlays() { let any = false; OVERLAYS.forEach((id) => { if ($(id).classList.contains('show')) { $(id).classList.remove('show'); any = true; if (id === 'introwrap') { try { localStorage.setItem('byo:intro', '1'); } catch {} } } }); return any; }
 // A panel named in the URL opens on load (after the tour knows who this is).
-function openPanelFromUrl() { const p = new URLSearchParams(location.search).get('panel'); if (!p) return; const u = new URL(location.href); u.searchParams.delete('panel'); history.replaceState(history.state, '', u); if (p === 'build') openSandbox(); else if (p === 'key') openKeyModal('make'); }
+function openPanelFromUrl() { if (hoodFromUrl()) return; const p = new URLSearchParams(location.search).get('panel'); if (!p) return; const u = new URL(location.href); u.searchParams.delete('panel'); history.replaceState(history.state, '', u); if (p === 'build') openSandbox(); else if (p === 'key') openKeyModal('make'); }
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') OVERLAYS.forEach((id) => overlayClose(id)); });
 document.querySelectorAll('.modalx').forEach((b) => { b.onclick = () => overlayClose(b.dataset.x); });
 OVERLAYS.forEach((id) => $(id).addEventListener('pointerdown', (e) => { if (e.target === $(id)) overlayClose(id); }));
@@ -2122,6 +2125,36 @@ function handoffClosed(text) {
 // ---- under the hood (admin) ----
 // ADMIN (the admin token) is declared up by TOKEN, next to the other keys the page holds.
 let hoodData = null, hoodTab = 'prompt';
+// ---- Under the hood has an address: ?hood=<tab>, plus &sec=demo|members|locked on Security and
+//      &conv=<id> for an open conversation. Opening pushes (Back closes it); tabs replace. ----
+function hoodUrl(open) {
+  try {
+    const u = new URL(location.href), q = u.searchParams;
+    if (open) {
+      q.set('hood', hoodTab);
+      if (hoodTab === 'security') q.set('sec', secTab); else q.delete('sec');
+      if (hoodTab === 'conversations' && convOpen) q.set('conv', convOpen); else q.delete('conv');
+    } else { q.delete('hood'); q.delete('sec'); q.delete('conv'); }
+    if (u.href === location.href) return;
+    const had = new URLSearchParams(location.search).get('hood');
+    if (open && !had) history.pushState({ ...(history.state || {}), hood: true }, '', u); else history.replaceState(history.state, '', u);
+  } catch {}
+}
+function closeHood() {
+  $('hood').classList.remove('show'); clearInterval(convTicker); convTicker = null;
+  if (history.state && history.state.hood) { try { history.back(); return; } catch {} }
+  hoodUrl(false);
+}
+// On load, and on Back/Forward into a hood address.
+function hoodFromUrl() {
+  const q = new URLSearchParams(location.search), h = q.get('hood');
+  if (!h || ![...$('hoodtabs').children].some((b) => b.dataset.tab === h)) return false;
+  hoodTab = h;
+  if (['demo', 'members', 'locked'].includes(q.get('sec'))) secTab = q.get('sec');
+  if (h === 'conversations' && /^[0-9a-f]{16,64}$/.test(q.get('conv') || '')) pendingConv = q.get('conv');
+  $('hoodbtn').click();
+  return true;
+}
 // Show the authenticator box only if ADMIN_TOTP_SECRET is set. Asking everyone for
 // six digits that don't exist is the kind of thing that makes a right code look wrong.
 async function showAdminCodeIfNeeded() {
@@ -2153,8 +2186,8 @@ $('adminform').addEventListener('submit', async (e) => {
   } catch { $('adminmsg').textContent = 'Could not reach the server. Try again.'; }
   finally { btn.disabled = false; btn.textContent = 'Open'; }
 });
-$('hoodclose').onclick = () => { $('hood').classList.remove('show'); clearInterval(convTicker); convTicker = null; };
-$('hoodtabs').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; hoodTab = b.dataset.tab; renderHood(); };
+$('hoodclose').onclick = closeHood;
+$('hoodtabs').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; hoodTab = b.dataset.tab; if (hoodTab !== 'conversations') convOpen = ''; renderHood(); hoodUrl(true); };
 let hoodTicker = null;
 function hoodLoading(what) {
   // Open the drawer at once and say what's happening; the engine view is a server round-trip.
@@ -2162,7 +2195,7 @@ function hoodLoading(what) {
   let i = 0; const box = $('hoodbody');
   const tick = () => { box.innerHTML = '<p class="thinking" style="padding:8px 0"><span>' + esc(words[i % words.length]) + '</span></p><p style="color:var(--muted)">' + esc(what || '') + '</p>'; i++; };
   clearInterval(hoodTicker); tick(); hoodTicker = setInterval(tick, 1200);
-  $('hoodproj').textContent = state.project.name; $('hood').classList.add('show');
+  $('hoodproj').textContent = state.project.name; $('hood').classList.add('show'); hoodUrl(true);
 }
 async function openHood() {
   const btn = $('hoodbtn'); btn.disabled = true; btn.textContent = '⚙ Opening…';
@@ -2694,7 +2727,7 @@ function drawSecurity(d) {
     + body + '<p id="sec_msg" class="sechint"></p>';
   // --- wiring: every change saves at once ---
   const msg = $('sec_msg');
-  $('sectabs').onclick = (ev) => { const b = ev.target.closest('button'); if (!b) return; secTab = b.dataset.sec; drawSecurity(d); };
+  $('sectabs').onclick = (ev) => { const b = ev.target.closest('button'); if (!b) return; secTab = b.dataset.sec; drawSecurity(d); hoodUrl(true); };
   const onRadio = (name, fn) => s.querySelectorAll('input[name="' + name + '"]').forEach((i) => { i.onchange = () => fn(i.value); });
   onRadio('sec_access', (v) => secPut(d, { access: { default: v } }, msg));
   onRadio('sec_floor', (v) => secPut(d, { access: { floor: v } }, msg));
@@ -3110,7 +3143,7 @@ async function refreshThread(id) {
   try { const r = await fetch('/api/admin/handoff/' + encodeURIComponent(id), { headers: adminHeaders() }); if (r.ok) renderThread(await r.json()); } catch {}
 }
 async function openConversation(id) {
-  convOpen = id; const box = $('convdetail'); if (!box) return;
+  convOpen = id; hoodUrl(true); const box = $('convdetail'); if (!box) return;
   box.innerHTML = '<h4>Conversation</h4><p class="thinking"><span>Loading</span></p>';
   try {
     const r = await fetch('/api/admin/handoff/' + encodeURIComponent(id), { headers: adminHeaders() });
