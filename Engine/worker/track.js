@@ -48,7 +48,7 @@ import { resolve as resolveExpiry, lapseReply, noticeFor, EXPIRY_BUILT_IN } from
 import { join as idJoin, userIdFor, userById as idUserById, bindDevice, linkByCode, deviceCount, listDevices, pendingByEmail, touch as idTouch, DEV_PEPPER, pepperOf } from "../identity/devices.js";
 import { runVision, PROMPTS, extractJson, withBrands, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize, mergeCorrection } from "./track-vision.js";
 import { lookupBarcode, useBarcodes, rememberLabel, saveReceipt, listReceipts, deleteReceipt, setWeight, listWeights, importWeights, householdOf, createHousehold, joinHousehold, leaveHousehold, canView } from "./track-extras.js";
-import { ensureDaySchema, dayChat, addWords, afterMeal, editedMeal, confirmedMeal, removedMeal, listFavourites, nameFavourite, forgetFavourite, matchFavourite, recentTwin, repeatMeals, retimeFavourite, localHour, askDay, summaryFor, classifySay, looksLikeFood } from "./track-day.js";
+import { ensureDaySchema, dayChat, addWords, afterMeal, editedMeal, confirmedMeal, removedMeal, listFavourites, nameFavourite, forgetFavourite, matchFavourite, recentTwin, steadyItems, repeatMeals, retimeFavourite, localHour, askDay, summaryFor, classifySay, looksLikeFood } from "./track-day.js";
 
 const THUMB_MAX_PX = 256, THUMB_MAX_BYTES = 48 * 1024;
 let HONESTY = "Photo estimates are typically within about 30%. Fix the portion when it's off.";   // per bot: project.json → food.honesty
@@ -363,6 +363,9 @@ async function photo(request, env, cfg, me) {
   const correction = String(form.get("correction") || "").trim().slice(0, 200);
   const said = String(form.get("text") || "").trim().slice(0, 600);
   const mealId = String(form.get("mealId") || "").trim();
+  // When the photos were taken (the page reads it from the photo itself): an earlier moment in the last two weeks.
+  const takenMs = Date.parse(String(form.get("taken") || ""));
+  const taken = Number.isFinite(takenMs) && takenMs < Date.now() - 10 * 60 * 1000 && takenMs > Date.now() - 14 * 864e5 ? new Date(takenMs).toISOString() : null;
   // A correction arrives with what's on screen now, so it can't undo an earlier one.
   const current = sanitiseItems(listFrom(form.get("current")), { source: "photo" });
   const revising = kind === "food" && Boolean(correction) && current.length > 0;
@@ -386,11 +389,12 @@ async function photo(request, env, cfg, me) {
   const parsed = extractJson(out.text);
 
   if (kind === "food") {
-    const fresh = sanitiseItems(await useBarcodes(env, withBrands(parsed?.items, parsed?.photo_text, said)), { source: "photo" });
+    const steady = revising ? { items: await useBarcodes(env, withBrands(parsed?.items, parsed?.photo_text, said)), used: [] } : await steadyItems(env, me, await useBarcodes(env, withBrands(parsed?.items, parsed?.photo_text, said)));
+    const fresh = sanitiseItems(steady.items, { source: "photo" });
     const items = revising ? mergeCorrection(current, fresh, correction) : fresh;
     if (revising && !fresh.length) return json({ error: "no food", reason: "I couldn't apply that correction. Try naming the food and the amount, like “8 strawberries”." }, 422);
     if (!items.length) return json({ error: "no food", reason: parsed?.notes ? `I couldn't find food in that: ${String(parsed.notes).slice(0, 140)}` : "I couldn't make out any food in that photo. Try closer, with more light — or type it.", raw: out.text.slice(0, 300) }, 422);
-    const meal = mealId ? await updateMealItems(env, me, mealId, items) : await insertMeal(env, me, { date, items, source: "photo", thumb, tz: form.get("tz"), zone: form.get("zone"), planned: form.get("planned") });
+    const meal = mealId ? await updateMealItems(env, me, mealId, items) : await insertMeal(env, me, { date, items, source: "photo", thumb, tz: form.get("tz"), zone: form.get("zone"), planned: form.get("planned"), at: taken });
     if (!meal) return json({ error: "no such meal" }, 404);
     // The words sent with the photos are part of the day's conversation, before the reaction to them.
     if (said && !mealId) await addWords(env, me, meal.date, "user", "said", said, meal.id, meal.created_at);
@@ -400,11 +404,14 @@ async function photo(request, env, cfg, me) {
     const twinNote = twin ? `You logged this at ${twin.time || "a few minutes ago"} too — Discard if it's the same one. ` : "";
     // Scale displays in photos are misread often enough (glare, small digits) that the review says where the grams came from.
     const scaleNote = parsed?.scale_read === true && !/\d/.test(said) ? "Weights read from your scale — tap any that look wrong, or type the weights with the photos. " : "";
+    const timeNote = taken && !mealId ? `Time from your photo: ${meal.time}${meal.date !== todayUtc() ? " on " + meal.date : ""}. ` : "";
+    const steadyNote = steady.used.length ? `Same numbers as your usual ${steady.used.slice(0, 2).join(" and ")}. ` : "";
+    const q = parsed?.question && String(parsed.question.text || "").trim() ? { text: String(parsed.question.text).trim().slice(0, 140), options: (Array.isArray(parsed.question.options) ? parsed.question.options : []).map((o) => String(o).trim().slice(0, 60)).filter(Boolean).slice(0, 3) } : null;
     const askedName = String(parsed?.name || "").trim().slice(0, 40);
     let named = null;
     if (askedName && after.favourite?.id) { await nameFavourite(env, me, after.favourite.id, askedName); named = askedName; }
     // debug=1 (tests): the model's own answer too — the person's own data, nothing more.
-    return json({ ok: true, meal, notes: (twinNote + scaleNote + String(parsed?.notes || "")).slice(0, 360), twin, honesty: HONESTY, totals: after.totals, named, photos: files.length, ...(form.get("debug") === "1" ? { raw: out.text.slice(0, 4000) } : {}) });
+    return json({ ok: true, meal, notes: (twinNote + timeNote + steadyNote + scaleNote + String(parsed?.notes || "")).slice(0, 420), twin, question: q && q.options.length >= 2 ? q : null, honesty: HONESTY, totals: after.totals, named, photos: files.length, ...(form.get("debug") === "1" ? { raw: out.text.slice(0, 4000) } : {}) });
   }
   if (kind === "barcode") {
     const digits = String(parsed?.digits || "").replace(/\D/g, "");
@@ -540,8 +547,8 @@ async function retimeMeal(env, me, id, body) {
   // The hour it was: on its own clock if the row knew its offset; a row from before zones is read in the person's current zone.
   return { from: Math.round(localHour(old.created_at, old.tz_offset ?? offset)), to: Math.round(localHour(createdAt, offset)) };
 }
-async function insertMeal(env, me, { date, items, source, thumb, tz, zone, planned }) {
-  const id = randomId(12), t = totalsOf(items), now = nowIso();
+async function insertMeal(env, me, { date, items, source, thumb, tz, zone, planned, at = null }) {
+  const id = randomId(12), t = totalsOf(items), now = at || nowIso();
   const offset = cleanOffset(tz);
   await env.DB.prepare(`INSERT INTO track_meals (id, user_id, date, time, items_json, kcal, protein_g, carbs_g, fat_g, thumb, source, created_at, tz, tz_offset, planned) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(id, me.id, date, localClock(now, offset), JSON.stringify(items), t.kcal, t.protein_g, t.carbs_g, t.fat_g, thumb, source, now, cleanZone(zone), offset, cleanPlanned(planned, date) ? 1 : 0).run();

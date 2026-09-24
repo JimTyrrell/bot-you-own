@@ -76,6 +76,23 @@ export function sameMeal(a, b, kcalA, kcalB) {
     if (j < 0) return false; left[j] = null; return true;
   });
 }
+// Same food, same amount, same numbers: an item that matches an item of a favourite eaten twice or more
+// (its words inside the other's, grams within 10%) takes that favourite's numbers, scaled to its grams — so
+// the morning shake is 130 kcal every day, not 126 one day and 134 the next. A one-off (possibly wrong)
+// read never sets the numbers; only a usual does. Returns { items, used: [favourite labels] }.
+export async function steadyItems(env, who, items) {
+  const favs = ((await env.DB.prepare(`SELECT name, items_json, times_used FROM track_favourites WHERE user_id = ? AND times_used >= 2 ORDER BY times_used DESC LIMIT 40`).bind(who.id).all()).results || []);
+  const known = favs.flatMap((f) => parseItems(f.items_json).map((it) => ({ it, w: new Set(words(it.name)), label: f.name || it.name })));
+  const used = new Set();
+  const out = (items || []).map((it) => {
+    const g = Number(it?.grams) || 0, w = new Set(words(it?.name)); if (!g || !w.size) return it;
+    const hit = known.find((k) => { const kg = Number(k.it.grams) || 0; if (!kg || Math.abs(kg - g) > 0.1 * kg) return false; return [...w].every((x) => k.w.has(x)) || [...k.w].every((x) => w.has(x)); });
+    if (!hit) return it;
+    const f = g / Number(hit.it.grams); used.add(hit.label);
+    return { ...it, kcal: Math.round(hit.it.kcal * f), protein_g: round1(hit.it.protein_g * f), carbs_g: round1(hit.it.carbs_g * f), fat_g: round1(hit.it.fat_g * f) };
+  });
+  return { items: out, used: [...used] };
+}
 // A meal logged in the last 30 minutes that is this same meal: the review says so, so a double log is caught.
 export async function recentTwin(env, who, meal) {
   const since = new Date(Date.parse(meal.created_at || nowIso()) - 30 * 60 * 1000).toISOString();
@@ -146,7 +163,7 @@ export async function afterMeal(env, who, meal, { repeat = false, favouriteName 
   await ensureDaySchema(env);
   const { totals, planned } = await dayNumbers(env, who, meal.date);
   const line = reactionFor(meal, totals, who.targets, { repeat, name: favouriteName, planned: planned.kcal });
-  const reaction = await addWords(env, who, meal.date, "assistant", "reaction", line, meal.id);
+  const reaction = await addWords(env, who, meal.date, "assistant", "reaction", line, meal.id, meal.created_at || null);
   // A plan teaches the favourites nothing until it happens (confirmedMeal): the habit model learns what was eaten.
   const fav = meal.planned ? null : await rememberFavourite(env, who, meal, tzOffsetMin);
   return { reaction, totals, planned, favourite: fav };

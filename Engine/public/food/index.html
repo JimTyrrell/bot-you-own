@@ -154,6 +154,17 @@
   .sheet[hidden] { display:none; }
   .sheet .box { background:var(--bg); width:100%; max-width:480px; margin:0 auto; border-radius:24px 24px 0 0; padding:14px 16px calc(18px + env(safe-area-inset-bottom)); max-height:92dvh; overflow:auto; }
   .sheet .grip { width:40px; height:4px; border-radius:4px; background:var(--edge); margin:0 auto 12px; }
+  /* It slides up (phones) or fades in centred (computers); a real ✕; a nudge when a tap outside would lose edits. */
+  .sheet .box { position:relative; animation:sheetin .22s cubic-bezier(.2,.8,.2,1); }
+  .sheet { animation:fadein .18s ease-out; }
+  @keyframes sheetin { from { transform:translateY(40px); opacity:.4; } to { transform:none; opacity:1; } }
+  @keyframes fadein { from { background:rgba(0,0,0,0); } }
+  .sheetx { position:absolute; top:10px; right:12px; width:32px; height:32px; padding:0; border-radius:50%; background:var(--panel); color:var(--muted); font-size:15px; line-height:32px; z-index:2; }
+  .sheet .box > #sheetbody > .row:first-child, .sheet .box > #sheetbody > h2:first-child { padding-right:40px; }
+  .sheet .box.nudge { animation:nudge .3s; }
+  @keyframes nudge { 20%, 60% { transform:translateX(-6px); } 40%, 80% { transform:translateX(6px); } }
+  @media (min-width:700px) { .sheet { align-items:center; } .sheet .box { border-radius:22px; max-height:86dvh; padding-bottom:18px; } .sheet .grip { display:none; } @keyframes sheetin { from { transform:scale(.97); opacity:0; } to { transform:none; opacity:1; } } .edfoot { bottom:-18px; margin-bottom:-18px; padding-bottom:12px; border-radius:0 0 22px 22px; } }
+  @media (prefers-reduced-motion: reduce) { .sheet, .sheet .box, .sheet .box.nudge { animation:none; } }
   .item { border-bottom:1px solid var(--edge); }
   .item .irow { display:flex; width:100%; align-items:center; gap:10px; padding:10px 0; background:transparent; border-radius:0; text-align:left; }
   .item .irow .in { flex:1; min-width:0; } .item .irow b { font-weight:600; } .item .irow small { color:var(--muted); }
@@ -169,6 +180,7 @@
   .edfix { display:flex; gap:8px; } .edfix input { padding:10px 12px; font-size:15px; } .edfix button { flex:none; padding:10px 14px; }
   .edfoot { position:sticky; bottom:calc(-18px - env(safe-area-inset-bottom)); display:flex; gap:10px; margin:10px -16px calc(-18px - env(safe-area-inset-bottom)); padding:10px 16px calc(12px + env(safe-area-inset-bottom)); background:var(--bg); border-top:1px solid var(--edge); }
   .edfoot .primary { flex:2; }
+  .edq { margin:4px 0 10px; padding:10px 12px; border-radius:12px; background:var(--panel); border-left:3px solid #d97706; font-size:14px; } .edq button { flex:1 1 auto; padding:8px 12px; background:var(--bg); border:1px solid var(--edge); }
   .whenhead { margin:14px 0 0; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; } .whenhead small { text-transform:none; letter-spacing:0; }
   .item .nm { display:flex; justify-content:space-between; gap:8px; font-weight:600; }
   .item .nm small { color:var(--muted); font-weight:400; }
@@ -420,7 +432,7 @@
 <input type="file" id="pick" accept="image/*,.heic,.heif" multiple hidden>
 
 <!-- THE SHEET: one container, many contents -->
-<div class="sheet" id="sheet" hidden><div class="box"><div class="grip"></div><div id="sheetbody"></div></div></div>
+<div class="sheet" id="sheet" hidden><div class="box" role="dialog" aria-modal="true"><div class="grip"></div><button type="button" class="sheetx" id="sheetx" title="Close" aria-label="Close">✕</button><div id="sheetbody"></div></div></div>
 <div id="toast" class="toast" hidden></div>
 
 <script src="/id/qr.js"></script>
@@ -549,7 +561,13 @@ async function checkBuild() {
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checkBuild(); });
 window.addEventListener('pageshow', (e) => { if (e.persisted) checkBuild(); });   // Safari's back-forward cache
 setInterval(checkBuild, 10 * 60 * 1000);
-$('sheet').addEventListener('click', (e) => { if (e.target === $('sheet')) closeSheet(); });
+// Closing a sheet: the ✕, Esc, or a tap outside — but a tap outside doesn't throw away unsaved changes to a
+// meal (it nudges instead; the ✕ or Delete/Save are the deliberate ways out).
+function dirtySheet() { return Boolean(ED && ED.orig && !$('sheet').hidden && JSON.stringify(ED.items) !== ED.orig); }
+function nudgeSheet() { const b = $('sheet').querySelector('.box'); b.classList.remove('nudge'); void b.offsetWidth; b.classList.add('nudge'); toast('Unsaved changes — Save, or ✕ to leave them.', 2600); }
+$('sheet').addEventListener('click', (e) => { if (e.target !== $('sheet')) return; if (dirtySheet()) return nudgeSheet(); closeSheet(); });
+$('sheetx').onclick = () => closeSheet();
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('sheet').hidden) { if (dirtySheet()) return nudgeSheet(); closeSheet(); } });
 
 if (!S.deviceKey) { const b = crypto.getRandomValues(new Uint8Array(32)); S.deviceKey = [...b].map((x) => x.toString(16).padStart(2, '0')).join(''); save(); }
 
@@ -1105,7 +1123,7 @@ async function restoreKept() {
   const att = await blobGet('attach');
   if (att && att.items && att.items.length) {
     if (k.sentAt && landedSince(k.sentAt, k.text)) await blobPut('attach', null);
-    else { ATTACH = att.items.map(({ photo, thumb }) => ({ photo, thumb, url: URL.createObjectURL(thumb) })); drawTray(); if (k.sentAt && !k.text) toast('Those photos hadn’t been read — they’re still in the box. Press ↑.', 5000); }
+    else { ATTACH = att.items.map(({ photo, thumb, takenAt }) => ({ photo, thumb, takenAt, url: URL.createObjectURL(thumb) })); drawTray(); if (k.sentAt && !k.text) toast('Those photos hadn’t been read — they’re still in the box. Press ↑.', 5000); }
   }
   if (k.text && !box.value) {
     if (!k.sentAt) { box.value = k.text; growSay(); }
@@ -1258,7 +1276,7 @@ function drawTray() {
   $('say').placeholder = ATTACH.length ? 'Add words: how much, what else, a name…' : 'Say what you ate, or ask…';
   padForDock();
 }
-const keepAttach = () => blobPut('attach', ATTACH.length ? { userId: S.userId, at: Date.now(), items: ATTACH.map(({ photo, thumb }) => ({ photo, thumb })) } : null);
+const keepAttach = () => blobPut('attach', ATTACH.length ? { userId: S.userId, at: Date.now(), items: ATTACH.map(({ photo, thumb, takenAt }) => ({ photo, thumb, takenAt })) } : null);
 async function addPhotos(files) {
   const list = imagesIn(files);
   if (!list.length) return;
@@ -1268,9 +1286,10 @@ async function addPhotos(files) {
   const take = list.slice(0, room); LOADING += take.length; drawTray();
   for (const f of take) {
     try {
+      const takenAt = await photoTakenAt(f);
       const file = await readablePhoto(f);
       const [photo, thumb] = await Promise.all([shrink(file, 1024, 0.85), shrink(file, 256, 0.7)]);
-      ATTACH.push({ photo, thumb, url: URL.createObjectURL(thumb) });
+      ATTACH.push({ photo, thumb, url: URL.createObjectURL(thumb), takenAt: takenAt ? takenAt.getTime() : null });
     } catch (e) { toast(e && e.message === 'converter' ? 'Couldn’t load the photo converter — check the connection.' : 'Couldn’t open one of those photos.', 4000); }
     finally { LOADING--; drawTray(); }
   }
@@ -1281,7 +1300,10 @@ async function sendPhotos(text) {
   const thinking = document.createElement('div'); thinking.className = 'thinking'; thinking.innerHTML = '<i></i> Reading ' + (n === 1 ? 'the photo' : n + ' photos') + (text ? ' and your words' : '') + '…'; $('thread').appendChild(thinking); scrollThread();
   const fd = new FormData();
   pics.forEach((a, i) => fd.append('photo', a.photo, 'photo' + (i + 1) + '.jpg'));
-  fd.append('thumb', pics[0].thumb, 'thumb.jpg'); fd.append('kind', 'food'); fd.append('text', text); fd.append('date', day);
+  // The earliest photo's own time, if it's more than 10 minutes ago: the meal goes in then, on that day.
+  const taken = pics.map((a) => a.takenAt).filter((t) => t && t < Date.now() - 10 * 60 * 1000 && t > Date.now() - 14 * 864e5).sort((a, b) => a - b)[0];
+  fd.append('thumb', pics[0].thumb, 'thumb.jpg'); fd.append('kind', 'food'); fd.append('text', text); fd.append('date', taken ? localDate(new Date(taken)) : day);
+  if (taken) fd.append('taken', new Date(taken).toISOString());
   fd.append('tz', String(TZ)); fd.append('zone', ZONE); fd.append('planned', day > localDate() ? '1' : '');
   const r = await api('photo', { body: fd });
   thinking.remove(); $('tray').classList.remove('sending');
@@ -1290,7 +1312,9 @@ async function sendPhotos(text) {
   MEAL_PHOTOS[r.meal.id] = pics.map(({ photo, thumb }) => ({ photo, thumb }));
   await refresh(); scrollThread();
   if (r.named) toast('Saved as “' + r.named + '” — tap it in the chips next time.', 4000);
-  openEditor(r.meal, { fresh: true, notes: r.notes });
+  // An earlier day's photo goes on that day, but the page stays where it is (else the NEXT meal would land there too).
+  if (r.meal.date !== day) toast('Logged on ' + new Date(r.meal.date + 'T12:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) + ' at ' + r.meal.time + ' — when the photo was taken.', 4500);
+  openEditor(r.meal, { fresh: true, notes: r.notes, question: r.question });
   return { ok: true };
 }
 
@@ -1328,6 +1352,26 @@ async function readablePhoto(file) {
   if (!window.heic2any) await new Promise((res, rej) => { const sc = document.createElement('script'); sc.src = '/vendor/heic2any-0.0.4.min.js'; sc.onload = res; sc.onerror = () => rej(new Error('converter')); document.head.appendChild(sc); });
   const out = await window.heic2any({ blob: file, toType: 'image/jpeg', quality: 0.9 });
   return Array.isArray(out) ? out[0] : out;
+}
+// When was this photo taken? Photos carry it (EXIF DateTimeOriginal, with its offset when the phone wrote one).
+// A meal logged from the library afterwards goes in at that time, not "now". JPEG and HEIC both hold an
+// "Exif\0\0" block early in the file; read the start of the file and walk the TIFF tags. null if none.
+async function photoTakenAt(file) {
+  try {
+    const buf = new Uint8Array(await file.slice(0, 512 * 1024).arrayBuffer());
+    let at = -1; for (let i = 0; i < buf.length - 10; i++) if (buf[i] === 0x45 && buf[i + 1] === 0x78 && buf[i + 2] === 0x69 && buf[i + 3] === 0x66 && buf[i + 4] === 0 && buf[i + 5] === 0) { at = i + 6; break; }
+    if (at < 0) return null;
+    const dv = new DataView(buf.buffer, buf.byteOffset + at), le = dv.getUint16(0) === 0x4949;
+    const u16 = (o) => dv.getUint16(o, le), u32 = (o) => dv.getUint32(o, le);
+    const tags = (ifd) => { const n = u16(ifd), out = {}; for (let k = 0; k < n; k++) { const e = ifd + 2 + k * 12; out[u16(e)] = { type: u16(e + 2), count: u32(e + 4), val: e + 8 }; } return out; };
+    const str = (t) => { if (!t) return ''; const off = t.count > 4 ? u32(t.val) : t.val; let s = ''; for (let k = 0; k < t.count - 1; k++) s += String.fromCharCode(dv.getUint8(off + k)); return s; };
+    const ifd0 = tags(u32(4)); if (!ifd0[0x8769]) return null;
+    const ex = tags(u32(ifd0[0x8769].val));
+    const m = str(ex[0x9003] || ex[0x9004]).match(/^(\d{4}):(\d\d):(\d\d) (\d\d):(\d\d):(\d\d)/); if (!m) return null;
+    const off = str(ex[0x9011]).match(/^([+-])(\d\d):(\d\d)$/);
+    const d = off ? new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}${off[0]}`) : new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+    return isNaN(d) ? null : d;
+  } catch { return null; }
 }
 // Shrink in the browser: ≤1024 px JPEG over the wire, and a ≤256 px thumbnail for the meal card.
 async function shrink(file, max, quality) {
@@ -1401,8 +1445,8 @@ function fitAdvice() {
 }
 // The clock a meal shows in the editor: its own, or — for a meal from before zones were stored — the UTC clock read in this browser's zone.
 function editTime(m) { return (m.zone || (m.tzOffset !== null && m.tzOffset !== undefined)) ? (m.time || '') : (clockOf(new Date(m.created_at || 0)) || m.time || ''); }
-function openEditor(meal, { fresh = false, existing = false, notes = '' } = {}) {
-  ED = { meal, fresh, items: meal.items.map((it) => ({ ...it, mult: it.mult || 1, base: it.base || { grams: it.grams, kcal: it.kcal, protein_g: it.protein_g, carbs_g: it.carbs_g, fat_g: it.fat_g, mult: it.mult || 1, portion: it.portion } })) };
+function openEditor(meal, { fresh = false, existing = false, notes = '', question = null } = {}) {
+  ED = { meal, fresh, question, items: meal.items.map((it) => ({ ...it, mult: it.mult || 1, base: it.base || { grams: it.grams, kcal: it.kcal, protein_g: it.protein_g, carbs_g: it.carbs_g, fat_g: it.fat_g, mult: it.mult || 1, portion: it.portion } })) };
   const kept = keepGet().editor;
   if (kept && meal.id && kept.mealId === meal.id && Array.isArray(kept.items)) { ED.items = kept.items; notes = 'Your changes from before the reload are back — Save to keep them.'; }
   ED.orig = JSON.stringify(ED.items);
@@ -1478,6 +1522,7 @@ function renderEditor(notes) {
     + '<div class="edmeta"><input type="time" id="ed-time" value="' + esc(editTime(ED.meal)) + '" title="When you ate it">'
     + '<label class="chk" title="Not eaten yet — it counts against the day until you tap Had it"><input type="checkbox" id="ed-planned"' + (ED.meal.planned ? ' checked' : '') + '> Planned</label>'
     + (ED.meal.zone && ED.meal.zone !== ZONE ? '<small class="muted">logged in ' + esc(zoneTag(ED.meal.zone, new Date(ED.meal.created_at))) + '</small>' : '') + '</div>'
+    + (ED.question ? '<div class="edq"><b>' + esc(ED.question.text) + '</b><div class="row" style="flex-wrap:wrap;margin-top:8px">' + ED.question.options.map((o, i) => '<button type="button" data-qa="' + i + '">' + esc(o) + '</button>').join('') + '</div></div>' : '')
     + '<div class="edfix"><input id="fix" placeholder="Something wrong? “that’s chicken, not pork”" title="' + esc(CFG.honesty || '') + '"><button id="fixbtn">Fix</button></div>'
     + '<div class="edfoot"><button class="ghost danger" id="discard">' + (ED.fresh ? 'Discard' : 'Delete') + '</button><button class="primary" id="savemeal">Save</button></div>');
   $('sheetbody').querySelectorAll('.item').forEach((el) => {
@@ -1488,6 +1533,7 @@ function renderEditor(notes) {
     const g = el.querySelector('[data-g]'); g.onchange = () => { it.grams = Math.max(0, +g.value || 0); if (it.base.grams) it.mult = it.grams / it.base.grams; it.portion = amountLabel(it); renderEditor(notes); };
     el.querySelector('[data-rm]').onclick = () => { ED.items.splice(+el.dataset.i, 1); ED.open = null; renderEditor(notes); };
   });
+  $('sheetbody').querySelectorAll('[data-qa]').forEach((b) => b.onclick = () => { const q = ED.question; ED.question = null; $('fix').value = q.text + ' — ' + q.options[+b.dataset.qa]; $('fixbtn').onclick(); });
   $('fixbtn').onclick = async () => {
     const correction = $('fix').value.trim(); if (!correction) return;
     sheet('<div class="thinking"><i></i> Looking again…</div>');
