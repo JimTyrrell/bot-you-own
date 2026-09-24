@@ -1635,7 +1635,21 @@ function renderEditor(notes) {
     el.querySelector('[data-open]').onclick = () => { ED.open = ED.open === +el.dataset.i ? null : +el.dataset.i; renderEditor(notes); };
     if (ED.open !== +el.dataset.i) return;
     el.querySelectorAll('[data-m]').forEach((b) => b.onclick = () => { it.mult = +b.dataset.m; it.grams = it.base.grams ? Math.round(it.base.grams * it.mult) : 0; it.portion = amountLabel(it); renderEditor(notes); });
-    const g = el.querySelector('[data-g]'); g.onchange = () => { it.grams = Math.max(0, +g.value || 0); if (it.base.grams) it.mult = it.grams / it.base.grams; it.portion = amountLabel(it); renderEditor(notes); };
+    // Typed grams: the numbers follow each keystroke, in place. No redraw — a redraw when the box lost focus
+    // swallowed the Save tap on phones, and the calories didn't move until then.
+    const g = el.querySelector('[data-g]');
+    g.oninput = () => {
+      if (g.value === '') return;
+      it.grams = Math.max(0, +g.value || 0); if (it.base.grams) it.mult = it.grams / it.base.grams; it.portion = amountLabel(it);
+      const s = scaled(it), row = el.querySelector('.irow');
+      row.querySelector('.in small').textContent = it.portion || '';
+      row.querySelector('.ik').textContent = s.kcal;
+      const em = row.querySelector('.in em'); if (em && em.firstChild) em.firstChild.textContent = 'P ' + s.protein_g.toFixed(0) + ' · C ' + s.carbs_g.toFixed(0) + ' · F ' + s.fat_g.toFixed(0);
+      const tot = ED.items.reduce((a, x) => { const t = scaled(x); a.kcal += t.kcal; a.p += t.protein_g; a.c += t.carbs_g; a.f += t.fat_g; return a; }, { kcal: 0, p: 0, c: 0, f: 0 });
+      const T = $('sheetbody').querySelector('.total');
+      if (T) T.innerHTML = '<span>Total <small>P ' + tot.p.toFixed(0) + ' · C ' + tot.c.toFixed(0) + ' · F ' + tot.f.toFixed(0) + '</small></span><span>' + tot.kcal + ' kcal</span>';
+    };
+    g.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); g.blur(); } };
     el.querySelector('[data-rm]').onclick = () => { ED.items.splice(+el.dataset.i, 1); ED.open = null; renderEditor(notes); };
   });
   $('sheetbody').querySelectorAll('[data-qa]').forEach((b) => b.onclick = () => { const q = ED.question; ED.question = null; $('fix').value = q.text + ' — ' + q.options[+b.dataset.qa]; $('fixbtn').onclick(); });
