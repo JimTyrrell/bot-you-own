@@ -519,6 +519,8 @@ async function api(path, opts = {}) {
     let r = null, why = '';
     try { r = await fetch((opts.base || API) + path, { method, headers, body: opts.body }); }
     catch (e) { why = 'network'; }                        // TypeError: never reached the server
+    // A 429 that isn't the rate limiter (the daily photo limit) is an answer, not a reason to wait and retry.
+    if (r && r.status === 429) { const d = await r.clone().json().catch(() => ({})); if (d.error && d.error !== 'rate-limited') return { ok: false, status: 429, ...d }; }
     if (r && ![502, 503, 504, 429].includes(r.status)) {
       let data = {}; try { data = await r.json(); } catch {}
       if (attempt) toast('Back online.', 1200);
@@ -1187,7 +1189,7 @@ $('pick').onchange = () => { const fs = [...$('pick').files]; $('pick').value = 
 // 📷 (camera or library, several at once), drop or paste put photos here; nothing is read until ↑.
 // Then every photo and the words go in one request, so the front of a tub and its label are one item,
 // "2 scoops" sets the amount, "plus my protein shake" adds what isn't pictured, "call it my stack" names it.
-const MAX_IN_BOX = 6;
+const MAX_IN_BOX = 10;
 let ATTACH = [];                                   // [{ photo, thumb, url }] — shrunk already
 const MEAL_PHOTOS = {};                            // meal id → the photos it was read from (the Fix line re-reads them)
 function drawTray() {

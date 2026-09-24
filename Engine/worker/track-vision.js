@@ -20,11 +20,26 @@ import { toBase64, round1, clamp } from "./track-common.js";
 const NO_THINK = { chat_template_kwargs: { enable_thinking: false } };
 
 // --- The prompts. Each one asks for JSON and nothing else. --------------------
+const MEAL_SHAPE = `{"photo_text":[{"photo":1,"text":""}],"items":[{"photos":[1],"brand":"","name":"","portion":"","grams":0,"kcal":0,"protein_g":0,"carbs_g":0,"fat_g":0,"confidence":0.0}],"notes":"","name":""}`;
+// Brand and product arrive apart, and the model copies the biggest words on each photo (photo_text): an item
+// keeps its brand only if that brand is in the words of one of ITS OWN photos. Asking for each photo's brand
+// wasn't enough — with creatine + protein photos together it said the protein photos read "Orgain" (they don't);
+// copying the words is grounded where naming a brand isn't. Then brand and name go back together.
+export function withBrands(list, photoText = null, said = "") {
+  const seen = Array.isArray(photoText) ? new Map(photoText.map((b) => [Number(b?.photo), String(b?.text ?? b?.brand ?? "").trim().toLowerCase()])) : null;
+  return (Array.isArray(list) ? list : []).map((it) => {
+    let brand = String(it?.brand || "").trim(); const name = String(it?.name || "").trim();
+    const own = Array.isArray(it?.photos) ? it.photos.map(Number) : [];
+    if (brand && seen && !own.length && !String(said).toLowerCase().includes(brand.toLowerCase())) brand = "";   // only in the words: only a brand they said
+    if (brand && seen && own.length && !own.some((n) => (seen.get(n) || "").includes(brand.toLowerCase()))) brand = "";   // not in its own photos' words
+    return brand && name && !name.toLowerCase().includes(brand.toLowerCase()) ? { ...it, name: brand + " " + name } : it;
+  });
+}
 const FOOD_SHAPE = `{"items":[{"name":"","portion":"","grams":0,"kcal":0,"protein_g":0,"carbs_g":0,"fat_g":0,"confidence":0.0}],"notes":""}`;
 export const PROMPTS = {
   // Photos + the person's words, sent together: ONE eating occasion. The words are the instructions
   // (amounts, extra foods not pictured, a name to save it under); the photos are the evidence.
-  meal: (said, n) => `You are a careful nutrition estimator. You are given ${n === 1 ? "a photo" : n + " photos"}${said ? " and the person's own words" : ""} about ONE meal or drink they are having now. Answer ONLY with a JSON object, no prose, no code fence, exactly this shape:\n${FOOD_SHAPE.replace('"notes":""', '"notes":"","name":""')}\nRules:\n- ${n > 1 ? "The photos together are ONE meal. They may show different parts of it (the chicken, the rice, the salad) or the same thing more than once (a tub's front and its nutrition label, a plate from two angles). List every distinct food or drink ONCE, never once per photo.\n- " : ""}If the person gives a weight or amount for a food (\"rice 180 g\", \"150g chicken\", \"half the salad\"), use it exactly: a weight goes in \"grams\" and the numbers are for that weight.\n- If a nutrition label is visible, use its per-serving numbers exactly, times the number of servings the person says (\"2 scoops\" = 2 servings). Put the amount in "portion".\n- The person's words win about WHAT and HOW MUCH. If they mention something not in any photo (\"plus my protein shake\"), add it as its own item with your best estimate.\n- Supplements with no calories (creatine, electrolytes) are still items, with 0 kcal.\n- "name": only if they ask to save or name this (\"call it my morning stack\", \"make it a named meal: snack\"), the short name they gave; otherwise "".\n- If there is no food or drink at all, return an empty items list and say why in notes.${said ? `\nThe person says: "${said.replace(/"/g, "'")}"` : ""}`,
+  meal: (said, n) => `You are a careful nutrition estimator. You are given ${n === 1 ? "a photo" : n + " photos"}${said ? " and the person's own words" : ""} about ONE meal or drink they are having now. Answer ONLY with a JSON object, no prose, no code fence, exactly this shape:\n${MEAL_SHAPE}\nRules:\n- ${n > 1 ? "The photos together are ONE meal. They may show different parts of it (the chicken, the rice, the salad) or the same thing more than once (a tub's front and its nutrition label, a plate from two angles). List every distinct food or drink ONCE, never once per photo.\n- " : ""}If the person gives a weight or amount for a food (\"rice 180 g\", \"150g chicken\", \"half the salad\"), use it exactly: a weight goes in \"grams\" and the numbers are for that weight.\n- If a nutrition label is visible, use its per-serving numbers exactly, times the number of servings the person says (\"2 scoops\" = 2 servings). Put the amount in "portion".\n- The person's words win about WHAT and HOW MUCH. If they mention something not in any photo (\"plus my protein shake\"), add it as its own item with your best estimate.\n- \"photo_text\": for EVERY photo, copy the biggest printed words on that photo exactly as printed (up to 12 words; \"\" if none). Copy only what is on that photo.\n- For each item: \"photos\" = the numbers of the photos that show it (empty if it is only in the person's words); \"brand\" = the maker's name, only if it is printed on one of THOSE photos, else \"\" — never a brand from a photo of a different product; \"name\" = the product's own name as printed on its photos, without the brand (\"Creatine\", \"Sparkling Orange\", a product line like \"Ultra Whey\"); if nothing is printed, a plain description (\"grilled chicken\").\n- Supplements with no calories (creatine, electrolytes) are still items, with 0 kcal. Plain water or ice (what a powder is mixed into) is not an item — leave it out. A branded drink is an item.\n- "name": only if they ask to save or name this (\"call it my morning stack\", \"make it a named meal: snack\"), the short name they gave; otherwise "".\n- If there is no food or drink at all, return an empty items list and say why in notes.${said ? `\nThe person says: "${said.replace(/"/g, "'")}"` : ""}`,
   // The Fix line: a correction to an estimate the person has ALREADY checked. They may
   // have fixed other items before — an earlier correction, the portion buttons, typed
   // grams — so the model sees the whole current list and is told to change only what
@@ -44,7 +59,10 @@ export async function runVision(env, cfg, { image = null, mime = "image/jpeg", i
   if (!env.AI) throw new Error("No Workers AI binding (wrangler.jsonc → ai).");
   const content = [{ type: "text", text: prompt }];
   const all = images && images.length ? images : image ? [{ bytes: image, mime }] : [];
-  for (const im of all) content.push({ type: "image_url", image_url: { url: `data:${im.mime || "image/jpeg"};base64,${toBase64(im.bytes)}` } });
+  all.forEach((im, i) => {
+    if (all.length > 1) content.push({ type: "text", text: `Photo ${i + 1}:` });
+    content.push({ type: "image_url", image_url: { url: `data:${im.mime || "image/jpeg"};base64,${toBase64(im.bytes)}` } });
+  });
   const t0 = Date.now();
   const r = await env.AI.run(cfg.model, {
     messages: [

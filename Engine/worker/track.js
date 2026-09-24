@@ -46,7 +46,7 @@ import { CONFIG } from "../../YourBots/config.js";
 import { identify, signInMethods, verifyIdToken } from "../identity/index.js";
 import { resolve as resolveExpiry, lapseReply, noticeFor, EXPIRY_BUILT_IN } from "./expiry.js";
 import { join as idJoin, userIdFor, userById as idUserById, bindDevice, linkByCode, deviceCount, listDevices, pendingByEmail, touch as idTouch, DEV_PEPPER, pepperOf } from "../identity/devices.js";
-import { runVision, PROMPTS, extractJson, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize, mergeCorrection } from "./track-vision.js";
+import { runVision, PROMPTS, extractJson, withBrands, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize, mergeCorrection } from "./track-vision.js";
 import { lookupBarcode, rememberLabel, saveReceipt, listReceipts, deleteReceipt, setWeight, listWeights, importWeights, householdOf, createHousehold, joinHousehold, leaveHousehold, canView } from "./track-extras.js";
 import { ensureDaySchema, dayChat, addWords, afterMeal, editedMeal, confirmedMeal, removedMeal, listFavourites, nameFavourite, forgetFavourite, matchFavourite, repeatMeals, retimeFavourite, localHour, askDay, summaryFor, classifySay, looksLikeFood } from "./track-day.js";
 
@@ -342,7 +342,7 @@ const slim = (items) => items.map(({ name, portion, grams, kcal, protein_g, carb
 function listFrom(v) { try { const x = typeof v === "string" ? JSON.parse(v) : v; return Array.isArray(x) ? x : []; } catch { return []; } }
 
 // --- PHOTO: one call to the vision model, four kinds of picture. -----------------------
-const MAX_PHOTOS = 6;
+const MAX_PHOTOS = 10;                   // three products at three photos each, and one spare
 async function photo(request, env, cfg, me) {
   let form;
   try { form = await request.formData(); } catch { return json({ error: "bad request", reason: "Expected a multipart form with a photo." }, 400); }
@@ -359,10 +359,10 @@ async function photo(request, env, cfg, me) {
   const current = sanitiseItems(listFrom(form.get("current")), { source: "photo" });
   const revising = kind === "food" && Boolean(correction) && current.length > 0;
 
-  // The daily cap: every photo the model looks at counts, whatever kind.
+  // The daily cap counts reads (vision calls), whatever kind: a meal of 4 photos is one read (at most MAX_PHOTOS each).
   const used = (await env.DB.prepare(`SELECT photos FROM track_usage WHERE user_id = ? AND date = ?`).bind(me.id, todayUtc()).first())?.photos || 0;
-  if (used + files.length > cfg.dailyPhotoLimit) return json({ error: "daily-limit", reason: used >= cfg.dailyPhotoLimit ? `That's ${cfg.dailyPhotoLimit} photos today — the daily limit. You can still type a meal.` : `That would pass today's limit of ${cfg.dailyPhotoLimit} photos (${cfg.dailyPhotoLimit - used} left). Send fewer, or type it.` }, 429);
-  await env.DB.prepare(`INSERT INTO track_usage (user_id, date, photos) VALUES (?, ?, ?) ON CONFLICT(user_id, date) DO UPDATE SET photos = photos + ?`).bind(me.id, todayUtc(), files.length, files.length).run();
+  if (used >= cfg.dailyPhotoLimit) return json({ error: "daily-limit", reason: `That's ${cfg.dailyPhotoLimit} photo reads today — the daily limit. You can still type a meal.` }, 429);
+  await env.DB.prepare(`INSERT INTO track_usage (user_id, date, photos) VALUES (?, ?, 1) ON CONFLICT(user_id, date) DO UPDATE SET photos = photos + 1`).bind(me.id, todayUtc()).run();
 
   const images = await Promise.all(files.map(async (f) => ({ bytes: await f.arrayBuffer(), mime: /^image\/(png|webp)$/.test(f.type) ? f.type : "image/jpeg" })));
   const thumb = await cleanThumb(form.get("thumb"));
@@ -378,7 +378,7 @@ async function photo(request, env, cfg, me) {
   const parsed = extractJson(out.text);
 
   if (kind === "food") {
-    const fresh = sanitiseItems(parsed?.items, { source: "photo" });
+    const fresh = sanitiseItems(withBrands(parsed?.items, parsed?.photo_text, said), { source: "photo" });
     const items = revising ? mergeCorrection(current, fresh, correction) : fresh;
     if (revising && !fresh.length) return json({ error: "no food", reason: "I couldn't apply that correction. Try naming the food and the amount, like “8 strawberries”." }, 422);
     if (!items.length) return json({ error: "no food", reason: parsed?.notes ? `I couldn't find food in that: ${String(parsed.notes).slice(0, 140)}` : "I couldn't make out any food in that photo. Try closer, with more light — or type it.", raw: out.text.slice(0, 300) }, 422);
@@ -391,7 +391,8 @@ async function photo(request, env, cfg, me) {
     const askedName = String(parsed?.name || "").trim().slice(0, 40);
     let named = null;
     if (askedName && after.favourite?.id) { await nameFavourite(env, me, after.favourite.id, askedName); named = askedName; }
-    return json({ ok: true, meal, notes: String(parsed?.notes || "").slice(0, 200), honesty: HONESTY, totals: after.totals, named, photos: files.length });
+    // debug=1 (tests): the model's own answer too — the person's own data, nothing more.
+    return json({ ok: true, meal, notes: String(parsed?.notes || "").slice(0, 200), honesty: HONESTY, totals: after.totals, named, photos: files.length, ...(form.get("debug") === "1" ? { raw: out.text.slice(0, 4000) } : {}) });
   }
   if (kind === "barcode") {
     const digits = String(parsed?.digits || "").replace(/\D/g, "");

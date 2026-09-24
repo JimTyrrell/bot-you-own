@@ -215,7 +215,7 @@ is switched off with `chat_template_kwargs: { enable_thinking: false }`.
 **Cost** (developers.cloudflare.com/workers-ai/platform/pricing): Gemma 4 is $0.10
 per M input and $0.30 per M output tokens. A plate photo was 380–680 tokens and
 6–12 neurons in testing — about **$0.0001 a photo**. The free 10,000 neurons a day
-cover roughly a thousand photos. `food.dailyPhotoLimit` (default 60 per person)
+cover roughly a thousand photos. `food.dailyPhotoLimit` (default 60 photo reads per person; one read can carry up to 6 photos of one meal)
 is the ceiling.
 
 ## Privacy
