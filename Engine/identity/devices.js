@@ -37,7 +37,12 @@ export const nowIso = () => new Date().toISOString();
 export function cleanEmail(e) { e = String(e || "").trim().toLowerCase().slice(0, 254); return EMAIL_SHAPE.test(e) ? e : ""; }
 export function randomCode(n = 6) { const b = crypto.getRandomValues(new Uint8Array(n)); return [...b].map((x) => CODE_ALPHABET[x % CODE_ALPHABET.length]).join(""); }
 export const pepperOf = (env) => env.FOODLOG_PEPPER || DEV_PEPPER;
-export async function userIdFor(email, env, bot) { return sha256hex(`${email}\n${pepperOf(env)}\n${bot}`); }
+// An existing row wins: people who joined before the pepper was set (or changed) keep their id,
+// otherwise a new device hashes to a fresh id, the insert hits idx_id_users_bot_email, and join 500s.
+export async function userIdFor(email, env, bot) {
+  const prior = env.DB ? await env.DB.prepare(`SELECT id FROM id_users WHERE bot = ? AND email = ?`).bind(bot, email).first() : null;
+  return prior?.id || sha256hex(`${email}\n${pepperOf(env)}\n${bot}`);
+}
 
 // --- The tables. Created on first use, like the rest of the Worker (Engine/schema.sql lists them too).
 let SCHEMA_OK = false;
