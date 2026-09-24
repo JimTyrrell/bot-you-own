@@ -102,7 +102,13 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
 
   // The pages. /apps/<id> → the app; /apps/<id>/coach → the coach view. Static files in Engine/public/food/.
   if (p === page || p === page + "/") return env.ASSETS.fetch(new Request(`${url.origin}/food/`, { headers: request.headers }));
-  if (p.startsWith(page + "/")) return env.ASSETS.fetch(new Request(`${url.origin}/food/${p.slice(page.length + 1)}`, { headers: request.headers }));
+  // Every screen has an address (/day/2026-09-20, /weight/new, /coach/<client>…): a path with no
+  // file extension is the app, or the coach page under /coach; anything with one is a static file.
+  if (p.startsWith(page + "/")) {
+    const rest = p.slice(page.length + 1);
+    const file = /^coach(\/|$)/.test(rest) ? "coach" : /\.[a-z0-9]+$/i.test(rest) ? rest : "";
+    return env.ASSETS.fetch(new Request(`${url.origin}/food/${file}`, { headers: request.headers }));
+  }
 
   if (p.startsWith(admin)) {
     if (!isAdmin) return json({ error: "admin only" }, adminEnabled ? 401 : 404);

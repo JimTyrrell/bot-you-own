@@ -405,9 +405,61 @@ function shift(date, n) { const d = new Date(date + 'T12:00:00'); d.setDate(d.ge
 const $ = (id) => document.getElementById(id);
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
 function toast(msg, ms = 2600) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(t._t); t._t = setTimeout(() => t.hidden = true, ms); }
-function show(name) { if (name === 'join' && S.email && !$('email').value) $('email').value = S.email; document.querySelectorAll('.screen').forEach((s) => s.hidden = s.id !== 's-' + name); $('dock').hidden = name !== 'home' || Boolean(viewUser); window.scrollTo(0, 0); }
-function sheet(html) { $('sheetbody').innerHTML = html; $('sheet').hidden = false; }
-function closeSheet() { $('sheet').hidden = true; $('sheetbody').innerHTML = ''; }
+function show(name) { SCREEN = name; if (name !== 'home') SHEET_PATH = ''; syncUrl(); if (name === 'join' && S.email && !$('email').value) $('email').value = S.email; document.querySelectorAll('.screen').forEach((s) => s.hidden = s.id !== 's-' + name); $('dock').hidden = name !== 'home' || Boolean(viewUser); window.scrollTo(0, 0); }
+// sheet(html, path): a path makes the sheet linkable (PAGE + path); without one the URL stays put.
+function sheet(html, path) { $('sheetbody').innerHTML = html; $('sheet').hidden = false; if (path) { SHEET_PATH = path; syncUrl(true); } }
+function linkSheet(path) { SHEET_PATH = path; syncUrl(true); }
+function closeSheet() { $('sheet').hidden = true; $('sheetbody').innerHTML = ''; if (SHEET_PATH) { SHEET_PATH = ''; syncUrl(true); } }
+
+// ---------- addresses: every screen, tab, day and linkable sheet has its own URL ----------
+//   PAGE                         today, chat          PAGE/day | /week | /chat[/YYYY-MM-DD]
+//   …/meal/ID  …/menu  …/staples  …/add   sheets over whichever day is showing, e.g. PAGE/week/2026-09-20/menu
+//   PAGE/targets | /weight | /weight/new | /weight/import | /receipts | /settings
+//   PAGE/member/ID/...           a household member's log, same shapes
+//   PAGE/join | /link            sign-in / waiting (signed in → today)
+// Signed out, the URL is left alone so a deep link survives sign-in; route() then opens it.
+// Screens and tabs push history (Back walks them); sheets replace it (reloadable, Back leaves the screen).
+let SCREEN = '', SHEET_PATH = '', ROUTING = false;
+const SCREEN_PATHS = { targets: '/targets', weight: '/weight', receipts: '/receipts', settings: '/settings' };
+const isDate = (x) => /^\d{4}-\d{2}-\d{2}$/.test(x || '');
+function urlFor() {
+  if (SHEET_PATH.startsWith('/weight')) return PAGE + SHEET_PATH;
+  if (SCREEN_PATHS[SCREEN]) return PAGE + SCREEN_PATHS[SCREEN];
+  if (SCREEN !== 'home') return null;                                   // join, pending, offline: leave the URL be
+  const today = localDate();
+  const dated = day !== today || SHEET_PATH.startsWith('/meal/');       // a meal's link must still find it tomorrow
+  const home = (viewUser ? '/member/' + encodeURIComponent(viewUser.id) : '') + (tab === 'chat' && !dated ? '' : '/' + tab + (dated ? '/' + day : ''));
+  return PAGE + home + SHEET_PATH;                                      // a sheet over the day keeps the day's address
+}
+function syncUrl(replace) {
+  const u = urlFor();
+  if (!u || u === location.pathname) return;
+  try { history[replace || ROUTING ? 'replaceState' : 'pushState'](null, '', u); } catch {}
+}
+async function route() {
+  ROUTING = true;
+  try {
+    const seg = location.pathname.slice(PAGE.length).split('/').filter(Boolean).map(decodeURIComponent);
+    SHEET_PATH = ''; closeSheet();                                       // the URL is already the new one: don't rewrite it
+    if (seg[0] === 'targets') { show('targets'); return prefillTargets(); }
+    if (seg[0] === 'weight') { openWeight(); if (seg[1] === 'new') openWeigh(); else if (seg[1] === 'import') openImport(); return; }
+    if (seg[0] === 'receipts') return await openReceipts();
+    if (seg[0] === 'settings') return await openSettings();
+    if (seg[0] === 'join' || seg[0] === 'link') seg.length = 0;
+    viewUser = null;
+    if (seg[0] === 'member' && seg[1]) { viewUser = { id: seg[1], name: '' }; seg.splice(0, 2); }
+    let t = 'chat', d = localDate();
+    if (['chat', 'day', 'week'].includes(seg[0])) t = seg.shift();
+    if (isDate(seg[0])) d = seg.shift();
+    day = d; paintTab(t); show('home');
+    await refresh();
+    if (seg[0] === 'meal' && seg[1]) { const m = DAY && DAY.meals.find((x) => x.id === seg[1]); if (m && !DAY.readOnly) openEditor(m, { existing: true }); else toast('That meal isn’t on this day.'); }
+    else if (seg[0] === 'menu') openMenu();
+    else if (seg[0] === 'staples') await openStaples();
+    else if (seg[0] === 'add' && !viewUser) openText();
+  } finally { ROUTING = false; }
+}
+window.addEventListener('popstate', () => { if (S.userId) route(); });
 $('sheet').addEventListener('click', (e) => { if (e.target === $('sheet')) closeSheet(); });
 
 if (!S.deviceKey) { const b = crypto.getRandomValues(new Uint8Array(32)); S.deviceKey = [...b].map((x) => x.toString(16).padStart(2, '0')).join(''); save(); }
@@ -477,7 +529,7 @@ function onLinked(me) {
   S.userId = me.userId; S.email = me.email; S.targets = me.targets; S.household = me.household; S.pending = null; save();
   $('whoami').textContent = S.email + ' · ' + (me.devices || 1) + ' device' + ((me.devices || 1) === 1 ? '' : 's');
   if (!S.targets) { show('targets'); prefillTargets(); return; }
-  goHome();
+  route();
 }
 
 // ---------- join ----------
@@ -699,6 +751,7 @@ document.querySelectorAll('[data-go]').forEach((b) => b.onclick = () => { const 
 // ---------- home ----------
 function goHome() { viewUser = null; show('home'); refresh(); }
 async function refresh() {
+  if (SCREEN === 'home') syncUrl();
   const q = viewUser ? '&user=' + viewUser.id : '';
   const hour = new Date().getHours();
   const [d, w, c, f] = await Promise.all([api('day?date=' + day + q), api('week?end=' + day + q), api('chat?date=' + day + q), viewUser ? Promise.resolve(null) : api('favourites?date=' + day + '&hour=' + hour)]);
@@ -716,9 +769,12 @@ async function refresh() {
   if (tab === 'chat' && day === localDate() && !viewUser) loadYesterday();
 }
 $('tabs').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; setTab(b.dataset.tab); };
-function setTab(t) {
+function paintTab(t) {
   tab = t; [...$('tabs').children].forEach((b) => b.classList.toggle('on', b.dataset.tab === t));
   for (const k of ['chat', 'day', 'week']) $('t-' + k).hidden = k !== t;
+}
+function setTab(t) {
+  paintTab(t); syncUrl();
   if (t === 'day') loadSummary('day'); if (t === 'week') loadSummary('week');
   if (t === 'chat') { scrollThread(); if (day === localDate() && !viewUser) loadYesterday(); }
   window.scrollTo(0, 0);
@@ -726,13 +782,14 @@ function setTab(t) {
 $('prevday').onclick = () => { day = shift(day, -1); refresh(); };
 $('nextday').onclick = () => { day = shift(day, 1); refresh(); };
 $('daylabel').onclick = () => { day = localDate(); refresh(); };
-$('menubtn').onclick = () => sheet('<h2 style="margin-top:0">Menu</h2>'
+$('menubtn').onclick = () => openMenu();
+function openMenu() { sheet('<h2 style="margin-top:0">Menu</h2>'
   + '<button style="width:100%;margin:4px 0" onclick="closeSheet();openReceipts()">🧾 Receipts</button>'
   + '<button style="width:100%;margin:4px 0" onclick="closeSheet();openSettings()">👥 Household & settings</button>'
   + '<button style="width:100%;margin:4px 0" onclick="closeSheet();show(\'targets\');prefillTargets()">🎯 Targets</button>'
   + '<button style="width:100%;margin:4px 0" onclick="closeSheet();openWeight()">⚖️ Weight (log, graph, import)</button>'
   + '<button style="width:100%;margin:4px 0" onclick="closeSheet();openStaples()">★ Staples (rename, forget)</button>'
-  + (viewUser ? '<button class="primary" style="width:100%;margin:4px 0" onclick="closeSheet();goHome()">← Back to my log</button>' : ''));
+  + (viewUser ? '<button class="primary" style="width:100%;margin:4px 0" onclick="closeSheet();goHome()">← Back to my log</button>' : ''), '/menu'); }
 
 function renderDay() {
   const t = DAY.targets || {}, tot = DAY.totals;
@@ -919,6 +976,7 @@ async function openStaples() {
   const row = (f) => '<div class="item"><div class="nm"><span>' + esc(f.label) + ' <small>×' + f.timesUsed + '</small></span><span>' + Math.round(f.kcal) + ' kcal</span></div><div class="macros">' + esc(f.items.map((i) => i.name).join(', ')) + '</div><div class="mults"><button data-log="' + esc(f.id) + '">Log it</button><button data-half="' + esc(f.id) + '">½×</button><button data-name="' + esc(f.id) + '">✎</button><button data-forget="' + esc(f.id) + '" class="ghost">✕</button></div></div>';
   sheet('<h2 style="margin-top:0">Your staples</h2>' + (all.length ? '<p class="muted small">By the time of day you usually have them. Log it logs it now. ✎ names it (then you can just say the name). ✕ forgets it.</p>'
     + groups.map(([k, l]) => '<h3 class="whenhead">' + WHEN_WORDS[k] + (k === FAVS?.bucket ? ' <small>· now</small>' : '') + '</h3>' + l.map(row).join('')).join('') : '<p class="muted">Nothing yet. Every meal you log becomes one.</p>'));
+  linkSheet('/staples');
   $('sheetbody').querySelectorAll('[data-log]').forEach((b) => b.onclick = () => repeatFav(b.dataset.log));
   $('sheetbody').querySelectorAll('[data-half]').forEach((b) => b.onclick = () => repeatFav(b.dataset.half, 0.5));
   $('sheetbody').querySelectorAll('[data-name]').forEach((b) => b.onclick = () => askForName({ ...favById(b.dataset.name), timesUsed: (favById(b.dataset.name)?.timesUsed || 1) - 1 }));
@@ -1079,6 +1137,7 @@ function editTime(m) { return (m.zone || (m.tzOffset !== null && m.tzOffset !== 
 function openEditor(meal, { fresh = false, existing = false, notes = '' } = {}) {
   ED = { meal, fresh, items: meal.items.map((it) => ({ ...it, mult: it.mult || 1, base: it.base || { grams: it.grams, kcal: it.kcal, protein_g: it.protein_g, carbs_g: it.carbs_g, fat_g: it.fat_g, mult: it.mult || 1, portion: it.portion } })) };
   renderEditor(notes);
+  if (meal.id && !viewUser) linkSheet('/meal/' + meal.id);
 }
 function scaled(it) {
   // per-100 g known (barcode / label): exact from grams. Else scale the estimate linearly.
@@ -1193,7 +1252,7 @@ function renderEditor(notes) {
 // ---------- just type it ----------
 function openText() {
   sheet('<h2 style="margin-top:0">What did you eat?</h2><textarea id="tt" rows="3" placeholder="2 eggs and toast with butter"></textarea><button class="primary" id="ttgo" style="width:100%;margin-top:10px">Estimate</button>');
-  $('tt').focus();
+  linkSheet('/add'); $('tt').focus();
   $('ttgo').onclick = async () => { const text = $('tt').value.trim(); if (!text) return; sheet('<div class="thinking"><i></i> Working it out…</div>'); const r = await api('text', { json: { text, date: day } }); if (!r.ok) { closeSheet(); return toast(r.reason || 'Try naming the foods plainly.'); } openEditor(r.meal, { fresh: true, notes: r.notes }); };
 }
 
@@ -1223,7 +1282,7 @@ function openProduct(p, previous) {
 function openWeigh() {
   const unit = (S.targets && S.targets.unit) || 'kg';
   sheet('<h2 style="margin-top:0">Weigh in</h2><div class="row"><input id="wv" type="number" inputmode="decimal" placeholder="' + (unit === 'lb' ? '165' : '75') + '" step="0.1"><select id="wu" style="flex:.5"><option value="kg"' + (unit === 'kg' ? ' selected' : '') + '>kg</option><option value="lb"' + (unit === 'lb' ? ' selected' : '') + '>lb</option></select></div><button class="primary" id="wgo" style="width:100%;margin-top:12px">Save for ' + (day === localDate() ? 'today' : day) + '</button>');
-  $('wv').focus();
+  linkSheet('/weight/new'); $('wv').focus();
   $('wgo').onclick = async () => { const r = await api('weight', { json: { date: day, value: +$('wv').value, unit: $('wu').value } }); if (!r.ok) return toast(r.reason || 'Couldn’t save.'); if (S.targets) { S.targets.unit = r.unit; save(); } closeSheet(); toast('Weight saved'); refresh(); if (!$('s-weight').hidden) loadWeight(); };
 }
 
@@ -1363,6 +1422,7 @@ function openImport() {
     + '<li><b>Apple Health</b>: Health app → your picture (top right) → <b>Export All Health Data</b>. It arrives as a zip; tap it once in Files to unzip, then pick <b>export.xml</b> inside. It can be big; give it a minute.</li></ul>'
     + '<input type="file" id="wfile" accept=".csv,.xml,.txt,text/csv,text/xml,application/xml,text/plain" style="width:100%">'
     + '<p class="muted small" id="wimsg" style="margin:10px 0 0"></p><div id="wpreview"></div>');
+  linkSheet('/weight/import');
   $('wfile').onchange = async () => {
     const f = $('wfile').files[0]; if (!f) return;
     $('wimsg').textContent = 'Reading ' + f.name + (f.size > 5e6 ? ' (' + Math.round(f.size / 1e6) + ' MB, hang on)' : '') + '…'; $('wpreview').innerHTML = '';
