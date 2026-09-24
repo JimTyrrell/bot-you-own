@@ -394,8 +394,8 @@
   </div>
 </div></div>
 <!-- No capture attribute: the phone offers Take Photo *and* the photo library (a plate from lunch, a label saved earlier). -->
-<input type="file" id="cam" accept="image/*,.heic,.heif" hidden>
-<input type="file" id="pick" accept="image/*,.heic,.heif" hidden>
+<input type="file" id="cam" accept="image/*,.heic,.heif" multiple hidden>
+<input type="file" id="pick" accept="image/*,.heic,.heif" multiple hidden>
 
 <!-- THE SHEET: one container, many contents -->
 <div class="sheet" id="sheet" hidden><div class="box"><div class="grip"></div><div id="sheetbody"></div></div></div>
@@ -1031,13 +1031,15 @@ async function restoreKept() {
     else if (landedSince(k.sentAt, k.text)) keepSet({ text: '', sentAt: null });
     else { box.value = k.text; growSay(); keepSet({ sentAt: null }); toast('That message hadn’t gone through — it’s back in the box. Press ↑ to send it.', 5000); }
   }
-  const ph = await blobGet('photo');
-  if (ph && ph.kind === 'food' && landedSince(ph.at)) { await blobPut('photo', null); }
-  else if (ph && $('sheet').hidden) {
-    const url = URL.createObjectURL(ph.thumb || ph.photo);
-    sheet('<h2 style="margin-top:0">A photo didn’t finish</h2><img src="' + url + '" style="width:96px;height:96px;object-fit:cover;border-radius:14px;display:block;margin:4px 0 10px"><p class="muted small">It was still being read when the page reloaded.</p><div class="row"><button class="ghost" id="kp-drop">Discard</button><button class="primary" id="kp-go" style="flex:2">Read it now</button></div>');
-    $('kp-drop').onclick = async () => { await blobPut('photo', null); closeSheet(); };
-    $('kp-go').onclick = () => handlePhoto(ph.photo, ph.kind);
+  let ph = await blobGet('photo'); const q = await blobGet('queue');
+  if (ph && ph.kind === 'food' && landedSince(ph.at)) { await blobPut('photo', null); ph = null; }
+  const waiting = (ph ? [ph.photo] : []).concat(q && q.files ? q.files : []);
+  if (waiting.length && $('sheet').hidden) {
+    const url = URL.createObjectURL(ph ? (ph.thumb || ph.photo) : waiting[0]);
+    const n = waiting.length;
+    sheet('<h2 style="margin-top:0">' + (n === 1 ? 'A photo didn’t finish' : n + ' photos weren’t read yet') + '</h2><img src="' + url + '" style="width:96px;height:96px;object-fit:cover;border-radius:14px;display:block;margin:4px 0 10px"><p class="muted small">' + (n === 1 ? 'It was' : 'They were') + ' still waiting when the page reloaded.</p><div class="row"><button class="ghost" id="kp-drop">Discard</button><button class="primary" id="kp-go" style="flex:2">Read ' + (n === 1 ? 'it' : 'them') + ' now</button></div>');
+    $('kp-drop').onclick = async () => { await blobPut('photo', null); await blobPut('queue', null); closeSheet(); };
+    $('kp-go').onclick = async () => { await blobPut('photo', null); closeSheet(); takePhotos(waiting, (ph || q).kind); };
     return;
   }
   const au = await blobGet('audio');
@@ -1146,15 +1148,34 @@ document.querySelectorAll('.chips button').forEach((b) => b.onclick = () => {
   if (a === 'staples') return openStaples();
   camKind = a; $('cam').click();
 });
-$('cam').onchange = () => { const f = $('cam').files[0]; $('cam').value = ''; if (f) handlePhoto(f, camKind); };
-$('pick').onchange = () => { const f = $('pick').files[0]; $('pick').value = ''; if (f) handlePhoto(f, camKind); };
+$('cam').onchange = () => { const fs = [...$('cam').files]; $('cam').value = ''; takePhotos(fs, camKind); };
+$('pick').onchange = () => { const fs = [...$('pick').files]; $('pick').value = ''; takePhotos(fs, camKind); };
+// Several photos at once: read one at a time, each reviewed like a single one ("Photo 2 of 4"),
+// the next starting when that one's sheet closes. The ones still waiting are kept (IndexedDB) for a reload.
+let PHOTO_OF = '';
+const sheetClosed = () => new Promise((res) => { if ($('sheet').hidden) return res(); const t = setInterval(() => { if ($('sheet').hidden) { clearInterval(t); res(); } }, 250); });
+async function takePhotos(files, kind) {
+  const list = [...(files || [])].filter((f) => f && ((f.type || '').startsWith('image/') || isHeic(f)));
+  if (!list.length) return;
+  if (takePhotos.busy) return toast('Still reading the last photos — one moment.');
+  takePhotos.busy = true;
+  try {
+    for (let i = 0; i < list.length; i++) {
+      PHOTO_OF = list.length > 1 ? 'Photo ' + (i + 1) + ' of ' + list.length + ' · ' : '';
+      await blobPut('queue', list.length - i > 1 ? { userId: S.userId, kind, files: list.slice(i + 1), at: Date.now() } : null);
+      await handlePhoto(list[i], kind);
+      await sheetClosed();
+    }
+  } finally { PHOTO_OF = ''; takePhotos.busy = false; blobPut('queue', null); }
+}
 // On a computer: drop a photo anywhere on the log, or paste one (⌘V / Ctrl+V) — it's read as a plate.
+const imagesIn = (list) => [...(list || [])].filter((f) => f && ((f.type || '').startsWith('image/') || isHeic(f)));
 const imageIn = (list) => [...(list || [])].find((f) => f && ((f.type || '').startsWith('image/') || isHeic(f)));
 const canTakePhoto = () => !$('s-home').hidden && !viewUser && !DAY?.readOnly;
 document.addEventListener('dragover', (e) => { if (canTakePhoto() && [...(e.dataTransfer?.items || [])].some((i) => i.kind === 'file')) { e.preventDefault(); document.body.classList.add('dropping'); } });
 document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) document.body.classList.remove('dropping'); });
-document.addEventListener('drop', (e) => { document.body.classList.remove('dropping'); const f = imageIn(e.dataTransfer?.files); if (!f || !canTakePhoto()) return; e.preventDefault(); handlePhoto(f, 'food'); });
-document.addEventListener('paste', (e) => { const f = imageIn([...(e.clipboardData?.items || [])].map((i) => i.kind === 'file' ? i.getAsFile() : null)); if (!f || !canTakePhoto()) return; e.preventDefault(); handlePhoto(f, 'food'); });
+document.addEventListener('drop', (e) => { document.body.classList.remove('dropping'); const fs = imagesIn(e.dataTransfer?.files); if (!fs.length || !canTakePhoto()) return; e.preventDefault(); takePhotos(fs, 'food'); });
+document.addEventListener('paste', (e) => { const fs = imagesIn([...(e.clipboardData?.items || [])].map((i) => i.kind === 'file' ? i.getAsFile() : null)); if (!fs.length || !canTakePhoto()) return; e.preventDefault(); takePhotos(fs, 'food'); });
 
 // iPhone photos are often HEIC. The iPhone itself hands the page a JPEG, and Safari on a Mac opens HEIC;
 // Chrome and Firefox on a computer can't. For those, and only then, load the converter (our own copy, 1.3 MB).
@@ -1175,9 +1196,9 @@ async function shrink(file, max, quality) {
   return new Promise((res) => c.toBlob(res, 'image/jpeg', quality));
 }
 async function handlePhoto(file, kind) {
-  sheet('<div class="thinking"><i></i> ' + ({ food: 'Looking at your plate…', barcode: 'Reading the barcode…', label: 'Reading the label…', receipt: 'Reading the receipt…' }[kind]) + '</div>');
+  sheet('<div class="thinking"><i></i> ' + PHOTO_OF + ({ food: 'Looking at your plate…', barcode: 'Reading the barcode…', label: 'Reading the label…', receipt: 'Reading the receipt…' }[kind]) + '</div>');
   try {
-    if (isHeic(file)) { sheet('<div class="thinking"><i></i> Opening the iPhone photo…</div>'); file = await readablePhoto(file); sheet('<div class="thinking"><i></i> ' + ({ food: 'Looking at your plate…', barcode: 'Reading the barcode…', label: 'Reading the label…', receipt: 'Reading the receipt…' }[kind]) + '</div>'); }
+    if (isHeic(file)) { sheet('<div class="thinking"><i></i> ' + PHOTO_OF + 'Opening the iPhone photo…</div>'); file = await readablePhoto(file); sheet('<div class="thinking"><i></i> ' + PHOTO_OF + ({ food: 'Looking at your plate…', barcode: 'Reading the barcode…', label: 'Reading the label…', receipt: 'Reading the receipt…' }[kind]) + '</div>'); }
     const [photo, thumb] = await Promise.all([shrink(file, 1024, 0.85), shrink(file, 256, 0.7)]);
     lastPhoto = { photo, thumb };
     // Barcodes: the browser can often read them itself (Chrome / Android). Free and instant.
