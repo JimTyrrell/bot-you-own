@@ -66,6 +66,9 @@ function cleanMessage(m) {
   if (m.note) meta.note = true;
   if (m.talk) meta.talk = true;
   if (m.toPerson) meta.toPerson = true;
+  // /chat: which model wrote an answer, and which column (lane) of a comparison it sits in.
+  if (typeof m.model === "string" && /^@cf\/[\w.\-]+\/[\w.\-]+$/.test(m.model)) meta.model = m.model.slice(0, 120);
+  if (Number.isInteger(m.lane) && m.lane >= 0 && m.lane < 12) meta.lane = m.lane;
   return { role, content: m.content.slice(0, MAX_CONTENT), meta };
 }
 // The thread's own extras: the handoff (so "talk to a person" resumes anywhere) and attachments.
@@ -74,6 +77,8 @@ function cleanMeta(meta) {
   const out = {};
   if (meta.handoff && typeof meta.handoff === "object") out.handoff = { id: String(meta.handoff.id || "").slice(0, 64), status: String(meta.handoff.status || "").slice(0, 20), since: Number(meta.handoff.since) || 0 };
   if (Array.isArray(meta.attachments) && meta.attachments.length) out.attachments = meta.attachments.slice(0, 3).map((a) => ({ name: String(a?.name || "").slice(0, 200), chars: Number(a?.chars) || 0, text: String(a?.text || "").slice(0, 20000) }));
+  // /chat: the comparison's columns — the model in each, and whether it was stopped (at which row).
+  if (Array.isArray(meta.lanes) && meta.lanes.length) out.lanes = meta.lanes.slice(0, 12).map((l) => ({ model: String(l?.model || "").slice(0, 120), stoppedAt: Number.isInteger(l?.stoppedAt) ? l.stoppedAt : null, from: Number(l?.from) || 0 }));
   const s = JSON.stringify(out);
   return s.length > MAX_META || s === "{}" ? null : s;
 }

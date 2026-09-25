@@ -939,6 +939,8 @@ $('lockform').addEventListener('submit', async (e) => {
       const key = ($('lkey').value || '').trim(); const guide = (state.cfg?.projects || []).find((p) => p.tour) || (state.projects || []).find((p) => p.tour) || (SIGNUP.keys ? { id: lock.project } : null);
       if (key && guide) { try { const kr = await fetch('/api/tour', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(guide.id) }, body: JSON.stringify({ bot: guide.id, code: key }) }); const kd = await kr.json(); if (kd.redeemed?.ok) { TOUR.deploy = kd.deploy; TOUR.links = kd.links || TOUR.links; setTimeout(() => tourToast('Unlocked 🔑', 'Your key is in: the code, the walkthrough and Build one here are open.'), 800); } else setTimeout(() => tourToast('That key didn\'t take', ((kd.redeemed && kd.redeemed.reason) || 'It isn\'t active.') + ' You\'re in anyway — the tour asks for it again at See the code.', 9000), 800); } catch {} $('lkey').value = ''; }
     }
+    // Sent here to sign in by another page (/chat): go back there now that this browser is someone.
+    { const back = new URLSearchParams(location.search).get('back'); if (back && /^\/[a-z][\w\-\/]*$/i.test(back)) { location.href = back; return; } }
     $('lock').classList.remove('show'); boot(lock.project); setTimeout(maybeIntro, 900);
   } catch { $('lockmsg').textContent = 'Could not reach the server. Try again.'; }
   finally { go.disabled = false; go.textContent = 'Continue'; }
@@ -1200,6 +1202,12 @@ function renderProjects() {
     }
     $('projects').appendChild(el);
   });
+  // /chat: the Assistant on any model, and several side by side. A page of its own, like Plate.
+  if (state.projects.some((p) => p.id === 'general')) {
+    const a = document.createElement('a'); a.className = 'item'; a.href = '/chat/';
+    a.innerHTML = '<span>💬 Chat &amp; compare AIs <span class="pill" style="vertical-align:1px">app</span></span>';
+    $('projects').appendChild(a);
+  }
 }
 
 // The chat list: searchable (title and every turn), each row renamable (✎) and deletable (✕).

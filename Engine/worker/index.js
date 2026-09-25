@@ -28,6 +28,7 @@ import { listLeads, getLead, summariseLead, sendLead, maybeAutoLead, leadsConfig
 import { listGaps, getGap, setGapState, draftGap } from "./gaps.js";
 import { normaliseBooking, bookingLive, bookingStep, bookingView } from "./booking.js";
 import { handleTrack } from "./track.js";
+import { listTextModels, isPickable, CHAT_BOT } from "./models.js";
 import { isHandoffId, createHandoff, readHandoff, addHandoffMessage, closeHandoff, listHandoffs, getHandoff, notifyHumanRequested, PERSON_LIMITS } from "./person.js";
 import { gate as accessGate, effectiveAccess, accessSettings, accessToken, safeEqual, tokenFor, keyFor, accessView, cleanMode, cleanKeyName, cleanEmail, ACCESS_MODES, MODE_LINES } from "./access.js";
 
@@ -473,6 +474,16 @@ export default {
 
     // Every visitor route below finds its bot, then asks the gate. The handlers do
     // that themselves (the bot id is in the body / the form), with `guard`.
+    // /chat and every chat's own address (/chat/<id>) are the one page (Engine/public/chat/index.html).
+    if (url.pathname === "/chat" || url.pathname.startsWith("/chat/")) {
+      if (url.pathname === "/chat") return Response.redirect(url.origin + "/chat/", 302);
+      return env.ASSETS.fetch(new Request(`${url.origin}/chat/`, { headers: request.headers }));
+    }
+    // The text models /chat can pick from: Cloudflare's live catalogue, with our price snapshot.
+    if (url.pathname === "/api/models" && request.method === "GET") {
+      if (!(await allowed(env, request))) return json({ error: "rate-limited" }, 429);
+      return json({ models: await listTextModels(env), default: (await resolveProject(env, CHAT_BOT)).model || CONFIG.model, bot: CHAT_BOT });
+    }
     if (url.pathname === "/api/chat") {
       if (request.method !== "POST") return json({ error: "POST only" }, 405);
       return handleChat(request, env, ctx, { isAdmin, guard, visitorOf });
@@ -681,7 +692,11 @@ async function handleChat(request, env, ctx, { isAdmin = false, guard, visitorOf
   // SAME budget just reproduces the same failure — which is exactly what happened on the
   // first empty-reply turns: no retry ever succeeded. Give it real headroom instead.
   // This bot's own model if it names one, otherwise the deployment's.
-  const botModel = project.model || "";
+  // /chat lets the person pick the model (and compare several) — only on the open Assistant, and only a
+  // model on Cloudflare's own text-generation list (Engine/worker/models.js). A picked model is never routed
+  // to the small model: a comparison has to be the model they chose, every turn.
+  const picked = project.id === CHAT_BOT && (CONFIG.provider || "workers-ai") === "workers-ai" && body.model && await isPickable(env, body.model) ? String(body.model) : "";
+  const botModel = picked || project.model || "";
   const retry = () => complete({ env, config: CONFIG, system: prompt.text, messages: history, stream: false, model: botModel, maxTokens: Math.max(Number(CONFIG.maxTokens) || 900, 4000) * 2 });
 
   // --- LAYER 3c: the router. "hi" / "thanks" / "ok" go to the small model with
@@ -690,7 +705,7 @@ async function handleChat(request, env, ctx, { isAdmin = false, guard, visitorOf
   const route = routing.smallTurns && routing.smallModel
     ? classifyTurn(last.content, { project, attachments: attachments.length })
     : { kind: "real", reason: "routing off" };
-  let small = route.kind === "chit-chat";
+  let small = route.kind === "chit-chat" && !picked;
   if (small) console.log(JSON.stringify({ event: "route", project: project.name, kind: route.kind, reason: route.reason, model: routing.smallModel }));
 
   // --- LAYER 3b: call the model through the gateway --------------------------
