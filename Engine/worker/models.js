@@ -21,6 +21,9 @@ let CACHE = { at: 0, list: null };
 // Not chat models, or not useful to talk to: guards, embedders, rerankers, base models.
 const SKIP = /lora|guard|embed|rerank|bge-|-base\b|summari[sz]|translat|whisper|melotts|aura|flux|stable-diffusion|detr|resnet|m2m100|distilbert|bart-large/i;
 // Reasoning models spend part of their budget thinking before they answer.
+// Models that take pictures with the words (Workers AI multimodal chat models).
+const SEES = /llama-4-scout|gemma-4|gemma-3-|vision|mistral-small-3\.1|kimi-k2\.6/i;
+export const seesImages = (id) => SEES.test(String(id || ""));
 const THINKS = /gpt-oss|deepseek-r1|qwq|magistral|qwen3|deepseek-v4|kimi/i;
 
 const nameOf = (id) => id.split("/").pop().replace(/-instruct|-it\b|-chat|-fp8|-fast|-awq|-int8/gi, "").replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).trim();
@@ -40,6 +43,7 @@ function shape(id, m = {}) {
     context: Number(prop("context_window")) || null,
     beta: String(prop("beta")) === "true",
     thinks: THINKS.test(id),
+    sees: SEES.test(id),
   };
 }
 

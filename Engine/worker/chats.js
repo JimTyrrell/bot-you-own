@@ -69,6 +69,9 @@ function cleanMessage(m) {
   // /chat: which model wrote an answer, and which column (lane) of a comparison it sits in.
   if (typeof m.model === "string" && /^@cf\/[\w.\-]+\/[\w.\-]+$/.test(m.model)) meta.model = m.model.slice(0, 120);
   if (Number.isInteger(m.lane) && m.lane >= 0 && m.lane < 12) meta.lane = m.lane;
+  // /chat: small thumbnails of the pictures sent with a message (the full pictures are never kept).
+  if (Array.isArray(m.thumbs) && m.thumbs.length) { const t = m.thumbs.filter((u) => typeof u === "string" && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(u) && u.length <= 12000).slice(0, 4); if (t.length) meta.thumbs = t; }
+  if (m.blind) meta.blind = true;
   return { role, content: m.content.slice(0, MAX_CONTENT), meta };
 }
 // The thread's own extras: the handoff (so "talk to a person" resumes anywhere) and attachments.

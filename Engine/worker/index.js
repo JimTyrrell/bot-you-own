@@ -28,7 +28,7 @@ import { listLeads, getLead, summariseLead, sendLead, maybeAutoLead, leadsConfig
 import { listGaps, getGap, setGapState, draftGap } from "./gaps.js";
 import { normaliseBooking, bookingLive, bookingStep, bookingView } from "./booking.js";
 import { handleTrack } from "./track.js";
-import { listTextModels, isPickable, CHAT_BOT } from "./models.js";
+import { listTextModels, isPickable, seesImages, CHAT_BOT } from "./models.js";
 import { isHandoffId, createHandoff, readHandoff, addHandoffMessage, closeHandoff, listHandoffs, getHandoff, notifyHumanRequested, PERSON_LIMITS } from "./person.js";
 import { gate as accessGate, effectiveAccess, accessSettings, accessToken, safeEqual, tokenFor, keyFor, accessView, cleanMode, cleanKeyName, cleanEmail, ACCESS_MODES, MODE_LINES } from "./access.js";
 
@@ -697,7 +697,15 @@ async function handleChat(request, env, ctx, { isAdmin = false, guard, visitorOf
   // to the small model: a comparison has to be the model they chose, every turn.
   const picked = project.id === CHAT_BOT && (CONFIG.provider || "workers-ai") === "workers-ai" && body.model && await isPickable(env, body.model) ? String(body.model) : "";
   const botModel = picked || project.model || "";
-  const retry = () => complete({ env, config: CONFIG, system: prompt.text, messages: history, stream: false, model: botModel, maxTokens: Math.max(Number(CONFIG.maxTokens) || 900, 4000) * 2 });
+  // /chat can send pictures with the latest message (body.images: small data: URLs the page made). They go to
+  // the model only if it can see (models.js → sees); the words go either way. Never logged, never stored here.
+  const pics = picked && seesImages(picked) && Array.isArray(body.images)
+    ? body.images.filter((u) => typeof u === "string" && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(u) && u.length <= 2_000_000).slice(0, 4) : [];
+  const modelHistory = pics.length
+    ? history.map((m, k) => k === history.length - 1 ? { role: m.role, content: [{ type: "text", text: m.content }, ...pics.map((url) => ({ type: "image_url", image_url: { url } }))] } : m)
+    : history;
+  if (pics.length) flags.push("images:" + pics.length);
+  const retry = () => complete({ env, config: CONFIG, system: prompt.text, messages: modelHistory, stream: false, model: botModel, maxTokens: Math.max(Number(CONFIG.maxTokens) || 900, 4000) * 2 });
 
   // --- LAYER 3c: the router. "hi" / "thanks" / "ok" go to the small model with
   //     the same prompt; everything else to the main model. Engine/worker/router.js.
@@ -716,14 +724,14 @@ async function handleChat(request, env, ctx, { isAdmin = false, guard, visitorOf
   try {
     if (small) {
       try {
-        result = await complete({ env, config: CONFIG, system: prompt.text, messages: history, stream, model: routing.smallModel, maxTokens: routing.smallMaxTokens || 200, meta });
+        result = await complete({ env, config: CONFIG, system: prompt.text, messages: modelHistory, stream, model: routing.smallModel, maxTokens: routing.smallMaxTokens || 200, meta });
       } catch (err) {
         // The small model is a saving, not a dependency: if it fails, the main model answers.
         console.error("small model failed, using the main model", err?.message || err);
         small = false;
       }
     }
-    if (!small) result = await complete({ env, config: CONFIG, system: prompt.text, messages: history, stream, model: botModel, meta });
+    if (!small) result = await complete({ env, config: CONFIG, system: prompt.text, messages: modelHistory, stream, model: botModel, meta });
   } catch (err) {
     console.error("model call failed", err?.code || "", err?.message || err);
     const spent = isAllowanceError(err);

@@ -57,12 +57,16 @@
   .prompt .bub { background:var(--panel); border-radius:18px; padding:10px 14px; max-width:min(640px, 85%); white-space:pre-wrap; overflow-wrap:anywhere; }
   .answers { display:flex; gap:10px; padding:6px 16px; align-items:stretch; }
   /* one AI: an ordinary chat, centred */
-  .rows.one .answers { justify-content:center; } .rows.one .prompt { justify-content:center; } .rows.one .prompt .bub { margin-left:auto; } .rows.one .prompt > .bub { max-width:min(640px, 85%); }
-  .rows.one .promptin { width:min(760px, 100%); display:flex; justify-content:flex-end; }
+  /* One AI: the column is centred, and the model name, your messages and the ＋ line up with it. */
+  .rows.one .answers { padding-left:var(--lead, 16px); }
+  .rows.one .prompt { padding-left:var(--lead, 16px); justify-content:flex-start; }
+  .rows.one .promptin { width:var(--cw); }
+  .lanes.one .strip { padding-left:var(--lead, 16px); }
   .cell { flex:none; scroll-snap-align:start; scroll-margin-left:16px; border-radius:14px; padding:10px 12px; min-height:48px; overflow-wrap:anywhere; position:relative; }
   .multi .cell { border:1px solid var(--edge); }
-  .cell .who { font-size:11.5px; color:var(--muted); margin-bottom:4px; display:none; }
-  .multi .cell .who { display:block; }
+  .cell .who { font-size:11.5px; color:var(--muted); margin-bottom:4px; font-weight:600; letter-spacing:.01em; }
+  .cell.plus { width:52px; flex:none; display:flex; align-items:flex-start; justify-content:center; padding:0; border:0; min-height:0; }
+  .cell.plus button, .lanes .plus { width:44px; height:44px; padding:0; border-radius:50%; border:1px dashed var(--accent); background:transparent; color:var(--accent); font-size:22px; line-height:1; flex:none; }
   .cell.empty { border-style:dashed; color:var(--muted); font-size:13px; display:flex; align-items:center; justify-content:center; }
   .cell.err { color:var(--danger); }
   .cell .foot { display:flex; gap:8px; align-items:center; margin-top:6px; font-size:12px; color:var(--muted); }
@@ -86,13 +90,26 @@
   .say textarea { flex:1; border:0; background:transparent; resize:none; padding:8px 0; max-height:40vh; outline:none; }
   .say button { width:40px; height:40px; padding:0; border-radius:50%; flex:none; }
   .say .addai { width:auto; height:40px; padding:0 12px; border-radius:999px; border:1px dashed var(--accent); background:transparent; color:var(--accent); font-weight:600; font-size:14px; margin-left:-8px; }
+  .say .pic { background:transparent; font-size:18px; }
+  .tray { max-width:760px; margin:0 auto 6px; display:flex; gap:8px; flex-wrap:wrap; }
+  .tray[hidden] { display:none; }
+  .tray .t { position:relative; width:56px; height:56px; border-radius:10px; overflow:hidden; background:var(--panel); }
+  .tray .t img { width:100%; height:100%; object-fit:cover; display:block; }
+  .tray .t button { position:absolute; top:2px; right:2px; width:20px; height:20px; padding:0; border-radius:50%; background:rgba(0,0,0,.6); color:#fff; font-size:11px; line-height:20px; }
+  .bub .pics { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; margin-bottom:6px; }
+  .bub .pics img { width:96px; height:96px; object-fit:cover; border-radius:10px; cursor:zoom-in; display:block; }
+  .blind { font-size:12px; color:var(--muted); background:var(--panel); border-radius:8px; padding:3px 8px; display:inline-block; margin-bottom:6px; }
+  body.dropping .say { outline:2px dashed var(--accent); outline-offset:4px; }
   .say .go { background:var(--accent); color:#fff; font-size:18px; }
   .say .mic { background:transparent; font-size:18px; } .say .mic.rec { background:var(--danger); color:#fff; }
   .hint { max-width:760px; margin:4px auto 0; font-size:12px; color:var(--muted); text-align:center; min-height:1em; }
 
   .sheet { position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:20; display:flex; align-items:flex-end; justify-content:center; }
   .sheet[hidden] { display:none; }
-  .sheet .body { background:var(--bg); width:100%; max-width:560px; max-height:85dvh; overflow:auto; border-radius:20px 20px 0 0; padding:16px 16px calc(18px + env(safe-area-inset-bottom)); }
+  .sheet .body { background:var(--bg); width:100%; max-width:560px; max-height:85dvh; overflow:hidden; display:flex; flex-direction:column; border-radius:20px 20px 0 0; padding:16px 16px calc(18px + env(safe-area-inset-bottom)); }
+  /* The title, the note and the search stay put; only the list scrolls. */
+  .sheet .body > * { flex:none; }
+  .sheet .body > .mlist, .sheet .body > .tlist { flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; -webkit-overflow-scrolling:touch; margin:0 -6px; padding:0 6px; }
   @media (min-width:700px) { .sheet { align-items:center; } .sheet .body { border-radius:20px; } }
   .sheet h2 { margin:0 0 10px; font-size:18px; display:flex; justify-content:space-between; align-items:center; }
   .sheet input[type=search] { width:100%; padding:12px; border:1px solid var(--edge); border-radius:12px; background:var(--panel); margin-bottom:10px; }
@@ -129,8 +146,10 @@
 </div>
 
 <div class="dock" id="dock" hidden>
+  <div class="tray" id="tray" hidden></div>
   <form class="say" id="say" autocomplete="off">
-    <button type="button" class="addai" id="addlane" title="Add another AI — it answers your latest message, and everything after">＋ AI</button>
+    <button type="button" class="pic" id="picbtn" title="Add a picture (or paste / drop one)">🖼</button>
+    <input type="file" id="picfile" accept="image/*" multiple hidden>
     <textarea id="input" rows="1" placeholder="Message the Assistant…" maxlength="4000" enterkeyhint="send"></textarea>
     <button type="button" class="mic" id="mic" title="Talk instead of typing — press, speak, press again" hidden>🎤</button>
     <button type="submit" class="go" id="go" title="Send">↑</button>
@@ -195,30 +214,33 @@ function render() {
   if (!T) return;
   const cw = colWidth(), multi = T.lanes.length > 1;
   document.documentElement.style.setProperty('--cw', cw + 'px');
+  document.documentElement.style.setProperty('--lead', (multi ? 16 : Math.max(16, Math.round(($('grid').clientWidth - cw) / 2))) + 'px');
+  $('lanes').classList.toggle('one', !multi);
   $('rows').classList.toggle('multi', multi); $('rows').classList.toggle('one', !multi);
   $('lanes').hidden = false;
   // headers
   const lastRow = T.rows.length;
   $('strip').innerHTML = T.lanes.map((l, i) => {
     const m = modelOf(l.model), stopped = l.stoppedAt != null, answered = T.rows.some((r) => r.type === 'answers' && r.cells[i]?.text);
-    return '<div class="lane' + (stopped ? ' stopped' : '') + '" style="width:' + cw + 'px"><button class="swap" data-swap="' + i + '"' + (answered || stopped ? ' disabled style="opacity:1;cursor:default"' : ' title="Pick a different AI for this column"') + '><b>' + esc(m.name) + (m.thinks ? '<span class="tag">thinks</span>' : '') + '</b><small>' + esc(m.maker) + (stopped ? ' · stopped' : '') + '</small></button>'
+    return '<div class="lane' + (stopped ? ' stopped' : '') + '" style="width:' + cw + 'px"><button class="swap" data-swap="' + i + '"' + (answered || stopped ? ' disabled style="opacity:1;cursor:default"' : ' title="Pick a different AI for this column"') + '><b>' + esc(m.name) + (m.thinks ? '<span class="tag">thinks</span>' : '') + '</b><small>' + esc(m.maker) + (m.sees ? ' · sees images' : '') + (stopped ? ' · stopped' : '') + '</small></button>'
       + (T.lanes.length > 1 && !stopped ? '<button class="x" data-stop="' + i + '" title="Stop this AI — it gets nothing new; its column stays">✕</button>' : '') + '</div>';
   }).join('');
-  $('addlane').disabled = T.lanes.filter((l) => l.stoppedAt == null).length >= MAX_LANES;
+  const canAdd = T.lanes.filter((l) => l.stoppedAt == null).length < MAX_LANES;
+  if (canAdd) $('strip').insertAdjacentHTML('beforeend', '<button class="plus" data-add="1" title="Add another AI — it answers your latest message in a new column">＋</button>');
   // rows
   const html = [];
-  if (!T.rows.length) html.push('<div class="prompt" style="width:' + $('grid').clientWidth + 'px;justify-content:center"><div class="hello"><h1>' + esc(CFG.greeting || 'What can I help with?') + '</h1><p class="muted small">' + (multi ? 'Everything you send goes to every AI above. ✕ stops one; its column stays so the answers keep lining up.' : 'Tap ＋ AI to ask two or more AIs the same thing, side by side — then ✕ the ones you’re done with.') + '</p><div class="starters">' + (CFG.starters || []).map((s) => '<button data-start="' + esc(s) + '">' + esc(s) + '</button>').join('') + '</div></div></div>');
+  if (!T.rows.length) html.push('<div class="prompt" style="width:' + $('grid').clientWidth + 'px;justify-content:center"><div class="hello"><h1>' + esc(CFG.greeting || 'What can I help with?') + '</h1><p class="muted small">' + (multi ? 'Everything you send goes to every AI above. ✕ stops one; its column stays so the answers keep lining up.' : 'Ask anything. Then tap ＋ beside the answer to ask another AI the same thing — its answer lands in a column next to it.') + '</p><div class="starters">' + (CFG.starters || []).map((s) => '<button data-start="' + esc(s) + '">' + esc(s) + '</button>').join('') + '</div></div></div>');
   T.rows.forEach((r, ri) => {
-    if (r.type === 'prompt') { html.push('<div class="prompt" style="width:' + $('grid').clientWidth + 'px"><div class="promptin"><div class="bub">' + esc(r.text) + '</div></div></div>'); return; }
+    if (r.type === 'prompt') { html.push('<div class="prompt" style="width:' + $('grid').clientWidth + 'px"><div class="promptin"><div class="bub">' + ((r.images || r.thumbs || []).length ? '<div class="pics">' + (r.images || r.thumbs).map((u, k) => '<img src="' + u + '" data-big="' + ri + ':' + k + '" alt="">').join('') + '</div>' : '') + esc(r.text) + '</div></div></div>'); return; }
     html.push('<div class="answers">' + T.lanes.map((l, li) => {
       const c = r.cells[li], m = modelOf(l.model);
       if (!c) return '<div class="cell empty" style="width:' + cw + 'px">' + (ri < (l.from || 0) ? 'joined later' : l.stoppedAt != null && ri >= l.stoppedAt ? 'stopped' : '—') + '</div>';
       const who = '<div class="who">' + esc(m.name) + '</div>';
       if (c.state === 'wait') return '<div class="cell" style="width:' + cw + 'px">' + who + '<span class="dots"></span></div>';
       if (c.state === 'err') return '<div class="cell err" style="width:' + cw + 'px">' + who + esc(c.text) + '<div class="foot"><button data-retry="' + ri + ':' + li + '">Try again</button></div></div>';
-      return '<div class="cell" style="width:' + cw + 'px">' + who + '<div class="md">' + md(c.text) + (c.state === 'stream' ? ' <span class="dots"></span>' : '') + '</div>'
+      return '<div class="cell" style="width:' + cw + 'px">' + who + (c.blind ? '<span class="blind" title="This model only reads words, so it answered without the picture">🙈 can’t see images</span>' : '') + '<div class="md">' + md(c.text) + (c.state === 'stream' ? ' <span class="dots"></span>' : '') + '</div>'
         + (c.state === 'done' ? '<div class="foot">' + (c.ms ? '<span>' + (c.ms / 1000).toFixed(1) + ' s</span>' : '') + '<span>' + c.text.split(/\s+/).filter(Boolean).length + ' words</span><button data-copy="' + ri + ':' + li + '">Copy</button>' + (ri === lastRow - 1 && alive(l, ri + 1) ? '<button data-retry="' + ri + ':' + li + '">↻</button>' : '') + '</div>' : '') + '</div>';
-    }).join('') + '</div>');
+    }).join('') + (ri === lastRow - 1 && canAdd ? '<div class="cell plus"><button data-add="1" title="Ask another AI the same thing — its answer goes in a new column">＋</button></div>' : '') + '</div>');
   });
   $('rows').innerHTML = html.join('');
   syncStrip();
@@ -231,6 +253,8 @@ addEventListener('resize', () => render());
 function wire() {
   document.querySelectorAll('[data-stop]').forEach((b) => b.onclick = () => stopLane(+b.dataset.stop));
   document.querySelectorAll('[data-swap]').forEach((b) => b.onclick = () => { if (!b.disabled) pickModel((id) => { T.lanes[+b.dataset.swap].model = id; save(); render(); }); });
+  document.querySelectorAll('[data-add]').forEach((b) => b.onclick = () => pickModel(addLane));
+  document.querySelectorAll('[data-big]').forEach((im) => im.onclick = () => { const [ri, k] = im.dataset.big.split(':').map(Number); const r = T.rows[ri]; const u = (r.images || r.thumbs)[k]; sheet('<h2>Picture <button class="ghost" onclick="closeSheet()">✕</button></h2><img src="' + u + '" style="max-width:100%;border-radius:12px;display:block;margin:0 auto">'); });
   document.querySelectorAll('[data-start]').forEach((b) => b.onclick = () => send(b.dataset.start));
   document.querySelectorAll('[data-retry]').forEach((b) => b.onclick = () => { const [ri, li] = b.dataset.retry.split(':').map(Number); ask(ri, li); });
   document.querySelectorAll('[data-copy]').forEach((b) => b.onclick = async () => { const [ri, li] = b.dataset.copy.split(':').map(Number); try { await navigator.clipboard.writeText(T.rows[ri].cells[li].text); toast('Copied'); } catch { toast('Couldn’t copy'); } });
@@ -243,7 +267,7 @@ function historyFor(li, uptoRow) {
   const msgs = [];
   for (let i = 0; i <= uptoRow && i < T.rows.length; i++) {
     const r = T.rows[i];
-    if (r.type === 'prompt') { msgs.push({ role: 'user', content: r.text }); continue; }
+    if (r.type === 'prompt') { msgs.push({ role: 'user', content: r.text || '(a picture)' }); continue; }
     if (i >= uptoRow) break;
     const own = r.cells[li]?.state === 'done' ? r.cells[li] : null;
     const other = own || Object.values(r.cells).find((c) => c && c.state === 'done' && c.text);
@@ -261,10 +285,14 @@ async function ask(ri, li) {
   const lane = T.lanes[li], row = T.rows[ri];
   row.cells[li] = { text: '', state: 'wait' }; render();
   const messages = historyFor(li, ri);
+  // The pictures sent with this row's message: to a model that can see; one that can't answers the words.
+  const pr = T.rows[ri - 1], imgs = pr && pr.type === 'prompt' ? (pr.images || []) : [];
+  const hadPics = Boolean(pr && pr.type === 'prompt' && (pr.images || pr.thumbs || []).length);
+  const sees = Boolean(modelOf(lane.model).sees && imgs.length);
   busy.add(key); const t0 = Date.now(), thread = T;
   let text = '', ok = false, reason = '';
   try {
-    const r = await fetch('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json', ...H() }, body: JSON.stringify({ project: BOT, model: lane.model, messages, stream: true }) });
+    const r = await fetch('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json', ...H() }, body: JSON.stringify({ project: BOT, model: lane.model, messages, stream: true, ...(sees ? { images: imgs } : {}) }) });
     if (r.status === 401 || r.status === 403) { const d = await r.json().catch(() => ({})); reason = d.reply || 'Sign in again to keep chatting.'; if (r.status === 401) showSignin(); }
     else if (r.status === 429) { reason = 'Too many messages at once — wait a moment, then try again.'; }
     else if (!r.ok || !r.body) { const d = await r.json().catch(() => ({})); reason = d.reply || d.error || ('The server said ' + r.status + '.'); }
@@ -289,15 +317,18 @@ async function ask(ri, li) {
     }
   } catch { reason = 'Couldn’t reach the server. Try again.'; }
   busy.delete(key);
-  row.cells[li] = ok && text.trim() ? { text: text.trim(), state: 'done', ms: Date.now() - t0 } : { text: reason || 'Empty answer. Try again.', state: 'err' };
+  row.cells[li] = ok && text.trim() ? { text: text.trim(), state: 'done', ms: Date.now() - t0, blind: hadPics && !sees } : { text: reason || 'Empty answer. Try again.', state: 'err' };
   if (thread === T) render();
   if (![...busy].length) save(thread);
 }
 
 function send(text) {
-  text = String(text || '').trim(); if (!text || !T) return;
+  text = String(text || '').trim(); if ((!text && !PICS.length) || !T) return;
   if ([...busy].length) return toast('Still answering — one moment.');
-  T.rows.push({ type: 'prompt', text });
+  const pics = PICS.splice(0); drawTray();
+  if (!text && pics.length) text = 'What’s in ' + (pics.length > 1 ? 'these pictures' : 'this picture') + '?';
+  if (pics.length && !T.lanes.some((l) => l.stoppedAt == null && modelOf(l.model).sees)) toast('None of these AIs can see pictures — they’ll answer the words. Tap ＋ to add one that can.', 4500);
+  T.rows.push({ type: 'prompt', text, images: pics.map((p) => p.full), thumbs: pics.map((p) => p.thumb) });
   const ri = T.rows.push({ type: 'answers', cells: {} }) - 1;
   if (!T.title) T.title = text.slice(0, 60);
   render(); scrollDown();
@@ -326,7 +357,7 @@ function pickModel(then) {
   const draw = (q) => {
     const words = q.toLowerCase().split(/\s+/).filter(Boolean);
     const list = MODELS.filter((m) => words.every((w) => (m.name + ' ' + m.maker + ' ' + m.id + ' ' + m.description).toLowerCase().includes(w)));
-    $('mlist').innerHTML = list.map((m) => '<button data-m="' + esc(m.id) + '"><span><b>' + esc(m.name) + (m.id === DEFAULT_MODEL ? '<span class="tag">default</span>' : '') + (m.thinks ? '<span class="tag">thinks first</span>' : '') + (m.beta ? '<span class="tag">beta</span>' : '') + '</b><small>' + esc(m.maker) + (m.description ? ' · ' + esc(m.description.slice(0, 120)) : '') + '</small></span><span class="price">' + esc(priceLine(m)) + '<br><small>per million tokens</small></span></button>').join('') || '<p class="muted small">No model matches that.</p>';
+    $('mlist').innerHTML = list.map((m) => '<button data-m="' + esc(m.id) + '"><span><b>' + esc(m.name) + (m.id === DEFAULT_MODEL ? '<span class="tag">default</span>' : '') + (m.sees ? '<span class="tag">sees images</span>' : '') + (m.thinks ? '<span class="tag">thinks first</span>' : '') + (m.beta ? '<span class="tag">beta</span>' : '') + '</b><small>' + esc(m.maker) + (m.description ? ' · ' + esc(m.description.slice(0, 120)) : '') + '</small></span><span class="price">' + esc(priceLine(m)) + '<br><small>per million tokens</small></span></button>').join('') || '<p class="muted small">No model matches that.</p>';
     $('mlist').querySelectorAll('[data-m]').forEach((b) => b.onclick = () => { closeSheet(); then(b.dataset.m); });
   };
   sheet('<h2>Pick an AI <button class="ghost" onclick="closeSheet()">✕</button></h2><p class="muted small" style="margin-top:0">Every text model Cloudflare runs on this account. Prices are what Cloudflare charges; a “thinks first” model reasons before it answers — slower, sometimes better.</p><input type="search" id="mq" placeholder="Search — llama, qwen, code, fast…"><div class="mlist" id="mlist"></div>');
@@ -344,8 +375,8 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('shee
 function toMessages(t) {
   const out = [];
   t.rows.forEach((r) => {
-    if (r.type === 'prompt') out.push({ role: 'user', content: r.text });
-    else Object.entries(r.cells).sort((a, b) => a[0] - b[0]).forEach(([li, c]) => { if (c && c.state === 'done') out.push({ role: 'assistant', content: c.text, model: t.lanes[li]?.model, lane: +li }); });
+    if (r.type === 'prompt') out.push({ role: 'user', content: r.text, ...(r.thumbs && r.thumbs.length ? { thumbs: r.thumbs } : {}) });
+    else Object.entries(r.cells).sort((a, b) => a[0] - b[0]).forEach(([li, c]) => { if (c && c.state === 'done') out.push({ role: 'assistant', content: c.text, model: t.lanes[li]?.model, lane: +li, ...(c.blind ? { blind: true } : {}) }); });
   });
   return out.slice(-200);
 }
@@ -353,13 +384,13 @@ function fromThread(th) {
   const lanes = Array.isArray(th.lanes) && th.lanes.length ? th.lanes.map((l) => ({ model: l.model || DEFAULT_MODEL, stoppedAt: Number.isInteger(l.stoppedAt) ? l.stoppedAt : null, from: l.from || 0 })) : [{ model: DEFAULT_MODEL, stoppedAt: null, from: 0 }];
   const rows = [];
   for (const m of th.messages || []) {
-    if (m.role === 'user') { rows.push({ type: 'prompt', text: m.content }); rows.push({ type: 'answers', cells: {} }); continue; }
+    if (m.role === 'user') { rows.push({ type: 'prompt', text: m.content, thumbs: Array.isArray(m.thumbs) ? m.thumbs : [] }); rows.push({ type: 'answers', cells: {} }); continue; }
     if (m.role !== 'assistant') continue;
     if (!rows.length) rows.push({ type: 'answers', cells: {} });
     let li = Number.isInteger(m.lane) ? m.lane : lanes.findIndex((l) => l.model === m.model);
     if (li < 0) li = 0;
     while (li >= lanes.length) lanes.push({ model: m.model || DEFAULT_MODEL, stoppedAt: null, from: 0 });
-    rows[rows.length - 1].cells[li] = { text: m.content, state: 'done' };
+    rows[rows.length - 1].cells[li] = { text: m.content, state: 'done', blind: Boolean(m.blind) };
   }
   return { id: th.id, title: th.title || '', lanes, rows };
 }
@@ -394,14 +425,43 @@ function newChat(lanes) {
 }
 function setUrl() { if (T) history.replaceState(null, '', '/chat/' + (T.rows.length ? T.id : '')); }
 $('histbtn').onclick = openHistory;
-$('addlane').onclick = () => { if (T) pickModel(addLane); };
+
 $('newbtn').onclick = () => newChat();
 
 // ---------- the composer ----------
 const input = $('input');
 input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, innerHeight * 0.4) + 'px'; });
 input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && matchMedia('(hover: hover)').matches) { e.preventDefault(); $('say').requestSubmit(); } });
-$('say').onsubmit = (e) => { e.preventDefault(); const v = input.value; if (!v.trim()) return; input.value = ''; input.dispatchEvent(new Event('input')); send(v); setUrl(); };
+$('say').onsubmit = (e) => { e.preventDefault(); const v = input.value; if (!v.trim() && !PICS.length) return; input.value = ''; input.dispatchEvent(new Event('input')); send(v); setUrl(); };
+
+// ---------- pictures: shrunk here (1024 px for the model, 160 px kept with the chat) ----------
+let PICS = [];
+async function shrinkTo(file, max, q) {
+  let src = await createImageBitmap(file).catch(() => null);
+  if (!src) src = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(file); });
+  const k = Math.min(1, max / Math.max(src.width, src.height));
+  const c = document.createElement('canvas'); c.width = Math.round(src.width * k); c.height = Math.round(src.height * k);
+  c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', q);
+}
+async function addPics(files) {
+  for (const f of [...files].filter((f) => /^image\//.test(f.type) || /\.(heic|heif)$/i.test(f.name))) {
+    if (PICS.length >= 4) { toast('Four pictures at most per message.'); break; }
+    try { PICS.push({ full: await shrinkTo(f, 1024, 0.82), thumb: await shrinkTo(f, 160, 0.6) }); } catch { toast('That picture couldn’t be opened.'); }
+  }
+  drawTray();
+}
+function drawTray() {
+  $('tray').hidden = !PICS.length;
+  $('tray').innerHTML = PICS.map((p, i) => '<div class="t"><img src="' + p.thumb + '" alt=""><button type="button" data-rmpic="' + i + '" title="Remove">✕</button></div>').join('');
+  $('tray').querySelectorAll('[data-rmpic]').forEach((b) => b.onclick = () => { PICS.splice(+b.dataset.rmpic, 1); drawTray(); });
+}
+$('picbtn').onclick = () => $('picfile').click();
+$('picfile').onchange = () => { addPics($('picfile').files); $('picfile').value = ''; };
+document.addEventListener('paste', (e) => { const fs = [...(e.clipboardData?.files || [])]; if (fs.length) { e.preventDefault(); addPics(fs); } });
+document.addEventListener('dragover', (e) => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { e.preventDefault(); document.body.classList.add('dropping'); } });
+document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) document.body.classList.remove('dropping'); });
+document.addEventListener('drop', (e) => { if (e.dataTransfer?.files?.length) { e.preventDefault(); document.body.classList.remove('dropping'); addPics(e.dataTransfer.files); } });
 
 // Voice: record, send the clip to this Worker (/api/transcribe), the words land in the box to check and send.
 let rec = null;

@@ -578,6 +578,8 @@ document.addEventListener('DOMContentLoaded', function () {
   <aside id="side">
     <div class="brand"><span id="brand">The Bot You Own</span><button class="iconbtn" id="theme" title="Toggle theme">◐</button></div>
     <button class="newchat" id="newchat">＋ New chat</button>
+    <!-- /chat: the Assistant on any AI model, and several side by side. Its own page. -->
+    <a class="newchat" id="gochat" href="/chat/" style="display:block;text-decoration:none;margin-top:-4px" title="Chat with the Assistant on any AI model — and ask several AIs the same thing side by side">💬 Chat &amp; compare AIs</a>
     <button class="newchat" id="newbot" hidden>✎ New bot</button>
     <div class="section">Your bots</div>
     <div class="list" id="projects"></div>
@@ -1202,12 +1204,6 @@ function renderProjects() {
     }
     $('projects').appendChild(el);
   });
-  // /chat: the Assistant on any model, and several side by side. A page of its own, like Plate.
-  if (state.projects.some((p) => p.id === 'general')) {
-    const a = document.createElement('a'); a.className = 'item'; a.href = '/chat/';
-    a.innerHTML = '<span>💬 Chat &amp; compare AIs <span class="pill" style="vertical-align:1px">app</span></span>';
-    $('projects').appendChild(a);
-  }
 }
 
 // The chat list: searchable (title and every turn), each row renamable (✎) and deletable (✕).
