@@ -201,6 +201,18 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
     if (!row || (row.user_id !== me.id && !(await canView(env, me.id, row.user_id)))) return json({ error: "no such photo" }, 404);
     return servePhoto(env, row.user_id, pm[1], pm[2]);
   }
+  // The meal's picture (the thumbnail on its card), set from one of its own photos. The page makes the
+  // small JPEG itself (≤256 px); cleanThumb checks it. Owner only.
+  const tm = sub.match(/^meal\/([^/]+)\/thumb$/);
+  if (tm && request.method === "POST") {
+    const row = await env.DB.prepare(`SELECT user_id FROM track_meals WHERE id = ?`).bind(tm[1]).first();
+    if (!row || row.user_id !== me.id) return json({ error: "no such meal" }, 404);
+    let form; try { form = await request.formData(); } catch { return json({ error: "bad request" }, 400); }
+    const thumb = await cleanThumb(form.get("thumb"));
+    if (!thumb) return json({ error: "bad picture", reason: "That picture couldn't be used. Try another." }, 400);
+    await env.DB.prepare(`UPDATE track_meals SET thumb = ? WHERE id = ?`).bind(thumb, tm[1]).run();
+    return json({ ok: true, thumb });
+  }
   if (sub.startsWith("meal/")) {
     const id = sub.slice(5);
     const row = await env.DB.prepare(`SELECT id, user_id FROM track_meals WHERE id = ?`).bind(id).first();

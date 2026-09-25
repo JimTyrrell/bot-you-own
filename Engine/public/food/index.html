@@ -193,6 +193,16 @@
   .mphotos { display:flex; gap:8px; overflow-x:auto; margin:10px 0 4px; }
   .mph { flex:none; width:72px; height:72px; padding:0; border-radius:12px; overflow:hidden; background:var(--panel); cursor:zoom-in; display:flex; align-items:center; justify-content:center; }
   .mph img { width:100%; height:100%; object-fit:cover; display:block; } .mph i { width:16px; height:16px; border:3px solid var(--edge); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; }
+  /* the meal's picture (top corner of the editor): a photo from the strip dropped on it becomes the picture */
+  .edthumb { width:44px; height:44px; border-radius:10px; object-fit:cover; flex:none; background:var(--panel); border:2px solid transparent; display:flex; align-items:center; justify-content:center; font-size:11px; color:var(--muted); text-align:center; line-height:1.1; overflow:hidden; }
+  .edthumb img { width:100%; height:100%; object-fit:cover; display:block; }
+  .edthumb.target { border:2px dashed var(--accent); }
+  .edthumb.hot { border:2px solid var(--accent); transform:scale(1.15); transition:transform .12s; }
+  .dragghost { position:fixed; z-index:50; width:64px; height:64px; border-radius:12px; overflow:hidden; pointer-events:none; box-shadow:0 8px 24px rgba(0,0,0,.35); transform:translate(-50%,-60%) scale(1.05); }
+  .dragghost img { width:100%; height:100%; object-fit:cover; }
+  .mph.lifting { transform:scale(1.08); box-shadow:0 0 0 2px var(--accent); transition:transform .15s; }
+  .zcover { position:absolute; bottom:calc(40px + env(safe-area-inset-bottom)); left:50%; transform:translateX(-50%); z-index:3; background:rgba(0,0,0,.6); color:#fff; border:1px solid rgba(255,255,255,.35); border-radius:999px; padding:9px 16px; font-size:14px; }
+  .zcover[hidden] { display:none; }
   .zoom { position:fixed; inset:0; z-index:40; background:rgba(0,0,0,.92); display:flex; align-items:center; justify-content:center; animation:fadein .15s; }
   .zoom[hidden] { display:none; }
   .zbar { position:absolute; top:calc(10px + env(safe-area-inset-top)); left:14px; right:14px; display:flex; justify-content:space-between; align-items:center; color:#fff; font-size:14px; z-index:2; text-shadow:0 1px 3px #000; pointer-events:none; }
@@ -450,7 +460,7 @@
 <input type="file" id="pick" accept="image/*,.heic,.heif" multiple hidden>
 
 <!-- THE SHEET: one container, many contents -->
-<div class="zoom" id="zoom" hidden><div class="zbar"><span id="zcount"></span><button type="button" class="zx" id="zx" aria-label="Close">✕</button></div><div class="zstage" id="zstage"><img id="zimg" alt=""></div><button type="button" class="znav zprev" id="zprev" aria-label="Previous">‹</button><button type="button" class="znav znext" id="znext" aria-label="Next">›</button><p class="zhint" id="zhint"></p></div>
+<div class="zoom" id="zoom" hidden><div class="zbar"><span id="zcount"></span><button type="button" class="zx" id="zx" aria-label="Close">✕</button></div><div class="zstage" id="zstage"><img id="zimg" alt=""></div><button type="button" class="znav zprev" id="zprev" aria-label="Previous">‹</button><button type="button" class="znav znext" id="znext" aria-label="Next">›</button><p class="zhint" id="zhint"></p><button type="button" class="zcover" id="zcover" hidden>★ Use as the meal’s picture</button></div>
 <div class="sheet" id="sheet" hidden><div class="box" role="dialog" aria-modal="true"><div class="grip"></div><button type="button" class="sheetx" id="sheetx" title="Close" aria-label="Close">✕</button><div id="sheetbody"></div></div></div>
 <div id="toast" class="toast" hidden></div>
 
@@ -574,13 +584,76 @@ function wirePhotoStrip(meal) {
     const u = await photoUrl(meal, i); if (u) b.innerHTML = '<img src="' + u + '" alt="">';
   });
 }
+// ---------- the meal's picture: one of its photos, dragged onto the corner (or "Use as the meal's picture") ----------
+// Phone: press and hold a photo in the strip until it lifts, then drag it onto the picture in the corner.
+// Computer: drag it there. Either way the page makes a 256 px JPEG of that photo and saves it as the thumbnail.
+async function setCover(meal, i) {
+  const url = await photoUrl(meal, i); if (!url) return toast('That photo couldn’t be loaded.');
+  const img = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = url; }).catch(() => null);
+  if (!img) return toast('That photo couldn’t be loaded.');
+  const k = Math.min(1, 256 / Math.max(img.naturalWidth, img.naturalHeight)), c = document.createElement('canvas');
+  c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  let q = 0.72, blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', q));
+  while (blob && blob.size > 46 * 1024 && q > 0.3) { q -= 0.12; blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', q)); }
+  const fd = new FormData(); fd.append('thumb', blob, 'thumb.jpg');
+  const r = await api('meal/' + encodeURIComponent(meal.id) + '/thumb', { body: fd });
+  if (!r.ok) return toast(r.reason || 'Couldn’t change the picture.');
+  meal.thumb = r.thumb; if (ED && ED.meal && ED.meal.id === meal.id) ED.meal.thumb = r.thumb;
+  const inDay = (DAY && DAY.meals || []).find((m) => m.id === meal.id); if (inDay) inDay.thumb = r.thumb;
+  if (ED && ED.meal && ED.meal.id === meal.id && !$('sheet').hidden) { const t = $('edthumb'); if (t) t.innerHTML = '<img src="' + r.thumb + '" alt="">'; }
+  toast('✓ Picture changed');
+  refresh();
+}
+function wireCoverDrag(meal) {
+  const target = $('edthumb'); if (!target) return;
+  const over = (x, y) => { const r = target.getBoundingClientRect(); return x > r.left - 16 && x < r.right + 16 && y > r.top - 16 && y < r.bottom + 16; };
+  $('sheetbody').querySelectorAll('[data-ph]').forEach((b) => {
+    const i = +b.dataset.ph;
+    // Computer: ordinary drag and drop.
+    // (Only with a mouse: on an iPhone a draggable element starts the system's own drag on a hold, which
+    // would fight the press-and-hold below.)
+    b.draggable = matchMedia('(hover: hover) and (pointer: fine)').matches;
+    b.ondragstart = (e) => { e.dataTransfer.setData('text/plain', 'photo:' + i); e.dataTransfer.effectAllowed = 'copy'; target.classList.add('target'); };
+    b.ondragend = () => target.classList.remove('target', 'hot');
+    // Phone: press and hold (0.3 s) until it lifts, then drag. Moving sooner is a scroll of the strip.
+    let timer = 0, drag = null, x0 = 0, y0 = 0;
+    const end = () => { clearTimeout(timer); timer = 0; b.classList.remove('lifting'); if (drag) { drag.ghost.remove(); target.classList.remove('target', 'hot'); } };
+    b.addEventListener('touchstart', (e) => {
+      const t = e.touches[0]; x0 = t.clientX; y0 = t.clientY; drag = null;
+      timer = setTimeout(() => {
+        timer = 0; b.classList.add('lifting'); try { navigator.vibrate?.(12); } catch {}
+        const g = document.createElement('div'); g.className = 'dragghost'; g.innerHTML = b.innerHTML; g.style.left = x0 + 'px'; g.style.top = y0 + 'px'; document.body.appendChild(g);
+        drag = { ghost: g, x: x0, y: y0 }; target.classList.add('target');
+      }, 300);
+    }, { passive: true });
+    b.addEventListener('touchmove', (e) => {
+      const t = e.touches[0];
+      if (!drag) { if (timer && Math.hypot(t.clientX - x0, t.clientY - y0) > 10) { clearTimeout(timer); timer = 0; } return; }
+      e.preventDefault();                                                         // dragging, not scrolling
+      drag.x = t.clientX; drag.y = t.clientY; drag.ghost.style.left = drag.x + 'px'; drag.ghost.style.top = drag.y + 'px';
+      target.classList.toggle('hot', over(drag.x, drag.y));
+    }, { passive: false });
+    b.addEventListener('touchend', (e) => {
+      const d = drag; end(); drag = null;
+      if (d) { e.preventDefault(); b.dataset.noclick = '1'; setTimeout(() => delete b.dataset.noclick, 400); if (over(d.x, d.y)) setCover(meal, i); }
+    });
+    b.addEventListener('touchcancel', () => { end(); drag = null; });
+    b.addEventListener('contextmenu', (e) => e.preventDefault());               // no iOS image menu on the hold
+    const open = b.onclick; b.onclick = (e) => { if (b.dataset.noclick) return; open && open(e); };
+  });
+  target.addEventListener('dragover', (e) => { e.preventDefault(); target.classList.add('hot'); });
+  target.addEventListener('dragleave', () => target.classList.remove('hot'));
+  target.addEventListener('drop', (e) => { e.preventDefault(); target.classList.remove('target', 'hot'); const m = String(e.dataTransfer.getData('text/plain')).match(/^photo:(\d+)$/); if (m) setCover(meal, +m[1]); });
+}
+
 // The viewer. Computer: click zooms in where you click and the zoomed spot follows the mouse; the wheel zooms;
 // ← → move between photos; Esc or ✕ closes. Phone: tap zooms where you tap, pinch zooms, drag looks around,
 // swipe (not zoomed) moves between photos, ✕ closes.
 const Z = { meal: null, i: 0, s: 1, ox: 50, oy: 50, pts: new Map(), pinch: 0, moved: false, x0: 0, y0: 0 };
 function zoomDraw() { const im = $('zimg'); im.style.transformOrigin = Z.ox + '% ' + Z.oy + '%'; im.style.transform = 'scale(' + Z.s + ')'; $('zstage').classList.toggle('zoomed', Z.s > 1); }
 async function openZoom(meal, i) {
-  Z.meal = meal; Z.i = (i + meal.photos) % meal.photos; Z.s = 1; Z.ox = Z.oy = 50; zoomDraw();
+  Z.meal = meal; Z.i = (i + meal.photos) % meal.photos;
+  $('zcover').hidden = !(ED && ED.meal && ED.meal.id === meal.id && !ED.fresh && !$('sheet').hidden); Z.s = 1; Z.ox = Z.oy = 50; zoomDraw();
   $('zoom').hidden = false; $('zcount').textContent = meal.photos > 1 ? (Z.i + 1) + ' / ' + meal.photos : '';
   $('zprev').hidden = $('znext').hidden = meal.photos < 2;
   $('zhint').textContent = matchMedia('(hover: hover)').matches ? 'Click to zoom · move the mouse to look around · scroll to zoom more' : 'Tap to zoom · pinch · drag to look around';
@@ -588,6 +661,8 @@ async function openZoom(meal, i) {
 }
 function closeZoom() { $('zoom').hidden = true; Z.pts.clear(); }
 $('zx').onclick = closeZoom;
+$('zcover').onclick = async () => { const m = Z.meal, i = Z.i; closeZoom(); await setCover(m, i); };
+$('zcover').addEventListener('pointerup', (e) => e.stopPropagation());
 $('zprev').onclick = () => openZoom(Z.meal, Z.i - 1);
 $('znext').onclick = () => openZoom(Z.meal, Z.i + 1);
 document.addEventListener('keydown', (e) => { if ($('zoom').hidden) return; if (e.key === 'Escape') { e.stopImmediatePropagation(); closeZoom(); } else if (e.key === 'ArrowLeft') $('zprev').onclick(); else if (e.key === 'ArrowRight') $('znext').onclick(); }, true);
@@ -1643,7 +1718,7 @@ function renderEditor(notes) {
     + '<div class="g" title="Grams">⚖️<input type="text" autocomplete="off" inputmode="decimal" value="' + (it.grams ? Math.round(it.grams) : '') + '" data-g="1" placeholder="g"><span>g</span></div>'
     + '<button data-rm="1" class="ghost" style="flex:.5" title="Remove">✕</button></div>') + '</div>'; }).join('');
   const tot = ED.items.reduce((a, it) => { const s = scaled(it); a.kcal += s.kcal; a.p += s.protein_g; a.c += s.carbs_g; a.f += s.fat_g; return a; }, { kcal: 0, p: 0, c: 0, f: 0 });
-  sheet('<div class="row" style="justify-content:space-between"><h2 style="margin:0">' + (ED.fresh ? 'Here’s what I see' : 'Edit meal') + '</h2><span class="row" style="flex:none;gap:8px">' + (ED.meal.id ? '<button type="button" class="ghost" id="edshare" style="padding:6px 10px" title="Share a link to this meal">Share</button>' : '') + (ED.meal.thumb ? '<img src="' + ED.meal.thumb + '" style="width:44px;height:44px;border-radius:10px;object-fit:cover;flex:none">' : '') + '</span></div>'
+  sheet('<div class="row" style="justify-content:space-between"><h2 style="margin:0">' + (ED.fresh ? 'Here’s what I see' : 'Edit meal') + '</h2><span class="row" style="flex:none;gap:8px">' + (ED.meal.id ? '<button type="button" class="ghost" id="edshare" style="padding:6px 10px" title="Share a link to this meal">Share</button>' : '') + (ED.meal.thumb || ED.meal.photos ? '<span class="edthumb" id="edthumb" title="' + (ED.meal.photos ? 'The meal’s picture — drag a photo here to change it' : 'The meal’s picture') + '">' + (ED.meal.thumb ? '<img src="' + ED.meal.thumb + '" alt="">' : 'drop<br>here') + '</span>' : '') + '</span></div>'
     + photoStrip(ED.meal) + (notes ? '<p class="muted small" style="margin:6px 0 2px">' + esc(notes) + '</p>' : '') + rows
     + '<div class="total"><span>Total <small>P ' + tot.p.toFixed(0) + ' · C ' + tot.c.toFixed(0) + ' · F ' + tot.f.toFixed(0) + '</small></span><span>' + tot.kcal + ' kcal</span></div>'
     + fitAdvice()
@@ -1701,6 +1776,7 @@ function renderEditor(notes) {
   $('sheetbody').querySelectorAll('[data-leave]').forEach((b) => b.onclick = () => { ED.items.splice(Number(b.dataset.leave), 1); renderEditor(notes); });
   if ($('edshare')) $('edshare').onclick = () => shareMeal(ED.meal.id);
   wirePhotoStrip(ED.meal);
+  if (ED.meal.id && ED.meal.photos && !ED.fresh) wireCoverDrag(ED.meal);
   // Deleting a saved meal asks first, in the sheet: the footer turns into "Delete this meal? Keep it / Delete".
   // (A fresh read that was never saved is just discarded.)
   const doDelete = async () => { await api('meal/' + ED.meal.id, { method: 'DELETE' }); closeSheet(); toast('Meal deleted'); refresh(); };
