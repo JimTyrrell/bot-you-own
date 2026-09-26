@@ -222,6 +222,7 @@
   .item .mults { display:flex; gap:6px; align-items:center; }
   .item .mults button { padding:8px 0; flex:1; border-radius:10px; font-weight:600; }
   .item .mults button.on { background:var(--accent); color:#fff; }
+  .item .mults .g .u { padding:6px 8px; border-radius:8px; background:var(--bg); border:1px solid var(--edge); font-size:13px; font-weight:600; color:var(--text); flex:none; }
   .item .mults .g { flex:2; min-width:92px; display:flex; align-items:center; gap:4px; background:var(--panel); border-radius:10px; padding:0 8px; }
   .item .mults .g input { padding:8px 4px; border:0; background:transparent; text-align:right; width:100%; }
   .item .mults .g span { font-size:12px; color:var(--muted); }
@@ -1690,7 +1691,21 @@ function amountLabel(it) {
   const m = activeMult(it);
   if (m === 1) return orig || it.portion || '';
   if (m != null && orig) return orig + ' × ' + (TIMES[m] || m);
-  return it.grams ? Math.round(it.grams) + ' g' : (orig || it.portion || '');
+  return it.grams ? wLabel(it.grams) : (orig || it.portion || '');
+}
+// Grams or ounces for typed weights (the ⚖️ box). Remembered per browser; the first time it follows the
+// targets' unit (lb → oz). Stored as grams either way. Ounces can be typed as 8.1, 8,1 or 8 1/8.
+const OZ = 28.3495;
+let WUNIT = (() => { try { return localStorage.getItem('plate:wunit') || ''; } catch { return ''; } })();
+const wUnit = () => WUNIT || ((S.targets && S.targets.unit) === 'lb' ? 'oz' : 'g');
+const wShow = (g) => wUnit() === 'oz' ? String(Math.round(g / OZ * 10) / 10) : String(Math.round(g));
+const wLabel = (g) => wUnit() === 'oz' ? (Math.round(g / OZ * 10) / 10) + ' oz' : Math.round(g) + ' g';
+function wParse(v) {
+  v = String(v || '').trim().replace(',', '.');
+  const m = v.match(/^(\d+(?:\.\d+)?)?\s*(?:(\d+)\s*\/\s*(\d+))?$/);
+  if (!m || (!m[1] && !m[2])) return null;
+  const n = (Number(m[1]) || 0) + (m[2] && Number(m[3]) ? Number(m[2]) / Number(m[3]) : 0);
+  return wUnit() === 'oz' ? n * OZ : n;
 }
 // What a Fix actually did, worked out by the app from before and after — not the
 // model's account of it. The model's note spoke of "the user" and could say an estimate
@@ -1715,7 +1730,7 @@ function renderEditor(notes) {
   const rows = ED.items.map((it, i) => { const s = scaled(it), open = ED.open === i; return '<div class="item' + (open ? ' open' : '') + '" data-i="' + i + '">'
     + '<button type="button" class="irow" data-open="1"><span class="in"><b>' + esc(it.name) + '</b> <small>' + esc(it.portion || (it.grams ? gramsNice(it.grams) + ' g' : '')) + '</small><em>P ' + s.protein_g.toFixed(0) + ' · C ' + s.carbs_g.toFixed(0) + ' · F ' + s.fat_g.toFixed(0) + (it.confidence != null && it.confidence < 0.6 ? ' · <span style="color:#d97706">not sure</span>' : '') + '</em></span><span class="ik">' + s.kcal + '</span></button>'
     + (!open ? '' : '<div class="mults">' + [0.5, 1, 1.5, 2].map((m) => '<button data-m="' + m + '" class="' + (activeMult(it) === m ? 'on' : '') + '">' + ({ 0.5: '½×', 1: '1×', 1.5: '1½×', 2: '2×' }[m]) + '</button>').join('')
-    + '<div class="g" title="Grams">⚖️<input type="text" autocomplete="off" inputmode="decimal" value="' + (it.grams ? Math.round(it.grams) : '') + '" data-g="1" placeholder="g"><span>g</span></div>'
+    + '<div class="g" title="Weight — tap g / oz to switch">⚖️<input type="text" autocomplete="off" inputmode="decimal" value="' + (it.grams ? wShow(it.grams) : '') + '" data-g="1" placeholder="' + wUnit() + '"><button type="button" class="u" data-unit="1" title="Switch between grams and ounces">' + wUnit() + '</button></div>'
     + '<button data-rm="1" class="ghost" style="flex:.5" title="Remove">✕</button></div>') + '</div>'; }).join('');
   const tot = ED.items.reduce((a, it) => { const s = scaled(it); a.kcal += s.kcal; a.p += s.protein_g; a.c += s.carbs_g; a.f += s.fat_g; return a; }, { kcal: 0, p: 0, c: 0, f: 0 });
   sheet('<div class="row" style="justify-content:space-between"><h2 style="margin:0">' + (ED.fresh ? 'Here’s what I see' : 'Edit meal') + '</h2><span class="row" style="flex:none;gap:8px">' + (ED.meal.id ? '<button type="button" class="ghost" id="edshare" style="padding:6px 10px" title="Share a link to this meal">Share</button>' : '') + (ED.meal.thumb || ED.meal.photos ? '<span class="edthumb" id="edthumb" title="' + (ED.meal.photos ? 'The meal’s picture — drag a photo here to change it' : 'The meal’s picture') + '">' + (ED.meal.thumb ? '<img src="' + ED.meal.thumb + '" alt="">' : 'drop<br>here') + '</span>' : '') + '</span></div>'
@@ -1740,7 +1755,8 @@ function renderEditor(notes) {
     const g = el.querySelector('[data-g]');
     g.oninput = () => {
       if (g.value === '') return;
-      it.grams = Math.max(0, +g.value || 0); if (it.base.grams) it.mult = it.grams / it.base.grams; it.portion = amountLabel(it);
+      const w = wParse(g.value); if (w == null) return;
+      it.grams = Math.max(0, w); if (it.base.grams) it.mult = it.grams / it.base.grams; it.portion = amountLabel(it);
       const s = scaled(it), row = el.querySelector('.irow');
       row.querySelector('.in small').textContent = it.portion || '';
       row.querySelector('.ik').textContent = s.kcal;
@@ -1749,6 +1765,7 @@ function renderEditor(notes) {
       const T = $('sheetbody').querySelector('.total');
       if (T) T.innerHTML = '<span>Total <small>P ' + tot.p.toFixed(0) + ' · C ' + tot.c.toFixed(0) + ' · F ' + tot.f.toFixed(0) + '</small></span><span>' + tot.kcal + ' kcal</span>';
     };
+    el.querySelector('[data-unit]').onclick = () => { WUNIT = wUnit() === 'oz' ? 'g' : 'oz'; try { localStorage.setItem('plate:wunit', WUNIT); } catch {} for (const x of ED.items) if (x.grams && activeMult(x) == null) x.portion = amountLabel(x); renderEditor(notes); };
     g.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); g.blur(); } };
     el.querySelector('[data-rm]').onclick = () => { ED.items.splice(+el.dataset.i, 1); ED.open = null; renderEditor(notes); };
   });
