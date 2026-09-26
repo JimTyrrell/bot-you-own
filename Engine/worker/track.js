@@ -46,6 +46,7 @@ import { CONFIG } from "../../YourBots/config.js";
 import { identify, signInMethods, verifyIdToken } from "../identity/index.js";
 import { resolve as resolveExpiry, lapseReply, noticeFor, EXPIRY_BUILT_IN } from "./expiry.js";
 import { join as idJoin, userIdFor, userById as idUserById, bindDevice, linkByCode, deviceCount, listDevices, pendingByEmail, touch as idTouch, DEV_PEPPER, pepperOf } from "../identity/devices.js";
+import { applyLabelMath } from "./track-yield.js";
 import { runVision, PROMPTS, extractJson, withBrands, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize, mergeCorrection } from "./track-vision.js";
 import { lookupBarcode, useBarcodes, rememberLabel, saveReceipt, listReceipts, deleteReceipt, setWeight, listWeights, importWeights, householdOf, createHousehold, joinHousehold, leaveHousehold, canView } from "./track-extras.js";
 import { ensureDaySchema, dayChat, addWords, afterMeal, editedMeal, confirmedMeal, removedMeal, listFavourites, nameFavourite, forgetFavourite, matchFavourite, recentTwin, steadyItems, repeatMeals, retimeFavourite, localHour, askDay, summaryFor, classifySay, looksLikeFood } from "./track-day.js";
@@ -184,6 +185,9 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
     await env.DB.prepare(`UPDATE track_users SET targets_json = ? WHERE id = ?`).bind(JSON.stringify(t), me.id).run();
     return json({ ok: true, targets: t });
   }
+  // Which way is up? Small copies of the photos (the page makes them, ≤512 px); the answer is how far to turn
+  // each one clockwise so its printed words and numbers read upright. The page turns them before the real read —
+  // a sideways OXO display read as 8.8 oz (or not at all); upright, 8 1/8 every time.
   if (sub === "photo") {
     if (request.method !== "POST") return json({ error: "POST only" }, 405);
     if (!(await allowed(env, request))) return json({ error: "rate-limited", reason: "You're sending photos faster than I can look. Give me a moment." }, 429);
@@ -407,7 +411,10 @@ async function photo(request, env, cfg, me) {
   const parsed = extractJson(out.text);
 
   if (kind === "food") {
-    const steady = revising ? { items: await useBarcodes(env, withBrands(parsed?.items, parsed?.photo_text, said)), used: [] } : await steadyItems(env, me, await useBarcodes(env, withBrands(parsed?.items, parsed?.photo_text, said)));
+    // Label × weight is arithmetic, done here (track-yield.js), after the barcode step has supplied a label it knows.
+    const labelled = (await useBarcodes(env, withBrands(parsed?.items, parsed?.photo_text, said))).map(applyLabelMath);
+    const labelNote = labelled.map((i) => i.label_note).filter(Boolean).join(" ");
+    const steady = revising ? { items: labelled, used: [] } : await steadyItems(env, me, labelled);
     const fresh = sanitiseItems(steady.items, { source: "photo" });
     const items = revising ? mergeCorrection(current, fresh, correction) : fresh;
     if (revising && !fresh.length) return json({ error: "no food", reason: "I couldn't apply that correction. Try naming the food and the amount, like “8 strawberries”." }, 422);
@@ -434,10 +441,12 @@ async function photo(request, env, cfg, me) {
     const twin = mealId ? null : await recentTwin(env, me, meal);
     const twinNote = twin ? `You logged this at ${twin.time || "a few minutes ago"} too — Discard if it's the same one. ` : "";
     // Scale displays in photos are misread often enough (glare, small digits) that the review says where the grams came from.
-    const scaleNote = parsed?.scale_read === true && !/\d/.test(said) ? "Weights read from your scale — tap any that look wrong, or type the weights with the photos. " : "";
+    const scaleNote = (labelNote ? labelNote + " " : "") + (parsed?.scale_unreadable === true && !/\d/.test(said) ? "I could see a scale but couldn't read it. " : parsed?.scale_read === true && !/\d/.test(said) && !labelNote ? "Weights read from your scale — tap any that look wrong, or type the weights with the photos. " : "");
     const timeNote = taken && !mealId ? `Time from your photo: ${meal.time}${meal.date !== todayUtc() ? " on " + meal.date : ""}. ` : "";
     const steadyNote = steady.used.length ? `Same numbers as your usual ${steady.used.slice(0, 2).join(" and ")}. ` : "";
-    const q = parsed?.question && String(parsed.question.text || "").trim() ? { text: String(parsed.question.text).trim().slice(0, 140), options: (Array.isArray(parsed.question.options) ? parsed.question.options : []).map((o) => String(o).trim().slice(0, 60)).filter(Boolean).slice(0, 3) } : null;
+    let q = parsed?.question && String(parsed.question.text || "").trim() ? { text: String(parsed.question.text).trim().slice(0, 140), options: (Array.isArray(parsed.question.options) ? parsed.question.options : []).map((o) => String(o).trim().slice(0, 60)).filter(Boolean).slice(0, 3) } : null;
+    // A scale in the photos that couldn't be read: ask, rather than quietly using one label serving.
+    if (!q && parsed?.scale_unreadable === true && !/\d/.test(said)) q = { text: "I couldn't read the scale — what does it say?", options: ["Use one serving for now", "I'll type the weight in Fix"] };
     const askedName = String(parsed?.name || "").trim().slice(0, 40);
     let named = null;
     if (askedName && after.favourite?.id) { await nameFavourite(env, me, after.favourite.id, askedName); named = askedName; }

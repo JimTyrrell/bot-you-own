@@ -135,6 +135,9 @@
   .tray .th.wait { display:flex; align-items:center; justify-content:center; }
   .tray .th.wait i { width:18px; height:18px; border:3px solid var(--bg); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; }
   .tray .th img { width:100%; height:100%; object-fit:cover; display:block; }
+  .tray .th .turn { position:absolute; left:3px; bottom:3px; width:24px; height:24px; padding:0; border-radius:50%; background:rgba(0,0,0,.6); color:#fff; font-size:14px; line-height:24px; }
+  .trayhint { font-size:12px; color:var(--muted); margin:-4px 2px 6px; }
+  .trayhint[hidden] { display:none; }
   .tray .th button { position:absolute; top:3px; right:3px; width:22px; height:22px; border-radius:50%; padding:0; font-size:13px; line-height:1; background:rgba(0,0,0,.6); color:#fff; }
   .say .bar { display:flex; align-items:center; gap:8px; margin-top:6px; }
   .say .bar .sp { flex:1; }
@@ -447,6 +450,7 @@
   <!-- The box gets the whole width and grows as it wraps; the buttons sit on a bar under it. -->
   <form class="say" id="sayform" autocomplete="off">
     <div class="tray" id="tray" hidden></div>
+    <p class="trayhint" id="trayhint" hidden>↻ turns a photo — labels and scale displays read best the right way up.</p>
     <textarea id="say" rows="1" placeholder="Say what you ate, or ask…" maxlength="600" enterkeyhint="send"></textarea>
     <div class="bar">
       <button type="button" class="snap" id="snapbtn" title="Take a photo or pick one from your library">📷</button>
@@ -1475,10 +1479,27 @@ const MEAL_PHOTOS = {};                            // meal id → the photos it 
 function drawTray() {
   const t = $('tray'); t.hidden = !ATTACH.length;
   t.hidden = !ATTACH.length && !LOADING;
-  t.innerHTML = ATTACH.map((a, i) => '<div class="th"><img src="' + a.url + '" alt=""><button type="button" data-unattach="' + i + '" title="Remove">✕</button></div>').join('') + '<div class="th wait"><i></i></div>'.repeat(LOADING);
+  t.innerHTML = ATTACH.map((a, i) => '<div class="th"><img src="' + a.url + '" alt=""><button type="button" data-unattach="' + i + '" title="Remove">✕</button><button type="button" class="turn" data-turn="' + i + '" title="Turn a quarter clockwise — labels and scales read best the right way up">↻</button></div>').join('') + '<div class="th wait"><i></i></div>'.repeat(LOADING);
+  t.querySelectorAll('[data-turn]').forEach((b) => b.onclick = () => turnAttached(+b.dataset.turn));
+  const hint = $('trayhint'); if (hint) hint.hidden = !ATTACH.length;
   t.querySelectorAll('[data-unattach]').forEach((b) => b.onclick = () => { const [a] = ATTACH.splice(+b.dataset.unattach, 1); URL.revokeObjectURL(a.url); drawTray(); keepAttach(); });
   $('say').placeholder = ATTACH.length ? 'Add words: how much, what else, a name…' : 'Say what you ate, or ask…';
   padForDock();
+}
+// ↻ on a photo in the box: a quarter turn clockwise, before it is read. Measured on real photos: a sideways
+// OXO display read as 8.8 oz (or nothing); turned upright, 8 1/8 oz three times out of three. The models can't
+// reliably tell which way a photo is turned on their own, so the person decides.
+async function turnBlob(blob) {
+  const bmp = await createImageBitmap(blob);
+  const c = document.createElement('canvas'); c.width = bmp.height; c.height = bmp.width;
+  const g = c.getContext('2d'); g.translate(c.width, 0); g.rotate(Math.PI / 2); g.drawImage(bmp, 0, 0);
+  return new Promise((r) => c.toBlob(r, 'image/jpeg', 0.88));
+}
+async function turnAttached(i) {
+  const a = ATTACH[i]; if (!a || a.turning) return; a.turning = true;
+  try { const [photo, thumb] = await Promise.all([turnBlob(a.photo), turnBlob(a.thumb)]); URL.revokeObjectURL(a.url); Object.assign(a, { photo, thumb, url: URL.createObjectURL(thumb) }); }
+  catch { toast('Couldn’t turn that photo.'); }
+  a.turning = false; drawTray(); keepAttach();
 }
 const keepAttach = () => blobPut('attach', ATTACH.length ? { userId: S.userId, at: Date.now(), items: ATTACH.map(({ photo, thumb, takenAt }) => ({ photo, thumb, takenAt })) } : null);
 async function addPhotos(files) {

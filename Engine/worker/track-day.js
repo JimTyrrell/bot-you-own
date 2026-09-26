@@ -85,6 +85,8 @@ export async function steadyItems(env, who, items) {
   const known = favs.flatMap((f) => parseItems(f.items_json).map((it) => ({ it, w: new Set(words(it.name)), label: f.name || it.name })));
   const used = new Set();
   const out = (items || []).map((it) => {
+    // A label times a weight is exact: a favourite's old numbers must not replace it.
+    if (it?.from_label || it?.source === "label" || it?.source === "barcode") return it;
     const g = Number(it?.grams) || 0, w = new Set(words(it?.name)); if (!g || !w.size) return it;
     const hit = known.find((k) => { const kg = Number(k.it.grams) || 0; if (!kg || Math.abs(kg - g) > 0.1 * kg) return false; return [...w].every((x) => k.w.has(x)) || [...k.w].every((x) => w.has(x)); });
     if (!hit) return it;

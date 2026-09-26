@@ -44,10 +44,10 @@ async function ownProduct(env, code) {
   if (!row) return null;
   try { return { ok: true, product: JSON.parse(row.json), own: true }; } catch { return null; }
 }
-export async function rememberBarcode(env, { code, name, serving_g, per_serving }) {
+export async function rememberBarcode(env, { code, name, serving_g, per_serving, raw = false }) {
   code = validBarcode(code);
   if (!code || !per_serving) return null;
-  const product = { code, name: String(name || "").slice(0, 80) || `Product ${code}`, brand: "", serving_g: serving_g || null, serving_label: "1 serving", pack_g: null,
+  const product = { code, name: String(name || "").slice(0, 80) || `Product ${code}`, brand: "", raw: Boolean(raw), serving_g: serving_g || null, serving_label: "1 serving", pack_g: null,
     per_serving, per100: serving_g ? { kcal: Math.round(per_serving.kcal * 100 / serving_g), protein_g: round1(per_serving.protein_g * 100 / serving_g), carbs_g: round1(per_serving.carbs_g * 100 / serving_g), fat_g: round1(per_serving.fat_g * 100 / serving_g) } : null, source: "label" };
   await env.DB.prepare(`INSERT INTO track_products (code, json, fetched_at) VALUES (?, ?, ?) ON CONFLICT(code) DO UPDATE SET json = excluded.json, fetched_at = excluded.fetched_at`)
     .bind("upc:" + code, JSON.stringify(product), nowIso()).run();
@@ -72,6 +72,20 @@ export async function useBarcodes(env, items) {
     const servings = Number(it?.servings) > 0 ? Number(it.servings) : 0;
     if (!code) { out.push(it); continue; }
     try {
+      // Weighed, and the barcode is already known (Open Food Facts, or a label read before): its numbers are the
+      // label. A label read off a turned or glary photo is the weaker source — the barcode wins.
+      if (Number(it.weighed_g) > 0) {
+        const known = await lookupBarcode(env, code);
+        const kp = known.ok ? known.product : null;
+        const kps = kp?.per_serving || (kp?.per100 && kp?.serving_g ? { kcal: kp.per100.kcal * kp.serving_g / 100, protein_g: kp.per100.protein_g * kp.serving_g / 100, carbs_g: kp.per100.carbs_g * kp.serving_g / 100, fat_g: kp.per100.fat_g * kp.serving_g / 100 } : null);
+        if (kps && kp.serving_g) { out.push({ ...it, label_serving_g: kp.serving_g, label_per_serving: kps, label_is_raw: it.label_is_raw ?? Boolean(kp.raw), source: "barcode" }); continue; }
+      }
+      // A label read on the photos: teach the barcode its exact per-serving numbers (and whether it's raw meat).
+      if (it.label_per_serving && Number(it.label_serving_g) > 0) {
+        const ps = it.label_per_serving;
+        await rememberBarcode(env, { code, name: it.name, serving_g: round1(Number(it.label_serving_g)), raw: Boolean(it.label_is_raw), per_serving: { kcal: Math.round(Number(ps.kcal) || 0), protein_g: round1(Number(ps.protein_g) || 0), carbs_g: round1(Number(ps.carbs_g) || 0), fat_g: round1(Number(ps.fat_g) || 0) } });
+        out.push(it); continue;
+      }
       if (it.from_label && servings) {
         const per = (k) => round1((Number(it[k]) || 0) / servings);
         await rememberBarcode(env, { code, name: it.name, serving_g: Number(it.grams) > 0 ? round1(it.grams / servings) : null, per_serving: { kcal: Math.round((Number(it.kcal) || 0) / servings), protein_g: per("protein_g"), carbs_g: per("carbs_g"), fat_g: per("fat_g") } });
@@ -81,6 +95,8 @@ export async function useBarcodes(env, items) {
       const p = found.ok ? found.product : null;
       const ps = p?.per_serving || (p?.per100 && p?.serving_g ? { kcal: p.per100.kcal * p.serving_g / 100, protein_g: p.per100.protein_g * p.serving_g / 100, carbs_g: p.per100.carbs_g * p.serving_g / 100, fat_g: p.per100.fat_g * p.serving_g / 100 } : null);
       if (!ps) { out.push(it); continue; }
+      // Weighed on a scale: the label goes with the item and applyLabelMath (track-yield.js) does the sums.
+      if (Number(it.weighed_g) > 0 && p.serving_g) { out.push({ ...it, label_serving_g: p.serving_g, label_per_serving: ps, label_is_raw: it.label_is_raw ?? Boolean(p.raw), source: "barcode" }); continue; }
       const n = servings || 1;
       out.push({ ...it, kcal: Math.round(ps.kcal * n), protein_g: round1(ps.protein_g * n), carbs_g: round1(ps.carbs_g * n), fat_g: round1(ps.fat_g * n), grams: p.serving_g ? round1(p.serving_g * n) : it.grams, confidence: 0.9, source: "barcode" });
     } catch (err) { console.warn("barcode step skipped", err?.message || err); out.push(it); }
