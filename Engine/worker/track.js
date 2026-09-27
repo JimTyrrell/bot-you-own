@@ -46,7 +46,7 @@ import { CONFIG } from "../../YourBots/config.js";
 import { identify, signInMethods, verifyIdToken } from "../identity/index.js";
 import { resolve as resolveExpiry, lapseReply, noticeFor, EXPIRY_BUILT_IN } from "./expiry.js";
 import { join as idJoin, userIdFor, userById as idUserById, bindDevice, linkByCode, deviceCount, listDevices, pendingByEmail, touch as idTouch, DEV_PEPPER, pepperOf } from "../identity/devices.js";
-import { applyLabelMath } from "./track-yield.js";
+import { applyLabelMath, scaleGrams } from "./track-yield.js";
 import { runVision, PROMPTS, extractJson, withBrands, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize, mergeCorrection } from "./track-vision.js";
 import { lookupBarcode, useBarcodes, rememberLabel, saveReceipt, listReceipts, deleteReceipt, setWeight, listWeights, importWeights, householdOf, createHousehold, joinHousehold, leaveHousehold, canView } from "./track-extras.js";
 import { ensureDaySchema, dayChat, addWords, afterMeal, editedMeal, confirmedMeal, removedMeal, listFavourites, nameFavourite, forgetFavourite, matchFavourite, recentTwin, steadyItems, repeatMeals, retimeFavourite, localHour, askDay, summaryFor, classifySay, looksLikeFood } from "./track-day.js";
@@ -188,6 +188,22 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
   // Which way is up? Small copies of the photos (the page makes them, ≤512 px); the answer is how far to turn
   // each one clockwise so its printed words and numbers read upright. The page turns them before the real read —
   // a sideways OXO display read as 8.8 oz (or not at all); upright, 8 1/8 every time.
+  // Which photos need turning, before the real read: small copies in, a clockwise turn per photo out (0 when
+  // there's no scale display, or it's already at the bottom). One quick call per photo, in parallel. Fails open.
+  if (sub === "orient") {
+    if (request.method !== "POST") return json({ error: "POST only" }, 405);
+    if (!(await allowed(env, request))) return json({ error: "rate-limited" }, 429);
+    let form; try { form = await request.formData(); } catch { return json({ error: "bad request" }, 400); }
+    const files = form.getAll("photo").filter((f) => f && typeof f.arrayBuffer === "function" && f.size <= 300 * 1024).slice(0, MAX_PHOTOS);
+    const TURN = { bottom: 0, none: 0, left: 270, right: 90, top: 180 };
+    const edges = await Promise.all(files.map(async (f) => {
+      try {
+        const out = await runVision(env, cfg, { images: [{ bytes: await f.arrayBuffer(), mime: "image/jpeg" }], prompt: PROMPTS.scaleEdge(), maxTokens: 12 });
+        return (String(out.text || "").toLowerCase().match(/\b(top|bottom|left|right|none)\b/) || [])[1] || "none";
+      } catch { return "none"; }
+    }));
+    return json({ ok: true, turn: edges.map((e) => TURN[e] ?? 0), scale: edges.map((e) => e !== "none") });
+  }
   if (sub === "photo") {
     if (request.method !== "POST") return json({ error: "POST only" }, 405);
     if (!(await allowed(env, request))) return json({ error: "rate-limited", reason: "You're sending photos faster than I can look. Give me a moment." }, 429);
@@ -400,20 +416,74 @@ async function photo(request, env, cfg, me) {
   const images = await Promise.all(files.map(async (f) => ({ bytes: await f.arrayBuffer(), mime: /^image\/(png|webp)$/.test(f.type) ? f.type : "image/jpeg" })));
   const thumb = await cleanThumb(form.get("thumb"));
 
-  let out;
+  // The photos the page found a scale in (orient): each gets its own "read the display" call, alongside the main read.
+  const scaleIdx = String(form.get("scales") || "").split(",").map(Number).filter((n) => Number.isInteger(n) && n >= 0 && n < images.length).slice(0, 4);
+  const scaleReads = kind === "food" && !revising ? Promise.all(scaleIdx.map(async (i) => {
+    try { const o = await runVision(env, cfg, { images: [images[i]], prompt: PROMPTS.scaleRead(), maxTokens: 40 }); return { photo: i + 1, display: String(extractJson(o.text)?.display || "").trim().slice(0, 30) }; }
+    catch { return { photo: i + 1, display: "" }; }
+  })) : Promise.resolve([]);
+  let out, prompt;
   try {
-    const prompt = kind === "food" ? (revising ? PROMPTS.revise(slim(current), correction, true) : files.length > 1 || said ? PROMPTS.meal(said, files.length) : PROMPTS.food(correction)) : PROMPTS[kind];
+    prompt = kind === "food" ? (revising ? PROMPTS.revise(slim(current), correction, true) : files.length > 1 || said ? PROMPTS.meal(said, files.length) : PROMPTS.food(correction)) : PROMPTS[kind];
     out = await runVision(env, cfg, { images, prompt, maxTokens: kind === "receipt" ? 1500 : 900 + 150 * (files.length - 1) });
   } catch (err) {
     console.error("foodlog vision failed", err?.message || err);
     return json({ error: "model", reason: "The model couldn't look at that just now. Try again, or type the meal." }, 502);
   }
-  const parsed = extractJson(out.text);
+  let parsed = extractJson(out.text);
+  // A food with no calories that isn't a zero-calorie thing or label-based is the model skipping something it could
+  // see (the turkey scale skipped in some runs; broccoli 198 g, 0 kcal; berries all 0). One more look; keep whichever
+  // lost less. Runs on the model's own answer, before the scale readings and label maths fill anything in.
+  const zeroCal = /water|creatine|electrolyte|coffee|\btea\b|diet|zero|sugar[- ]free|\bice\b|seltzer|sparkling water|salt|pepper|spice|vinegar|mustard/i;
+  const blanks = (p) => (Array.isArray(p?.items) ? p.items : []).filter((i) => !(Number(i?.kcal) > 0) && !(i?.label_per_serving && Number(i.label_serving_g) > 0) && !zeroCal.test(String(i?.name || ""))).length;
+  const empty = (p) => !(Array.isArray(p?.items) && p.items.length);
+  if (kind === "food" && !revising && (empty(parsed) || blanks(parsed) > 0)) {
+    try {
+      const again = await runVision(env, cfg, { images, prompt, maxTokens: 900 + 150 * (files.length - 1) });
+      const p2 = extractJson(again.text);
+      const better = p2 && !empty(p2) && (empty(parsed) || blanks(p2) < blanks(parsed));
+      if (better) { parsed = p2; out = again; }
+      console.log(JSON.stringify({ event: "foodlog-second-look", used: Boolean(better) }));
+    } catch (err) { console.warn("second look skipped", err?.message || err); }
+  }
+  // One food split in two — the label as one item (no weight), the weighed food as another (no label): "Norbest
+  // Turkey 0 g" + "Ground Turkey 227 g, 340 kcal". Same name word → the label joins the weighed one; the empty one goes.
+  if (Array.isArray(parsed?.items)) {
+    const words = (n) => new Set(String(n || "").toLowerCase().split(/[^a-z]+/).filter((w) => w.length > 3));
+    for (const lab of parsed.items.filter((i) => i?.label_per_serving && Number(i.label_serving_g) > 0 && !(Number(i.grams) > 0) && !(Number(i.weighed_g) > 0) && !String(i.scale_text || "").trim())) {
+      const lw = words(lab.name);
+      const mate = parsed.items.find((i) => i !== lab && !i.__gone && (Number(i.weighed_g) > 0 || String(i.scale_text || "").trim() || Number(i.grams) > 0) && !(i.label_per_serving && Number(i.label_serving_g) > 0) && [...words(i.name)].some((w) => lw.has(w)));
+      if (!mate) continue;
+      Object.assign(mate, { label_serving_g: lab.label_serving_g, label_per_serving: lab.label_per_serving, label_is_raw: lab.label_is_raw || mate.label_is_raw, from_label: true, barcode: mate.barcode || lab.barcode, brand: mate.brand || lab.brand, photos: [...new Set([...(mate.photos || []), ...(lab.photos || [])])] });
+      if (!Number(mate.weighed_g) && Number(mate.grams) > 0 && !String(mate.scale_text || "").trim()) mate.weighed_g = Number(mate.grams);
+      lab.__gone = true;
+    }
+    parsed.items = parsed.items.filter((i) => !i?.__gone);
+  }
+  // The focused scale readings go onto the food whose photos include that scale photo (the one without a label
+  // item's own reading wins only if it agrees). Code turns the display into grams (track-yield.js scaleGrams).
+  for (const sr of await scaleReads) {
+    if (!sr.display || !scaleGrams(sr.display) || !Array.isArray(parsed?.items)) continue;
+    const onIt = parsed.items.filter((i) => Array.isArray(i?.photos) && i.photos.map(Number).includes(sr.photo));
+    const it = onIt.length === 1 ? onIt[0] : onIt.find((i) => !Number(i?.weighed_g)) || null;
+    if (!it) continue;
+    if (!String(it.scale_text || "").trim() || Math.abs((scaleGrams(it.scale_text) || 0) - scaleGrams(sr.display)) > 3) { it.scale_text = sr.display; it.weighed_g = Math.round(scaleGrams(sr.display) * 10) / 10; if (!Number(it.grams)) it.grams = it.weighed_g; }
+    parsed.scale_read = true;
+  }
 
   if (kind === "food") {
     // Label × weight is arithmetic, done here (track-yield.js), after the barcode step has supplied a label it knows.
     const labelled = (await useBarcodes(env, withBrands(parsed?.items, parsed?.photo_text, said))).map(applyLabelMath);
     const labelNote = labelled.map((i) => i.label_note).filter(Boolean).join(" ");
+    // A food read off a scale is never zeroed by a guessed bowl unless the person said the bowl was on it. (A re-read
+    // of the turkey "took off a 300 g bowl" and logged it as 0 g.)
+    if (!/bowl|plate|container|tare/i.test(said)) for (const it of labelled) {
+      const w = scaleGrams(it.scale_text) || Number(it.weighed_g) || 0, g = Number(it.grams) || 0;
+      // Only a food taken to (almost) nothing: a zeroed-bowl read (berries) legitimately has grams below the display.
+      if (!w || it.from_label || g > 5) continue;
+      const f = g > 0 ? w / g : 0;
+      Object.assign(it, { grams: w, ...(f ? { kcal: Math.round(it.kcal * f), protein_g: it.protein_g * f, carbs_g: it.carbs_g * f, fat_g: it.fat_g * f } : { confidence: 0.3 }) });
+    }
     const steady = revising ? { items: labelled, used: [] } : await steadyItems(env, me, labelled);
     const fresh = sanitiseItems(steady.items, { source: "photo" });
     const items = revising ? mergeCorrection(current, fresh, correction) : fresh;
@@ -424,10 +494,21 @@ async function photo(request, env, cfg, me) {
       if (rec) return json({ ok: true, kind: "receipt", ...rec });
     }
     if (!items.length) return json({ error: "no food", reason: parsed?.notes ? `I couldn't find food in that: ${String(parsed.notes).slice(0, 140)}` : "I couldn't make out any food in that photo. Try closer, with more light — or type it.", raw: out.text.slice(0, 300) }, 422);
+    // "Read again" is a preview: the new read comes back for the person to check and Save; nothing is overwritten.
+    if (mealId && form.get("preview") === "1") {
+      const was = await readMeal(env, mealId);
+      if (!was || !(await env.DB.prepare(`SELECT 1 FROM track_meals WHERE id = ? AND user_id = ?`).bind(mealId, me.id).first())) return json({ error: "no such meal" }, 404);
+      if (env.PHOTOS && form.get("replacePhotos") === "1") {
+        try { await forgetPhotos(env, me.id, mealId); await Promise.all(images.map((im, i) => env.PHOTOS.put(photoKey(me.id, mealId, i), im.bytes, { httpMetadata: { contentType: im.mime } }))); await env.DB.prepare(`UPDATE track_meals SET photos = ? WHERE id = ?`).bind(images.length, mealId).run(); was.photos = images.length; } catch (err) { console.warn("photos not replaced", err?.message || err); }
+      }
+      return json({ ok: true, preview: true, meal: { ...was, items, ...totalsOf(items) }, notes: (labelNote ? labelNote + " " : "") + String(parsed?.notes || "").slice(0, 300), ...(form.get("debug") === "1" ? { raw: out.text.slice(0, 4000) } : {}) });
+    }
     const meal = mealId ? await updateMealItems(env, me, mealId, items) : await insertMeal(env, me, { date, items, source: "photo", thumb, tz: form.get("tz"), zone: form.get("zone"), planned: form.get("planned"), at: taken });
     if (!meal) return json({ error: "no such meal" }, 404);
     // Keep the photos with a new meal (R2), so they can be looked at — and a scale zoomed into — later.
-    if (!mealId && env.PHOTOS) {
+    // "Read again" on a saved meal sends its photos back (straightened): they replace the stored ones.
+    if (env.PHOTOS && (!mealId || form.get("replacePhotos") === "1")) {
+      if (mealId) await forgetPhotos(env, me.id, meal.id);
       try {
         await Promise.all(images.map((im, i) => env.PHOTOS.put(photoKey(me.id, meal.id, i), im.bytes, { httpMetadata: { contentType: im.mime } })));
         await env.DB.prepare(`UPDATE track_meals SET photos = ? WHERE id = ?`).bind(images.length, meal.id).run();
