@@ -232,6 +232,19 @@
   .item .mults .g { flex:2; min-width:92px; display:flex; align-items:center; gap:4px; background:var(--panel); border-radius:10px; padding:0 8px; }
   .item .mults .g input { padding:8px 4px; border:0; background:transparent; text-align:right; width:100%; }
   .item .mults .g span { font-size:12px; color:var(--muted); }
+  /* the meal's macros against the day's goals: three cells, the same shape as the day's own bars */
+  .mac { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin:0 0 8px; }
+  .mac .mc { background:var(--panel); border-radius:12px; padding:8px 10px; min-width:0; border-top:3px solid transparent; }
+  .mac .mc b { display:block; font-size:11.5px; font-weight:600; color:var(--muted); }
+  .mac .mc .mg { display:block; font-weight:700; font-size:16px; margin:1px 0 0; }
+  .mac .mc .mp { display:block; font-size:12px; color:var(--muted); }
+  .mac .mc .md { display:block; font-size:11.5px; color:var(--muted); margin-top:3px; }
+  .mac .mc .mt { display:flex; height:6px; border-radius:6px; background:var(--edge); overflow:hidden; margin:6px 0 0; }
+  .mac .mc .mt i { display:block; height:100%; } .mac .mc .mt i.was { background:var(--muted); opacity:.45; } .mac .mc .mt i.now { background:var(--accent); }
+  .mac .mc.good { border-top-color:var(--accent); } .mac .mc.good .md { color:var(--accent); }
+  .mac .mc.warn { border-top-color:#d97706; } .mac .mc.warn .md { color:#d97706; font-weight:600; } .mac .mc.warn .mt i.now { background:#d97706; }
+  .mac .mc.bad { border-top-color:var(--danger); } .mac .mc.bad .md { color:var(--danger); font-weight:600; } .mac .mc.bad .mt i.now { background:var(--danger); }
+  .mackey { font-size:11.5px; color:var(--muted); margin:-2px 0 8px; }
   .total { display:flex; justify-content:space-between; align-items:baseline; font-weight:700; padding:10px 0 8px; } .total small { font-weight:400; color:var(--muted); font-size:12px; margin-left:6px; }
   /* What fits: the plate against what is left today, said before Save rather than after. */
   .fit { margin:2px 0 8px; padding:8px 12px; border-radius:12px; background:var(--panel); font-size:13.5px; line-height:1.45; border-left:3px solid var(--accent); }
@@ -1758,14 +1771,49 @@ function activeMult(it) {
 // wording is what got saved into the day. A typed weight IS the portion ("200 g"); a
 // weight that matches a button reads as the original words times it ("½ cup × 1½");
 // back at 1× the original words return.
+// A food WITH a weight is set by its weight alone (grams or ounces): at the weight it was read
+// at, the original words; at any other weight, the weight. The ½× 1× 1½× 2× buttons are only
+// for a food that came with no weight at all, where there is nothing else to change it by.
 const TIMES = { 0.5: '½', 1.5: '1½', 2: '2' };
+const hasWeight = (it) => Boolean(it.grams || (it.base && it.base.grams));
 function amountLabel(it) {
   const orig = it.base.portion || '';
+  if (hasWeight(it)) {
+    if (it.base.grams && Math.round(it.grams || 0) === Math.round(it.base.grams)) return orig || wLabel(it.grams);
+    return it.grams ? wLabel(it.grams) : (orig || it.portion || '');
+  }
   const m = activeMult(it);
   if (m === 1) return orig || it.portion || '';
   if (m != null && orig) return orig + ' × ' + (TIMES[m] || m);
-  return it.grams ? wLabel(it.grams) : (orig || it.portion || '');
+  return orig || it.portion || '';
 }
+// The meal's macros against the day's goals. Code, not the model. Each cell says the grams in this
+// meal, what share of the day's goal that is, and where the day lands with this meal in it (what was
+// eaten before it, plus anything else planned). The colour is about the DAY, by the standard the week
+// view already uses (within 15% counts as on target): carbs and fat are limits — over the goal is
+// amber, more than 15% over is red; protein is a floor — green once the day reaches it, never red.
+function macroHtml(tot) {
+  const t = (DAY && DAY.targets) || S.targets || {};
+  const inDay = DAY ? (DAY.meals || []).find((m) => m.id === ED.meal.id) : null;
+  const mine = inDay && !inDay.planned ? inDay : null;
+  const cell = (key, name, g, floor) => {
+    const goal = Number(t[key]) || 0, grams = Math.round(g);
+    if (!goal) return '<div class="mc"><b>' + name + '</b><span class="mg">' + grams + ' g</span><span class="mp">no goal set</span></div>';
+    const eaten = ((DAY && DAY.totals && DAY.totals[key]) || 0) - (mine ? (mine[key] || 0) : 0);
+    const kept = ((DAY && DAY.planned && DAY.planned[key]) || 0) - (inDay && inDay.planned ? (inDay[key] || 0) : 0);
+    const before = Math.max(0, eaten + kept), day = before + g, r = day / goal;
+    const state = floor ? (r >= 1 ? 'good' : '') : (r > 1.15 ? 'bad' : r > 1 ? 'warn' : 'good');
+    const gap = Math.round(Math.abs(goal - day));
+    const words = floor ? (r >= 1 ? 'goal reached' : gap + ' g to go') : (r > 1.15 ? gap + ' g over · too much' : r > 1 ? gap + ' g over' : gap + ' g left');
+    const was = Math.min(100, before / goal * 100), now = Math.max(0, Math.min(100 - was, g / goal * 100));
+    return '<div class="mc ' + state + '" title="' + name + ': ' + grams + ' g in this meal. With it the day is at ' + Math.round(day) + ' of ' + Math.round(goal) + ' g."><b>' + name + '</b><span class="mg">' + grams + ' g</span><span class="mp">' + Math.round(g / goal * 100) + '% of ' + Math.round(goal) + ' g</span>'
+      + '<span class="mt"><i class="was" style="width:' + was.toFixed(1) + '%"></i><i class="now" style="width:' + now.toFixed(1) + '%"></i></span><span class="md">Day ' + Math.round(r * 100) + '% · ' + words + '</span></div>';
+  };
+  const any = t.protein_g || t.carbs_g || t.fat_g;
+  return '<div class="mac">' + cell('protein_g', 'Protein', tot.p, true) + cell('carbs_g', 'Carbs', tot.c, false) + cell('fat_g', 'Fat', tot.f, false) + '</div>'
+    + (any ? '' : '<p class="mackey">Set your targets and these show against them.</p>');
+}
+const totalHtml = (tot) => '<span>Total</span><span>' + tot.kcal + ' kcal</span>';
 // Grams or ounces for typed weights (the ⚖️ box). Remembered per browser; the first time it follows the
 // targets' unit (lb → oz). Stored as grams either way. Ounces can be typed as 8.1, 8,1 or 8 1/8.
 const OZ = 28.3495;
@@ -1803,16 +1851,16 @@ function renderEditor(notes) {
   // One line per food; tap it for the portion controls (only one open at a time).
   const rows = ED.items.map((it, i) => { const s = scaled(it), open = ED.open === i; return '<div class="item' + (open ? ' open' : '') + '" data-i="' + i + '">'
     + '<button type="button" class="irow" data-open="1"><span class="in"><b>' + esc(it.name) + '</b> <small>' + esc(it.portion || (it.grams ? gramsNice(it.grams) + ' g' : '')) + '</small><em>P ' + s.protein_g.toFixed(0) + ' · C ' + s.carbs_g.toFixed(0) + ' · F ' + s.fat_g.toFixed(0) + (it.confidence != null && it.confidence < 0.6 ? ' · <span style="color:#d97706">not sure</span>' : '') + '</em></span><span class="ik">' + s.kcal + '</span></button>'
-    + (!open ? '' : '<div class="mults">' + [0.5, 1, 1.5, 2].map((m) => '<button data-m="' + m + '" class="' + (activeMult(it) === m ? 'on' : '') + '">' + ({ 0.5: '½×', 1: '1×', 1.5: '1½×', 2: '2×' }[m]) + '</button>').join('')
+    + (!open ? '' : '<div class="mults">' + (hasWeight(it) ? '' : [0.5, 1, 1.5, 2].map((m) => '<button data-m="' + m + '" class="' + (activeMult(it) === m ? 'on' : '') + '">' + ({ 0.5: '½×', 1: '1×', 1.5: '1½×', 2: '2×' }[m]) + '</button>').join(''))
     + '<div class="g" title="Weight — tap g / oz to switch">⚖️<input type="text" autocomplete="off" inputmode="decimal" value="' + (it.grams ? wShow(it.grams) : '') + '" data-g="1" placeholder="' + wUnit() + '"><button type="button" class="u" data-unit="1" title="Switch between grams and ounces">' + wUnit() + '</button></div>'
     + '<button data-rm="1" class="ghost" style="flex:.5" title="Remove">✕</button></div>'
     // Ounces on a phone: the keypad has no "/" — so the eighths a kitchen scale shows are buttons (whole ounces typed).
-    + (wUnit() === 'oz' ? '<div class="eighths">' + ['0', '⅛', '¼', '⅜', '½', '⅝', '¾', '⅞'].map((f, k) => '<button type="button" data-eighth="' + k + '" class="' + (it.grams && Math.round((it.grams / OZ % 1) * 8) % 8 === k ? 'on' : '') + '" title="' + (k ? k + '/8 oz' : 'whole ounces') + '">' + (k ? f : '.0') + '</button>').join('') + '</div>' : '')) + '</div>'; }).join('');
+    + (wUnit() === 'oz' && hasWeight(it) ? '<div class="eighths">' + ['0', '⅛', '¼', '⅜', '½', '⅝', '¾', '⅞'].map((f, k) => '<button type="button" data-eighth="' + k + '" class="' + (it.grams && Math.round((it.grams / OZ % 1) * 8) % 8 === k ? 'on' : '') + '" title="' + (k ? k + '/8 oz' : 'whole ounces') + '">' + (k ? f : '.0') + '</button>').join('') + '</div>' : '')) + '</div>'; }).join('');
   const tot = ED.items.reduce((a, it) => { const s = scaled(it); a.kcal += s.kcal; a.p += s.protein_g; a.c += s.carbs_g; a.f += s.fat_g; return a; }, { kcal: 0, p: 0, c: 0, f: 0 });
   sheet('<div class="row" style="justify-content:space-between"><h2 style="margin:0">' + (ED.fresh ? 'Here’s what I see' : 'Edit meal') + '</h2><span class="row" style="flex:none;gap:8px">' + (ED.meal.id ? '<button type="button" class="ghost" id="edshare" style="padding:6px 10px" title="Share a link to this meal">Share</button>' : '') + (ED.meal.thumb || ED.meal.photos ? '<span class="edthumb" id="edthumb" title="' + (ED.meal.photos ? 'The meal’s picture — drag a photo here to change it' : 'The meal’s picture') + '">' + (ED.meal.thumb ? '<img src="' + ED.meal.thumb + '" alt="">' : 'drop<br>here') + '</span>' : '') + '</span></div>'
     + photoStrip(ED.meal) + (notes ? '<p class="muted small" style="margin:6px 0 2px">' + esc(notes) + '</p>' : '') + rows
-    + '<div class="total"><span>Total <small>P ' + tot.p.toFixed(0) + ' · C ' + tot.c.toFixed(0) + ' · F ' + tot.f.toFixed(0) + '</small></span><span>' + tot.kcal + ' kcal</span></div>'
-    + fitAdvice()
+    + '<div class="total">' + totalHtml(tot) + '</div><div id="edmac">' + macroHtml(tot) + '</div>'
+    + '<div id="edfit">' + fitAdvice() + '</div>'
     // When it was eaten. Prefilled with the clock it was logged on; a change is read on THIS browser's clock.
     // When, and eaten or planned (a plan counts against the day, never as eaten, until it's confirmed) — one line.
     + '<div class="edmeta"><input type="time" id="ed-time" value="' + esc(editTime(ED.meal)) + '" title="When you ate it">'
@@ -1842,10 +1890,12 @@ function renderEditor(notes) {
       const em = row.querySelector('.in em'); if (em && em.firstChild) em.firstChild.textContent = 'P ' + s.protein_g.toFixed(0) + ' · C ' + s.carbs_g.toFixed(0) + ' · F ' + s.fat_g.toFixed(0);
       const tot = ED.items.reduce((a, x) => { const t = scaled(x); a.kcal += t.kcal; a.p += t.protein_g; a.c += t.carbs_g; a.f += t.fat_g; return a; }, { kcal: 0, p: 0, c: 0, f: 0 });
       const T = $('sheetbody').querySelector('.total');
-      if (T) T.innerHTML = '<span>Total <small>P ' + tot.p.toFixed(0) + ' · C ' + tot.c.toFixed(0) + ' · F ' + tot.f.toFixed(0) + '</small></span><span>' + tot.kcal + ' kcal</span>';
+      if (T) T.innerHTML = totalHtml(tot);
+      const M = $('edmac'); if (M) M.innerHTML = macroHtml(tot);
+      const F = $('edfit'); if (F) { F.innerHTML = fitAdvice(); wireFit(); }   // in place: no redraw while typing
     };
     el.querySelectorAll('[data-eighth]').forEach((b) => b.onclick = () => { const whole = Math.floor((it.grams || 0) / OZ + 1e-6 + (Math.round(((it.grams || 0) / OZ % 1) * 8) === 8 ? 1 : 0)); it.grams = (whole + (+b.dataset.eighth) / 8) * OZ; if (it.base.grams) it.mult = it.grams / it.base.grams; it.portion = amountLabel(it); renderEditor(notes); });
-    el.querySelector('[data-unit]').onclick = () => { WUNIT = wUnit() === 'oz' ? 'g' : 'oz'; try { localStorage.setItem('plate:wunit', WUNIT); } catch {} for (const x of ED.items) if (x.grams && activeMult(x) == null) x.portion = amountLabel(x); renderEditor(notes); };
+    el.querySelector('[data-unit]').onclick = () => { WUNIT = wUnit() === 'oz' ? 'g' : 'oz'; try { localStorage.setItem('plate:wunit', WUNIT); } catch {} for (const x of ED.items) if (x.grams) x.portion = amountLabel(x); renderEditor(notes); };
     g.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); g.blur(); } };
     el.querySelector('[data-rm]').onclick = () => { ED.items.splice(+el.dataset.i, 1); ED.open = null; renderEditor(notes); };
   });
@@ -1869,8 +1919,11 @@ function renderEditor(notes) {
     openEditor(r.meal, { fresh: ED.fresh, notes: fixSummary(before, r.meal.items || []) });
   };
   // "Take three quarters": every item scaled by the fraction, on the grams it has now. "Leave the rice": that item goes.
-  $('sheetbody').querySelectorAll('[data-fit]').forEach((b) => b.onclick = () => { const f = Number(b.dataset.fit); for (const it of ED.items) { if (it.grams) it.grams = Math.round(it.grams * f); it.mult = (it.mult || 1) * f; } renderEditor(notes); });
-  $('sheetbody').querySelectorAll('[data-leave]').forEach((b) => b.onclick = () => { ED.items.splice(Number(b.dataset.leave), 1); renderEditor(notes); });
+  const wireFit = () => {
+    $('sheetbody').querySelectorAll('[data-fit]').forEach((b) => b.onclick = () => { const f = Number(b.dataset.fit); for (const it of ED.items) { if (it.grams) it.grams = Math.round(it.grams * f); it.mult = (it.mult || 1) * f; it.portion = amountLabel(it); } renderEditor(notes); });
+    $('sheetbody').querySelectorAll('[data-leave]').forEach((b) => b.onclick = () => { ED.items.splice(Number(b.dataset.leave), 1); renderEditor(notes); });
+  };
+  wireFit();
   if ($('edshare')) $('edshare').onclick = () => shareMeal(ED.meal.id);
   if ($('reread')) $('reread').onclick = () => readAgain(ED.meal);
   wirePhotoStrip(ED.meal);
