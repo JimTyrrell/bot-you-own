@@ -378,6 +378,39 @@
   .ready li div { min-width:0; flex:1; } .ready small { color:var(--muted); font-size:12px; display:block; margin-top:3px; }
   .seccmd { margin:6px 0 0; font-size:12px; white-space:pre-wrap; word-break:break-all; }
   #secbody h5 { margin:16px 0 4px; font-size:13.5px; }
+  /* the owner's pill, last in the strip, and the walkthrough it opens */
+  #tour .stop.owner { border-style:dashed; }
+  #tour .stop.owner .n { border:0; width:auto; font-size:13px; }
+  .lockwrap form.ownform { width:min(640px,100%); max-height:92vh; overflow:auto; gap:10px; }
+  .ownsteps { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:8px; }
+  .ownstep { border:1px solid var(--edge); border-radius:12px; background:var(--bg); }
+  .ownstep.open { border-color:var(--text); }
+  .lockwrap .ownhead { display:flex; align-items:center; gap:12px; width:100%; padding:10px 12px; background:transparent; color:var(--text); border:0; border-radius:12px; text-align:left; font:inherit; font-weight:400; cursor:pointer; }
+  .ownhead .n { width:24px; height:24px; border-radius:50%; border:1px solid var(--edge); display:inline-flex; align-items:center; justify-content:center; font-size:12px; flex:none; }
+  .ownstep.done .ownhead .n { background:var(--accent, #10a37f); color:#fff; border-color:transparent; }
+  .ownhead .t { display:flex; flex-direction:column; flex:1; min-width:0; font-size:14px; }
+  .ownhead .t small { color:var(--muted); font-size:12.5px; }
+  .ownhead .chev { color:var(--muted); flex:none; }
+  .ownbody { padding:2px 14px 14px 48px; font-size:13px; color:var(--text); }
+  .ownstep:not(.open) .ownbody { display:none; }
+  @media (max-width: 560px) { .ownbody { padding-left:14px; } }
+  .ownbody h5 { margin:14px 0 4px; font-size:13.5px; }
+  .lockwrap .ownbody p { margin:0 0 8px; }
+  .lockwrap .ownbody input[type=radio], .lockwrap .ownbody input[type=checkbox] { width:16px; height:16px; padding:0; flex:none; margin:3px 0 0; }
+  .ownbody .caps label { align-items:flex-start; }
+  .lockwrap .ownbtn { display:inline-block; padding:7px 12px; border-radius:10px; border:1px solid var(--edge); background:var(--bg); color:var(--text); font:inherit; font-size:13px; font-weight:600; text-decoration:none; cursor:pointer; }
+  .lockwrap .ownbtn.primary { background:var(--text); color:var(--bg); border-color:transparent; }
+  .lockwrap .ownbtn:disabled { opacity:.5; cursor:default; }
+  .ownrow { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:10px 0 0; }
+  .ownmake { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:6px 0 0; }
+  .ownmake code { font-size:12px; word-break:break-all; padding:4px 8px; border:1px solid var(--edge); border-radius:8px; background:var(--side); }
+  .lockwrap .ownmake [hidden] { display:none; }
+  .ownbody details { margin:6px 0 0; font-size:12.5px; color:var(--muted); } .ownbody details summary { cursor:pointer; }
+  .ownbody pre { background:var(--side); border:1px solid var(--edge); border-radius:8px; padding:8px; overflow:auto; color:var(--text); }
+  .ownbody .setupsteps { margin:4px 0 8px; }
+  .ownbody .ready .setupsteps li { display:list-item; border-top:0; padding:0; margin:3px 0; }
+  .ownbody .ready li.opt > span { color:var(--muted); }
+  .ownmsg { font-size:13px; color:var(--muted); min-height:1em; }
   .inviterow { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
   .inviterow select, .inviterow input { margin:0; padding:6px 8px; border:1px solid var(--edge); border-radius:8px; background:var(--bg); color:var(--text); font:inherit; font-size:13px; } .inviterow input[type=text] { flex:1; min-width:160px; }
   .lockinvite { display:flex; gap:8px; margin:8px 0 0; } .lockinvite[hidden] { display:none; } .lockinvite input { flex:1; margin:0; text-transform:uppercase; } .lockinvite input::placeholder { text-transform:none; } .lockinvite button { flex:0 0 auto; }
@@ -496,6 +529,13 @@ document.addEventListener('DOMContentLoaded', function () {
   gates visitors, if you want a locked bot rather than a sign-up.</p>
   <a class="primary" id="setupdash" href="https://dash.cloudflare.com/?to=/:account/workers-and-pages" target="_blank" rel="noopener">Open the Cloudflare dashboard</a>
   <button type="button" id="setupclose" style="background:var(--panel);color:var(--text)">Back to the bot</button>
+</form></div>
+<div id="ownerwrap" class="lockwrap modal"><form id="ownerform" class="ownform" onsubmit="return false">
+  <button type="button" class="modalx" data-x="ownerwrap" title="Close">✕</button>
+  <h2>🔧 Make it yours</h2>
+  <p>Five steps take this from a demo to your own locked-down site. Each one ticks itself when it is done. <b id="own_sum"></b></p>
+  <ol class="ownsteps" id="ownsteps"></ol>
+  <div id="own_msg" class="ownmsg"></div>
 </form></div>
 <div id="introwrap" class="lockwrap keywrap"><form id="introform">
   <button type="button" class="modalx" data-x="introwrap" title="Close">✕</button>
@@ -953,7 +993,7 @@ function signOut() {
   TOKEN = ''; VISITOR = ''; ADMIN = ''; TOKENS = {};
   // byo:device goes too: the next load makes a fresh key, so this browser is nobody again.
   // the tour and the attacks belong to the person, not the browser: they go too (the gate's prefill stays — that's convenience, not identity)
-  try { ['byo:token', 'byo:tokens', 'byo:visitor', 'byo:admin', 'byo:device', 'byo:tour', 'byo:break'].forEach((k) => localStorage.removeItem(k)); sessionStorage.removeItem('byo:breakbar'); sessionStorage.removeItem('byo:typed'); localStorage.removeItem('byo:intro'); } catch {}
+  try { ['byo:token', 'byo:tokens', 'byo:visitor', 'byo:admin', 'byo:device', 'byo:tour', 'byo:break', 'byo:owner'].forEach((k) => localStorage.removeItem(k)); sessionStorage.removeItem('byo:breakbar'); sessionStorage.removeItem('byo:typed'); localStorage.removeItem('byo:intro'); } catch {}
   $('hood').classList.remove('show'); location.href = location.pathname;
 }
 $('signoutbtn').onclick = signOut;
@@ -1010,6 +1050,7 @@ function boot(pid) {
   $('signout').hidden = !gated; $('whoami').textContent = VISITOR ? VISITOR : (ADMIN ? 'admin' : '');
   state.cfg = cfg; state.projects = cfg.projects;
   initTour();
+  try { if (sessionStorage.getItem('byo:demooff')) { sessionStorage.removeItem('byo:demooff'); tourToast('Demo mode is off', 'This is your site now. You still see hidden bots because you are signed in as the owner. Visitors don\'t. To bring anything back: ⚙ Under the hood → Security → Demo.', 12000); } } catch {}
   document.title = cfg.siteName || 'The Bot You Own';
   $('brand').textContent = cfg.siteName || 'The Bot You Own';
   if (cfg.accent) document.documentElement.style.setProperty('--accent', cfg.accent);
@@ -1145,6 +1186,7 @@ function accessBadge(p) {
   const b = [];
   if (p.access === 'draft') b.push('draft');
   if (p.listed === false) b.push('unlisted');
+  if (p.sampleHidden) b.push('sample · hidden');
   if (p.access === 'admin') b.push('owner only');
   else if (/key/.test(p.access || '')) b.push('🔒');
   return b.length ? ' <span class="pill" style="vertical-align:1px">' + b.map(esc).join(' · ') + '</span>' : '';
@@ -1587,6 +1629,7 @@ function nudgeTarget() {
   if (!TOUR.guide || ADMIN || viewAs) return null;
   if ($('lock').classList.contains('show')) return { el: $('lockgo'), text: 'Start here' };
   if ($('introwrap').classList.contains('show')) return { el: $('intro_go'), text: 'Tap here' };
+  if ($('ownerwrap').classList.contains('show') || $('setupwrap').classList.contains('show')) return null;   // the owner is reading, not touring
   if (FRESH_ID) { const row = document.querySelector('#projects .item.fresh'); if (row && state.project?.id !== FRESH_ID) return { el: row, text: 'Your bot' }; }
   if ($('sandboxwrap').classList.contains('show')) { if (!$('sb_picks').hidden) { const pk = document.querySelector('#sb_picks [data-pick]'); if (pk) return { el: pk, text: 'Pick one' }; } if (!$('sb_fields').hidden) return { el: $('sb_go'), text: 'Create it' }; const door = document.querySelector('.sbdoors button'); return door ? { el: door, text: 'Pick a door' } : null; }
   if ($('keywrap').classList.contains('show')) return { el: $('key_workshop').hidden ? $('key_go') : $('key_workshop'), text: 'This one' };
@@ -1606,7 +1649,7 @@ function nudgeTarget() {
   if (!$('typebar').hidden) return { el: $('typechip'), text: 'Tap this' };   // a full box is handled above
   if (next === 'break' && !$('breakbar').hidden) { const a = document.querySelector('#breakbar .row button:not(.used)'); if (a) return { el: a, text: 'Tap one' }; }
   // otherwise: the pill in the strip for the next stop — every stop gets the finger
-  if (next) { const chip = [...document.querySelectorAll('#tour .stop')].find((b) => b.classList.contains('next')) || [...document.querySelectorAll('#tour .stop')][TOUR.stops.indexOf(next)]; if (chip) return { el: chip, text: next === 'break' ? 'Now break it' : 'Next stop' }; }
+  if (next) { const chip = [...document.querySelectorAll('#tour .stop:not(.owner)')].find((b) => b.classList.contains('next')) || [...document.querySelectorAll('#tour .stop:not(.owner)')][TOUR.stops.indexOf(next)]; if (chip) return { el: chip, text: next === 'break' ? 'Now break it' : 'Next stop' }; }
   return null;
 }
 function showNudge() {
@@ -1755,7 +1798,8 @@ function tourSave() { try { localStorage.setItem('byo:tour', JSON.stringify(TOUR
 async function initTour() {
   TOUR.guide = (state.projects || []).find((p) => p.tour && p.tour.stops && p.tour.stops.length) || null;
   TOUR.community = state.cfg?.community || null;
-  if (!TOUR.guide) { $('tour').hidden = true; $('tourmake').hidden = true; return; }
+  // No tour (demo mode off, or no guide bot): the addresses still work — ?hood=security, ?panel=owner.
+  if (!TOUR.guide) { $('tour').hidden = true; $('tourmake').hidden = true; if (!$('lock').classList.contains('show')) setTimeout(openPanelFromUrl, 300); return; }
   TOUR.stops = TOUR.guide.tour.stops.filter((s) => STOP_META[s]);
   TOUR.done = tourLoad();
   renderTour(); armNudge();
@@ -1816,6 +1860,14 @@ function renderTour() {
     b.title = STOP_META[s].hint + (paid ? ' (opens with your membership)' : ''); b.innerHTML = '<span class="n">' + (TOUR.done[s] ? '✓' : i + 1) + '</span>' + esc(STOP_META[s].label) + (paid ? '<span class="paid" title="Opens with your membership">$</span>' : '');
     b.onclick = () => tourGo(s); el.appendChild(b);
   });
+  // The owner's pill, in the last spot. Not a stop: it is never counted and never gets the finger.
+  if (ownerPillShown()) {
+    const a = document.createElement('span'); a.className = 'arrow'; a.textContent = '›'; el.appendChild(a);
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'stop owner'; b.id = 'ownerpill';
+    b.title = 'For the owner: set up your stack, lock it down, then switch the tour and the sample bots off.';
+    b.innerHTML = '<span class="n">🔧</span>Turn off demo mode';
+    b.onclick = () => openOwner(); el.appendChild(b);
+  }
   const n = TOUR.stops.filter((s) => TOUR.done[s]).length;
   const sum = document.createElement('span'); sum.className = 'sum'; sum.textContent = n === TOUR.stops.length ? 'Tour done 🎉' : n + ' of ' + TOUR.stops.length; el.appendChild(sum);
   armNudge();
@@ -1864,8 +1916,8 @@ function showBreakBar(on) {
   row.appendChild(own); bar.append(h, row); bar.hidden = false;
 }
 // Overlays are a history step: Back closes them (and only them), so does Escape, so does a tap outside.
-const OVERLAYS = ['introwrap', 'keywrap', 'sandboxwrap', 'setupwrap'];
-const PANEL_NAME = { introwrap: 'intro', keywrap: 'key', sandboxwrap: 'build', setupwrap: 'setup' };
+const OVERLAYS = ['introwrap', 'keywrap', 'sandboxwrap', 'setupwrap', 'ownerwrap'];
+const PANEL_NAME = { introwrap: 'intro', keywrap: 'key', sandboxwrap: 'build', setupwrap: 'setup', ownerwrap: 'owner' };
 // The intro: once per person, right after the gate, before the tour.
 function maybeIntro() { let seen = ''; try { seen = localStorage.getItem('byo:intro') || ''; } catch {} if (seen || !TOUR.guide || ADMIN) return; overlayOpen('introwrap'); }
 $('introform').addEventListener('submit', (e) => { e.preventDefault(); try { localStorage.setItem('byo:intro', '1'); } catch {} overlayClose('introwrap'); armNudge(); });            // …and each has a URL: ?panel=key, ?panel=build
@@ -1873,10 +1925,210 @@ function overlayOpen(id) { const el = $(id); if (el.classList.contains('show')) 
 function overlayClose(id, viaHistory) { const el = $(id); if (!el.classList.contains('show')) return; el.classList.remove('show'); if (id === 'introwrap') { try { localStorage.setItem('byo:intro', '1'); } catch {} } if (!viaHistory && history.state && history.state.overlay === id) { try { history.back(); } catch {} } }
 function closeOpenOverlays() { let any = false; OVERLAYS.forEach((id) => { if ($(id).classList.contains('show')) { $(id).classList.remove('show'); any = true; if (id === 'introwrap') { try { localStorage.setItem('byo:intro', '1'); } catch {} } } }); return any; }
 // A panel named in the URL opens on load (after the tour knows who this is).
-function openPanelFromUrl() { if (hoodFromUrl()) return; const p = new URLSearchParams(location.search).get('panel'); if (!p) return; const u = new URL(location.href); u.searchParams.delete('panel'); history.replaceState(history.state, '', u); if (p === 'build') openSandbox(); else if (p === 'key') openKeyModal('make'); }
+function openPanelFromUrl() { if (hoodFromUrl()) return; const p = new URLSearchParams(location.search).get('panel'); if (!p) return; const u = new URL(location.href); u.searchParams.delete('panel'); history.replaceState(history.state, '', u); if (p === 'build') openSandbox(); else if (p === 'key') openKeyModal('make'); else if (p === 'owner') openOwner(); }
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') OVERLAYS.forEach((id) => overlayClose(id)); });
 document.querySelectorAll('.modalx').forEach((b) => { b.onclick = () => overlayClose(b.dataset.x); });
 OVERLAYS.forEach((id) => $(id).addEventListener('pointerdown', (e) => { if (e.target === $(id)) overlayClose(id); }));
+// ============================================================================
+//  THE OWNER'S WALKTHROUGH — the last pill in the strip: "Turn off demo mode".
+//  Five steps from a fresh deploy to a locked-down site of your own: claim it, sign in,
+//  set up the stack, lock it down, turn off demo mode. Every step ticks itself from what
+//  the server reports (GET /api/admin/settings), never from a box the owner ticked.
+//  Who sees the pill: everyone while nobody has claimed the deployment (the blue bar is
+//  showing then too), and after that only the owner — signed in, or a browser that has
+//  opened the walkthrough before. A visitor on a claimed site never sees it.
+//  It has an address: ?panel=owner. The same switches live under the hood → Security → Demo,
+//  which is where demo mode is turned back ON (the strip, and this pill, are gone by then).
+// ============================================================================
+const OWN = { d: null, open: '', err: '', made: {} };
+const OWN_DASH = 'https://dash.cloudflare.com/?to=/:account/workers-and-pages';
+function ownerBegan() { try { return localStorage.getItem('byo:owner') === '1'; } catch { return false; } }
+function ownerPillShown() { return !ADMIN_ENABLED || Boolean(ADMIN) || ownerBegan(); }
+// The body every settings PUT sends: the whole current state, plus the one change.
+function settingsBody(d, patch) {
+  const deep = (a, b) => { const o = { ...(a || {}) }; for (const k of Object.keys(b || {})) o[k] = b[k] && typeof b[k] === 'object' && !Array.isArray(b[k]) ? deep(o[k], b[k]) : b[k]; return o; };
+  const e = d.expiry || {};
+  return deep({ access: { default: d.access.default, floor: d.access.floor }, createYourOwn: d.createYourOwn, identity: { graceMinutes: d.identity?.graceMinutes ?? 60 }, expiry: { onLapse: e.onLapse, graceDays: e.graceDays, warnDays: e.warnDays, defaultDays: e.defaultDays }, signup: d.signup }, patch);
+}
+async function openOwner(step) {
+  try { localStorage.setItem('byo:owner', '1'); } catch {}
+  OWN.open = step || ''; $('tourmake').hidden = true; overlayOpen('ownerwrap'); hideNudge();
+  $('own_msg').textContent = '';
+  $('ownsteps').innerHTML = '<li><p class="thinking"><span>Checking what is set up</span></p></li>';
+  await loadOwner(); drawOwner(); renderTour();
+}
+async function loadOwner() {
+  OWN.err = ''; OWN.d = null;
+  try { const r = await fetch('/api/admin/unlock/needs'); const j = await r.json(); ADMIN_ENABLED = Boolean(j.adminEnabled); $('claimbar').classList.toggle('show', !ADMIN_ENABLED); $('cfgbtn').disabled = !ADMIN_ENABLED; $('cfgbtn').classList.toggle('off', !ADMIN_ENABLED); } catch {}
+  if (!ADMIN || !ADMIN_ENABLED) return;
+  try {
+    const r = await fetch('/api/admin/settings', { headers: adminHeaders() });
+    if (r.status === 401) { ADMIN = ''; try { localStorage.removeItem('byo:admin'); } catch {} return; }
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status);
+    OWN.d = j;
+  } catch (err) { OWN.err = 'Could not read the settings (' + (err.message || err) + '). Press Check again.'; }
+}
+async function ownPut(patch) {
+  const msg = $('own_msg'); msg.textContent = 'Saving…';
+  try {
+    const r = await fetch('/api/admin/settings', { method: 'PUT', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify(settingsBody(OWN.d, patch)) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { msg.textContent = 'Not saved: ' + (j.error || r.status); return null; }
+    OWN.d = j; msg.textContent = 'Saved. Live within seconds.'; return j;
+  } catch { msg.textContent = 'Not saved: could not reach the server. Try again.'; return null; }
+}
+// A random value made in this browser and never sent anywhere: the owner pastes it into
+// the dashboard (and, for the second factor, into the authenticator app).
+function ownRandom(kind) {
+  const b = crypto.getRandomValues(new Uint8Array(kind === 'base32' ? 20 : 24));
+  if (kind === 'base32') { const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'; let bits = '', out = ''; b.forEach((x) => { bits += x.toString(2).padStart(8, '0'); }); for (let i = 0; i + 5 <= bits.length; i += 5) out += A[parseInt(bits.slice(i, i + 5), 2)]; return out; }
+  return btoa(String.fromCharCode(...b)).replace(/[+/=]/g, (c) => ({ '+': '-', '/': '_', '=': '' }[c]));
+}
+function ownSecret(name, value, kind) {
+  const made = OWN.made[name] || '';
+  return '<small>Cloudflare dashboard → <b>Workers &amp; Pages</b> → this Worker → <b>Settings</b> → <b>Variables and Secrets</b> → <b>Add</b>. Type <b>Secret</b>, name <b>' + esc(name) + '</b>, value: ' + value + '. Then <b>Deploy</b>.</small>'
+    + (kind ? '<div class="ownmake"><button type="button" class="ownbtn" data-make="' + esc(name) + '" data-kind="' + kind + '">' + (made ? 'Make another' : 'Make one for me') + '</button><code' + (made ? '' : ' hidden') + '>' + esc(made) + '</code><button type="button" class="ownbtn" data-copy' + (made ? '' : ' hidden') + '>Copy</button></div>' : '');
+}
+const ownTerm = (c) => '<details><summary>Or from a terminal, in the repo folder</summary><pre class="seccmd">' + esc(c) + '</pre></details>';
+const ownReady = (items) => '<ul class="ready">' + items.map((i) => '<li class="' + (i.ok ? 'ok' : i.optional ? 'todo opt' : 'todo') + '"><span>' + (i.ok ? '✓' : '○') + '</span><div><b>' + i.label + '</b>' + (i.note ? '<small>' + i.note + '</small>' : '') + (i.ok ? '' : (i.fix || '')) + '</div></li>').join('') + '</ul>';
+// What is done, read from the server's own report. One place, so the pill, the step
+// headers and the warning on the last step can never disagree.
+function ownModel() {
+  const d = OWN.d, claimed = ADMIN_ENABLED, signed = Boolean(claimed && ADMIN && d);
+  const m = { claimed, signed, stack: [], lock: [], stackDone: false, lockDone: false, demoOff: false };
+  if (!signed) return m;
+  const onWorkersDev = /\.workers\.dev$/.test(location.hostname);
+  const gw = d.gateway || {}, gid = gw.id || 'bot-you-own';
+  const gwSteps = '<ol class="setupsteps"><li>Cloudflare dashboard → <b>AI</b> → <b>AI Gateway</b> → <b>Create Gateway</b>.</li><li>Name it exactly <b>' + esc(gid) + '</b>: lower-case, hyphens, no spaces. Press <b>Create</b>.</li><li>Open it → <b>Settings</b> → <b>Spend limit</b>. Switch it on. $5 a month is plenty to start.</li><li>Send one message to any bot here, then press <b>Check again</b>.</li></ol><small>docs/OWNER-CHECKLIST.md §1 has the screenshots.</small>';
+  m.stack = [
+    { ok: Boolean(d.canSave), label: 'A database is bound', note: 'Conversations, sign-ups and every setting on this page are kept in your own D1 database.', fix: '<small>The deploy button makes one for you. If this line is amber, the binding is missing: <code>wrangler.jsonc</code> → <code>d1_databases</code> (docs/DEPLOY.md). Nothing on this list can be saved until it is there.</small>' },
+    gw.state === 'ok'
+      ? { ok: true, label: 'Model calls go through your AI Gateway', note: 'The page cannot see the spend limit itself. Check it is on: dashboard → AI → AI Gateway → ' + esc(gid) + ' → Settings → Spend limit.' }
+      : { ok: false, label: 'Create the AI Gateway: your dollar ceiling', note: gw.state === 'off' ? 'No gateway is named in YourBots/config.js → gateway.id, so every call goes straight to the model with no cap.' : gw.state === 'unknown' ? 'No model call is on the record yet, so there is nothing to judge by.' : 'Calls are going straight to the model: no logs, and no cap on what it can cost.', fix: gw.state === 'off' ? '' : gwSteps },
+    { ok: !onWorkersDev, label: 'People reach this on your own domain', note: onWorkersDev ? 'You are on the workers.dev address. It works, but it cannot be branded, and passkeys are tied to the hostname.' : 'You are on ' + esc(location.hostname) + '.', fix: '<ol class="setupsteps"><li>The domain has to be on Cloudflare. No domain yet? Dashboard → <b>Domain Registration</b> → <b>Register Domains</b>.</li><li>Dashboard → <b>Workers &amp; Pages</b> → this Worker → <b>Settings</b> → <b>Domains &amp; Routes</b> → <b>Add</b> → <b>Custom Domain</b>.</li><li>Type a hostname with no record yet, such as <b>chat.yourdomain.com</b>.</li><li>Open that address and finish this list from there.</li></ol><small>Do this before anyone sets up a passkey (docs/OWNER-CHECKLIST.md §0).</small>' },
+    { ok: Boolean(d.pepperSet), label: 'Stored ids are salted with your own secret', note: d.pepperSet ? 'Every person’s id is made from it. Never change it: a new value gives everybody a new id, and their history stops matching them.' : 'Every person’s id is made from it. Until it is set, a value printed in the public repo is used. Set it before real people join: changing it later gives everybody a new id.', fix: ownSecret('FOODLOG_PEPPER', 'a long random string', 'random') + ownTerm('printf "$(openssl rand -base64 32)" | npx wrangler secret put FOODLOG_PEPPER') },
+    { ok: Boolean(d.github && d.github.ready), optional: true, label: 'Commit to GitHub from this page <i>(optional)</i>', note: 'Changes you save here are live at once. This also writes them into your repo.', fix: '<small>Two secrets: <b>GITHUB_REPO</b> (you/your-repo) and <b>GITHUB_TOKEN</b>, a fine-grained token with Contents: read and write on that one repo (docs/OWNER-CHECKLIST.md §2).</small>' },
+  ];
+  const needsKey = /key/.test(d.access.default) || /key/.test(d.access.floor) || (d.bots || []).some((b) => /key/.test(b.effective));
+  const needsList = (d.bots || []).some((b) => b.effective === 'allow');
+  const g = Number(d.identity?.graceMinutes ?? 60);
+  m.lock = [
+    { ok: g !== -1, label: 'A second device does not walk straight in', note: g === -1 ? 'Now: never waits. Anyone who knows an email is in as that person. Pick one of the other two above.' : g === 0 ? 'Now: a new device waits for you to link it.' : 'Now: trusted within ' + g + ' minutes of their last visit.' },
+    { ok: Boolean(d.breakGlass), label: 'A break-glass key exists', note: 'Your way back in if the phone with the authenticator is lost. Set it before the six-digit code. Keep it somewhere the phone isn’t.', fix: ownSecret('ADMIN_UNLOCK_KEY', '16 or more random characters', 'random') + ownTerm('printf "$(openssl rand -base64 24)" | npx wrangler secret put ADMIN_UNLOCK_KEY') },
+    { ok: Boolean(d.adminTotp), label: 'The owner login asks for a six-digit code', note: 'Without it, the admin passphrase alone opens everything.', fix: '<ol class="setupsteps"><li>Press <b>Make one for me</b> below.</li><li>In your authenticator app, add an account by hand (“enter a setup key”) and paste the key.</li><li>Save the <b>same</b> key as the secret.</li></ol>' + ownSecret('ADMIN_TOTP_SECRET', 'the same key', 'base32') + ownTerm("printf 'THEKEY' | npx wrangler secret put ADMIN_TOTP_SECRET") },
+  ];
+  if (needsKey) m.lock.push({ ok: Boolean(d.sharedKey), label: 'The visitor passphrase is set', note: 'A bot that asks for a passphrase runs open until one exists.', fix: ownSecret('ACCESS_PASSPHRASE', 'the passphrase you will hand out', '') + ownTerm("printf 'the passphrase' | npx wrangler secret put ACCESS_PASSPHRASE") });
+  if (needsList) m.lock.push({ ok: Boolean(d.allowlist && d.allowlist.keySet), label: 'The allowlist key is set', note: 'A bot for invited people refuses everyone until it is.', fix: ownSecret('ALLOWLIST_KEY', 'a long random string', 'random') + ownTerm('printf "$(openssl rand -base64 32)" | npx wrangler secret put ALLOWLIST_KEY') });
+  m.stackDone = m.stack.every((i) => i.ok || i.optional);
+  m.lockDone = m.lock.every((i) => i.ok);
+  m.demoOff = d.demo && d.demo.tour === false && d.demo.bots === false;
+  return m;
+}
+function drawOwner() {
+  const box = $('ownsteps'); if (!box) return;
+  const d = OWN.d, m = ownModel();
+  const left = (items) => items.filter((i) => !i.ok && !i.optional).length;
+  const needSign = '<p class="sechint">This step fills itself in once you are signed in as the owner (step 2).</p>';
+  const steps = [];
+  steps.push({ id: 'claim', title: 'Claim it', done: m.claimed, sum: m.claimed ? 'An admin passphrase is set on this Worker.' : 'Set the admin passphrase. Browser only, no terminal.',
+    body: m.claimed ? '<p>Done. The admin passphrase is a secret on your own Worker. Nobody else can read it, and you can’t read it back either, only replace it.</p>'
+      : '<p>The admin passphrase is a secret on your own Worker. It opens ⚙ Under the hood, and every other step on this list.</p><ol class="setupsteps"><li>Open the Cloudflare dashboard and go to <b>Workers &amp; Pages</b>.</li><li>Select this Worker, then <b>Settings</b>.</li><li>Under <b>Variables and Secrets</b>, select <b>Add</b>.</li><li>Choose type <b>Secret</b>, name it <b>ADMIN_PASSPHRASE</b>, and type the passphrase you want.</li><li>Select <b>Deploy</b>, then come back here.</li></ol>' + ownTerm("printf 'your admin passphrase' | npx wrangler secret put ADMIN_PASSPHRASE") + '<p class="sechint">Write it down before you press Deploy. A secret can’t be read back.</p><div class="ownrow"><a class="ownbtn primary" href="' + OWN_DASH + '" target="_blank" rel="noopener">Open the Cloudflare dashboard</a><button type="button" class="ownbtn" data-own="recheck">I’ve set it. Check again</button></div>' });
+  steps.push({ id: 'signin', title: 'Sign in as the owner', done: m.signed, sum: m.signed ? 'You are signed in on this browser.' : 'Type the admin passphrase you set.',
+    body: m.signed ? '<p>Done. This browser stays signed in until you press Sign out.</p>'
+      : !m.claimed ? '<p class="sechint">Do step 1 first. There is no passphrase to type yet.</p>'
+      : (OWN.err ? '<p class="sechint warn">' + esc(OWN.err) + '</p>' : '') + '<p>Type the admin passphrase from step 1. It is kept on this browser only.</p><div class="ownrow"><button type="button" class="ownbtn primary" data-own="signin">Enter the admin code</button></div>' });
+  steps.push({ id: 'stack', title: 'Set up your stack', done: m.signed && m.stackDone, sum: !m.signed ? 'The database, the spend cap, your domain, your own secret.' : m.stackDone ? 'Everything it needs is in place.' : left(m.stack) + ' still to do.',
+    body: !m.signed ? needSign : '<p>The parts that make this yours and keep the bill capped. Each line turns green by itself.</p>' + ownReady(m.stack) + '<div class="ownrow"><button type="button" class="ownbtn" data-own="recheck">Check again</button></div>' });
+  let lockBody = needSign;
+  if (m.signed) {
+    const line = (id) => (d.modes.find((x) => x.id === id) || {}).line || '';
+    const g = Number(d.identity?.graceMinutes ?? 60);
+    const three = ['open', 'email', 'key'].includes(d.access.default);
+    lockBody = '<p>Who gets in, and how hard it is to get in as you.</p><h5>Who gets in</h5>'
+      + (three ? secRadios('own_access', [
+        { v: 'open', label: 'Anyone with the link', hint: 'Fine for a public help bot. The firewall and the spend limit are then the only guards.' },
+        { v: 'email', label: 'Type an email and you’re in', hint: 'Not a sign-in: a name the visitor typed, tied to their browser. You see who asked what.' },
+        { v: 'key', label: 'The passphrase', hint: 'One shared passphrase for everyone. ' + esc(line('key')) },
+      ], d.access.default) : '<p class="sechint">Now: <b>' + esc(d.access.default) + '</b>. ' + esc(line(d.access.default)) + ' Change it under the hood → Security.</p>')
+      + (d.access.floor !== 'open' ? '<p class="sechint warn">The floor is <b>' + esc(d.access.floor) + '</b>: no bot is more open than that, whatever is picked here.</p>' : '')
+      + '<h5>A second device</h5>' + secRadios('own_grace', [
+        { v: 0, label: 'Always waits for me to link it', hint: 'The safe one. A new computer that types a known email waits until you link it.' },
+        { v: 60, label: 'Trusted within an hour of their last visit', hint: 'Convenient. Inside that hour anyone who knows the email can pick up the recent conversation.' },
+        { v: -1, label: 'Never waits', hint: 'Any computer that types the email is in. For a demo only.' },
+      ], g === 0 ? 0 : g === -1 ? -1 : 60)
+      + '<h5>Getting in as you</h5>' + ownReady(m.lock)
+      + '<div class="ownrow"><button type="button" class="ownbtn" data-own="recheck">Check again</button><a class="ownbtn" href="/?hood=security&amp;sec=locked">Every lock: Under the hood → Security</a></div>';
+  }
+  steps.push({ id: 'lock', title: 'Lock it down', done: m.signed && m.lockDone, sum: !m.signed ? 'Who gets in, a second factor, a way back in.' : m.lockDone ? 'Locked down.' : left(m.lock) + ' still to do.', body: lockBody });
+  let demoBody = needSign;
+  if (m.signed) {
+    const open = left(m.stack) + left(m.lock);
+    const samples = (d.sampleBots || []).join(', ');
+    demoBody = '<p>Demo mode is what ships in the box: the tour along the top and the sample bots in the sidebar. Turning it off deletes nothing. The folders stay in your repo, and one click brings it all back.</p>'
+      + '<div class="caps"><label><input type="checkbox" id="own_tour"' + (d.demo.tour ? ' checked' : ' checked disabled') + ' /> Take away the tour: the strip of stops, the pointing finger, the welcome card' + (d.demo.tour ? '' : ' <i>(already off)</i>') + '</label>'
+      + '<label><input type="checkbox" id="own_bots"' + (d.demo.bots ? ' checked' : ' checked disabled') + ' /> Hide the sample bots' + (samples ? ': ' + esc(samples) : '') + (d.demo.bots ? '' : ' <i>(already hidden)</i>') + '</label>'
+      + (d.guide ? '<label><input type="checkbox" id="own_guide"' + (d.guide.listed ? ' checked' : ' checked disabled') + ' /> Hide the guide bot, “' + esc(d.guide.name) + '”. Visitors then land on your first bot' + (d.guide.listed ? '' : ' <i>(already hidden)</i>') + '</label>' : '') + '</div>'
+      + (open ? '<p class="sechint warn">' + open + ' thing' + (open === 1 ? ' is' : 's are') + ' still open in steps 3 and 4. You can turn demo mode off anyway, and finish them under the hood → Security.</p>' : '')
+      + '<div class="ownrow"><button type="button" class="ownbtn primary" data-own="demooff"' + (m.demoOff && !(d.guide && d.guide.listed) ? ' disabled' : '') + '>Turn off demo mode</button></div>'
+      + '<p class="sechint">To bring any of it back: ⚙ Under the hood → Security → Demo.</p>';
+  }
+  steps.push({ id: 'demo', title: 'Turn off demo mode', done: m.signed && m.demoOff, sum: !m.signed ? 'The tour and the sample bots step aside. Your bots stay.' : 'Tour ' + (d.demo.tour ? 'on' : 'off') + ' · sample bots ' + (d.demo.bots ? 'shown' : 'hidden') + '.', body: demoBody });
+  const first = steps.find((s) => !s.done);
+  if (OWN.advance) { OWN.advance = false; const cur = steps.find((s) => s.id === OWN.open); if (cur && cur.done) OWN.open = ''; }
+  const openId = OWN.open === 'none' ? '' : (OWN.open || (first ? first.id : 'demo'));
+  box.innerHTML = steps.map((s, i) => '<li class="ownstep' + (s.done ? ' done' : '') + (s.id === openId ? ' open' : '') + '"><button type="button" class="ownhead" data-step="' + s.id + '" aria-expanded="' + (s.id === openId) + '"><span class="n">' + (s.done ? '✓' : i + 1) + '</span><span class="t"><b>' + esc(s.title) + '</b><small>' + esc(s.sum) + '</small></span><span class="chev">' + (s.id === openId ? '▴' : '▾') + '</span></button><div class="ownbody">' + s.body + '</div></li>').join('');
+  const n = steps.filter((s) => s.done).length;
+  $('own_sum').textContent = n === steps.length ? 'All five done. This is your site.' : n + ' of ' + steps.length + ' done.';
+}
+$('ownsteps').addEventListener('click', async (e) => {
+  const head = e.target.closest('.ownhead');
+  if (head) { const li = head.parentElement; OWN.open = li.classList.contains('open') ? 'none' : head.dataset.step; drawOwner(); return; }
+  const mk = e.target.closest('[data-make]');
+  if (mk) { OWN.made[mk.dataset.make] = ownRandom(mk.dataset.kind); const c = mk.parentElement.querySelector('code'); c.textContent = OWN.made[mk.dataset.make]; c.hidden = false; const cp = mk.parentElement.querySelector('[data-copy]'); cp.hidden = false; cp.textContent = 'Copy'; mk.textContent = 'Make another'; return; }
+  const cp = e.target.closest('[data-copy]');
+  if (cp) { try { await navigator.clipboard.writeText(cp.parentElement.querySelector('code').textContent); cp.textContent = 'Copied ✓'; } catch { cp.textContent = 'Select it and copy'; } return; }
+  const a = e.target.closest('[data-own]'); if (!a) return;
+  if (a.dataset.own === 'recheck') {
+    const was = ownModel(); a.disabled = true; a.textContent = 'Checking…';
+    await loadOwner(); const now = ownModel(); OWN.advance = true; drawOwner(); renderTour();
+    $('own_msg').textContent = !now.claimed ? 'Not set yet. After you press Deploy in the dashboard it takes a few seconds. Then check again.' : !was.claimed ? 'Claimed. Now sign in with it.' : 'Checked just now.';
+    return;
+  }
+  if (a.dataset.own === 'signin') {
+    pendingAfterAdmin = async () => { OWN.open = ''; await loadOwner(); drawOwner(); renderTour(); $('newbot').hidden = !(ADMIN_ENABLED && ADMIN); };
+    $('adminlock').classList.add('show'); $('adminmsg').textContent = ''; $('adminpass').value = ''; $('adminpass').focus(); showAdminCodeIfNeeded();
+    return;
+  }
+  if (a.dataset.own === 'demooff') return ownDemoOff(a);
+});
+$('ownsteps').addEventListener('change', async (e) => {
+  const t = e.target; if (!t || !OWN.d) return;
+  if (t.name === 'own_access') { if (await ownPut({ access: { default: t.value } })) drawOwner(); return; }
+  if (t.name === 'own_grace') { if (await ownPut({ identity: { graceMinutes: Number(t.value) } })) drawOwner(); return; }
+  // the guide can only be hidden along with the tour: a guide with no stops is just a stale bot
+  if (t.id === 'own_tour' && $('own_guide') && !$('own_guide').disabled && !t.checked) $('own_guide').checked = false;
+  if (t.id === 'own_guide' && t.checked && $('own_tour') && !$('own_tour').checked) $('own_tour').checked = true;
+});
+async function ownDemoOff(btn) {
+  const d = OWN.d, msg = $('own_msg'); if (!d) return;
+  const want = (id) => Boolean($(id) && $(id).checked);
+  const offTour = want('own_tour'), offBots = want('own_bots'), offGuide = want('own_guide') && d.guide && d.guide.listed;
+  const changes = (offTour && d.demo.tour) || (offBots && d.demo.bots) || offGuide;
+  if (!changes) { msg.textContent = 'Tick at least one thing to turn off.'; return; }
+  const back = () => { btn.disabled = false; btn.textContent = 'Turn off demo mode'; };
+  btn.disabled = true; btn.textContent = 'Turning it off…';
+  if (offGuide && !(await setListed({ id: d.guide.id, name: d.guide.name }, false))) { msg.textContent = 'The guide bot could not be hidden, so nothing else was changed.'; return back(); }
+  const tour = offTour ? false : d.demo.tour, bots = offBots ? false : d.demo.bots;
+  if (!(await ownPut({ demo: { tour, bots } }))) return back();
+  // The setting is cached for a few seconds on each server. Wait until the public answer agrees.
+  msg.textContent = 'Saved. Waiting for the site to catch up…';
+  for (let i = 0; i < 8; i++) {
+    try { const c = await (await fetch('/api/config?t=' + Date.now(), { headers: configHeaders('') })).json(); if (tour || !(c.projects || []).some((p) => p.tour)) break; } catch {}
+    await new Promise((res) => setTimeout(res, 1500));
+  }
+  try { sessionStorage.setItem('byo:demooff', '1'); } catch {}
+  location.assign('/');
+}
 // The key modal: everything behind it dims; one thing to do. Used by any locked stop.
 // No ADMIN_PASSPHRASE on this deployment yet. Not an error — a fresh deploy is meant to
 // land here. Tell the new owner how to claim it, in the browser, without a terminal.
@@ -2643,9 +2895,7 @@ async function renderSecurity() {
 }
 // One PUT with the whole current state plus the change; the reply is the fresh view, redrawn.
 async function secPut(d, patch, msgEl) {
-  const deep = (a, b) => { const o = { ...(a || {}) }; for (const k of Object.keys(b || {})) o[k] = b[k] && typeof b[k] === 'object' && !Array.isArray(b[k]) ? deep(o[k], b[k]) : b[k]; return o; };
-  const e = d.expiry || {};
-  const body = deep({ access: { default: d.access.default, floor: d.access.floor }, createYourOwn: d.createYourOwn, identity: { graceMinutes: d.identity?.graceMinutes ?? 60 }, expiry: { onLapse: e.onLapse, graceDays: e.graceDays, warnDays: e.warnDays, defaultDays: e.defaultDays }, signup: d.signup }, patch);
+  const body = settingsBody(d, patch);
   if (msgEl) msgEl.textContent = 'Saving…';
   const r = await fetch('/api/admin/settings', { method: 'PUT', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify(body) });
   const j = await r.json().catch(() => ({}));
@@ -2682,7 +2932,9 @@ function drawSecurity(d) {
   const tab = (id, label) => '<button data-sec="' + id + '"' + (secTab === id ? ' class="on"' : '') + '>' + label + '</button>';
   let body = '';
   if (secTab === 'demo') {
-    body = '<h5>Who gets in</h5>' + secRadios('sec_access', [
+    const dm = d.demo || { tour: true, bots: true };
+    body = '<h5>Demo mode</h5><p class="sechint">What ships in the box so a fresh deploy has something to click. Switching either off deletes nothing, and switching it on brings it straight back.</p><div class="caps"><label><input type="checkbox" id="sec_dtour"' + (dm.tour ? ' checked' : '') + ' /> Show the tour: the strip of stops, the pointing finger, the welcome card</label><label><input type="checkbox" id="sec_dbots"' + (dm.bots ? ' checked' : '') + ' /> Show the sample bots' + ((d.sampleBots || []).length ? ': ' + esc(d.sampleBots.join(', ')) : '') + '</label>' + (d.guide ? '<label><input type="checkbox" id="sec_dguide"' + (d.guide.listed ? ' checked' : '') + ' /> Show the guide bot, “' + esc(d.guide.name) + '”, and land visitors on it</label>' : '') + '</div><p class="sechint"><a href="/?panel=owner">Open the owner walkthrough</a>: claim it, sign in, set up the stack, lock it down, turn off demo mode.</p>'
+      + '<h5>Who gets in</h5>' + secRadios('sec_access', [
       { v: 'open', label: 'Anyone with the link', hint: esc(line('open')) },
       { v: 'email', label: 'Type an email and you’re in', hint: 'Not sign-in: a name the visitor typed, tied to this browser. ' + esc(line('email')) },
       { v: 'key', label: 'The passphrase', hint: 'One shared passphrase for everyone. ' + esc(line('key')) },
@@ -2739,6 +2991,10 @@ function drawSecurity(d) {
   onRadio('sec_lapse', (v) => secPut(d, { expiry: { onLapse: v } }, msg));
   onRadio('sec_name', (v) => secPut(d, { signup: { askName: v } }, msg));
   onRadio('sec_phone', (v) => secPut(d, { signup: { askPhone: v } }, msg));
+  const demoSaved = (j) => { if (j && $('sec_msg')) $('sec_msg').textContent = 'Saved. Reload the page to see it.'; };
+  if ($('sec_dtour')) $('sec_dtour').onchange = () => secPut(d, { demo: { tour: $('sec_dtour').checked } }, msg).then(demoSaved);
+  if ($('sec_dbots')) $('sec_dbots').onchange = () => secPut(d, { demo: { bots: $('sec_dbots').checked } }, msg).then(demoSaved);
+  if ($('sec_dguide')) $('sec_dguide').onchange = async () => { const on = $('sec_dguide').checked; msg.textContent = 'Saving…'; const ok = await setListed({ id: d.guide.id, name: d.guide.name }, on); if (ok) { await renderSecurity(); demoSaved(true); } else { $('sec_dguide').checked = !on; msg.textContent = 'Not saved.'; } };
   if ($('sec_throw')) $('sec_throw').onchange = () => secPut(d, { signup: { blockThrowaway: $('sec_throw').checked } }, msg);
   if ($('sec_mx')) $('sec_mx').onchange = () => secPut(d, { signup: { checkMx: $('sec_mx').checked } }, msg);
   for (const [id, key] of [['sec_gracedays', 'graceDays'], ['sec_warndays', 'warnDays'], ['sec_defdays', 'defaultDays']]) if ($(id)) $(id).onchange = () => secPut(d, { expiry: { [key]: Number($(id).value) || 0 } }, msg);

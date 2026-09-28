@@ -17,6 +17,16 @@ A note on `wrangler secret put`: it reads the value from your terminal. The
 `printf '…' | npx wrangler secret put NAME` form types it in one line without a
 prompt. The value is never printed back and never enters git.
 
+**The short way through this file:** the last pill in the strip along the top of
+your site, **🔧 Turn off demo mode**, opens a five-step walkthrough (also at
+`https://your-site/?panel=owner`): claim it, sign in as the owner, set up your
+stack, lock it down, turn off demo mode. Each step ticks itself from what the
+Worker reports, and each amber line says what to click. It covers items 0, 1, 1b,
+5 and 7 below. The pill shows to everyone until the deployment is claimed (an
+`ADMIN_PASSPHRASE` exists), and only to the signed-in owner after that. Demo mode
+(the tour, the sample bots, the guide bot) comes back from **Under the hood →
+Security → Demo**; nothing is ever deleted.
+
 ---
 
 ## 0. A domain on Cloudflare (do this first)

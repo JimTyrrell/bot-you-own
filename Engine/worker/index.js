@@ -1,6 +1,6 @@
 import { CONFIG } from "../../YourBots/config.js";
 import { normaliseProject, normaliseWebsite, savedProjects, saveProject, deleteSavedProject, inFolder, resolveProject, resolveList, pickPublic, hrefFor, exportFiles, KINDS, KIND_LABELS, cleanKind } from "./projects.js";
-import { getSettings, saveSettings, settingsFileContent, cleanBadge, cleanSignup, publicSignup, cleanLinks, cleanBrand, cleanKeys, SETTINGS_FILE_VIEW as SETTINGS_FILE } from "./settings.js";
+import { getSettings, saveSettings, settingsFileContent, cleanBadge, cleanSignup, publicSignup, cleanLinks, cleanBrand, cleanKeys, cleanDemo, SETTINGS_FILE_VIEW as SETTINGS_FILE } from "./settings.js";
 // The GitHub repo this deploys from: the GITHUB_REPO secret first, config.js second (blank in the template on purpose).
 const repoOf = (env) => String(env?.GITHUB_REPO || CONFIG.github?.repo || "").trim();
 import { listSignups, signupsCsv } from "./signups.js";
@@ -342,8 +342,12 @@ export default {
         const lk = b?.links ? cleanLinks(b.links) : null;
         const br = b?.brand ? cleanBrand(b.brand) : null;
         const ky = b?.keys ? cleanKeys(b.keys) : null;
-        await saveSettings(env, { access: next, createYourOwn: badge, identity: ident, expiry: exp, signup: su, links: lk, brand: br, keys: ky });
+        // Demo mode: the tour and the sample bots. A change to one switch keeps the other as it is.
+        const dmIn = cleanDemo(b?.demo);
+        const dm = dmIn ? { tour: settings.demo?.tour !== false, bots: settings.demo?.bots !== false, ...dmIn } : null;
+        await saveSettings(env, { access: next, createYourOwn: badge, identity: ident, expiry: exp, signup: su, links: lk, brand: br, keys: ky, demo: dm });
         await logAdminEvent(env, request, "settings-save", "access", `default ${settings.default} → ${next.default} · floor ${settings.floor} → ${next.floor}${badge ? ` · badge ${badge.show ? `"${badge.text}"` : "hidden"}` : ""}${ident ? ` · return window ${settings.identity?.graceMinutes} → ${Math.round(Number(ident.graceMinutes))} min` : ""}${exp ? ` · when access lapses ${settings.expiry?.onLapse} → ${exp.onLapse ?? settings.expiry?.onLapse}${exp.graceDays !== undefined ? `, grace ${exp.graceDays}d` : ""}` : ""}`);
+        if (dm && (dm.tour !== (settings.demo?.tour !== false) || dm.bots !== (settings.demo?.bots !== false))) await logAdminEvent(env, request, "demo-mode", "demo", `tour ${settings.demo?.tour !== false ? "on" : "off"} → ${dm.tour ? "on" : "off"} · sample bots ${settings.demo?.bots !== false ? "shown" : "hidden"} → ${dm.bots ? "shown" : "hidden"}`);
         return json(await settingsView(env, await getSettings(env)));
       }
       if (url.pathname === "/api/admin/settings/sync") {
@@ -386,7 +390,7 @@ export default {
     //     visitor is looking at; the answer says what THAT bot requires, so the
     //     page knows which lock screen to show even before anyone is unlocked.
     if (url.pathname === "/api/config") {
-      const current = await resolveProject(env, String(url.searchParams.get("project") || "").toLowerCase());
+      const current = await resolveProject(env, String(url.searchParams.get("project") || "").toLowerCase() || await landingProject(env, settings));
       const curId = current.id || CONFIG.defaultProject;
       const view = accessView(current, settings);
       const g = await guard(current);                                        // key / admin / draft — the email step is the chat's
@@ -400,7 +404,8 @@ export default {
       const showDemoBots = settings.demo?.bots !== false;
       let projects = (CONFIG.singleProject ? all.filter((p) => p.id === CONFIG.defaultProject) : all)
         .filter((p) => !p.sandbox && (isAdmin || (p.listed && p.access !== "draft")))
-        .filter((p) => showDemoBots || isAdmin || !p.demo);
+        .filter((p) => showDemoBots || isAdmin || !p.demo)
+        .map((p) => (!showDemoBots && p.demo ? { ...p, sampleHidden: true } : p));   // the owner still sees them, badged
       // demo.tour off: drop the stops from the payload. The page decides there IS a guide by
       // finding a bot that carries tour.stops (index.html), so removing it takes the whole
       // layer with it — strip, pointing finger, $ badges, intro — and leaves the bot itself
@@ -1465,6 +1470,44 @@ async function ensureSchema(env) {
   SCHEMA_OK = true;
 }
 
+// Demo mode off and the guide hidden: a visit with no ?project= must not land on the hidden
+// guide ("Five short stops…" with no stops). It lands on the first bot a visitor can see.
+// Any other case returns "" and the default project is used, exactly as before.
+async function landingProject(env, settings) {
+  if (settings.demo?.tour !== false) return "";
+  try {
+    const def = await resolveProject(env, CONFIG.defaultProject);
+    if (!def?.tour || effectiveAccess(def, settings).listed) return "";
+    const showDemoBots = settings.demo?.bots !== false;
+    for (const p of await resolveList(env)) {
+      if (p.id === CONFIG.defaultProject || p.sandbox || p.tour) continue;
+      if (!showDemoBots && p.demo) continue;
+      const a = effectiveAccess(p, settings);
+      if (a.listed && a.mode !== "draft" && cleanKind(p.kind) === "chat") return p.id;
+    }
+  } catch (err) { console.error("landing fallback failed (using the default)", err?.message || err); }
+  return "";
+}
+// Has a model call gone through the AI Gateway? This isolate's last call if it has made one,
+// else the newest answered turn on the record. "unknown" = nothing to go on yet.
+async function gatewaySeen(env) {
+  const id = CONFIG.gateway?.id || "";
+  if (!id) return { id, state: "off" };
+  const live = gatewayStatus(CONFIG).lastCall;
+  if (live === "via gateway") return { id, state: "ok" };
+  if (live === "direct (gateway missing)") return { id, state: "missing" };
+  if (env.DB) try {
+    await ensureSchema(env);
+    const rows = (await env.DB.prepare(`SELECT flags FROM conversations WHERE answered != '' ORDER BY id DESC LIMIT 30`).all()).results || [];
+    for (const r of rows) {
+      const f = String(r.flags || "");
+      if (/gateway-direct/.test(f)) return { id, state: "missing" };
+      if (!/blocked|rate-limited|model-error|declined/.test(f)) return { id, state: "ok" };
+    }
+  } catch {}
+  return { id, state: "unknown" };
+}
+
 // --- Settings: Engine/worker/settings.js (config.js < settings.json < D1). ------------------
 // Under the hood → Settings: what applies, where it came from, and every bot's effective mode (and why).
 async function settingsView(env, settings) {
@@ -1475,7 +1518,7 @@ async function settingsView(env, settings) {
     const a = effectiveAccess(full, settings);
     const m = signInMethods(full, env);
     const signIn = full.kind === "chat" ? (a.wantEmail ? `email + device key${a.wantList ? " · on the allowlist" : ""}` : "") : ["email + device key", m.passkeys ? "passkeys" : "", ...m.providers.map((x) => `sign in with ${x.provider}`), m.totp ? "authenticator code" : "", "owner links a device"].filter(Boolean).join(" · ");
-    bots.push({ id: p.id, kind: cleanKind(full.kind), href: hrefFor(full), name: p.name, access: a.botMode, effective: a.mode, reason: a.reason, listed: a.listed, source: p.source, ownKey: a.keyName ? (env[a.keyName] ? `${a.keyName} (set)` : `${a.keyName} (NOT set — the shared key is used)`) : "", signIn, graceMinutes: full.identity?.graceMinutes, allowlisted: counts[p.id] || 0, expiry: expiryFor(full, settings) });
+    bots.push({ id: p.id, tour: Boolean(full.tour && Array.isArray(full.tour.stops) && full.tour.stops.length), demo: full.demo === true || p.demo === true, kind: cleanKind(full.kind), href: hrefFor(full), name: p.name, access: a.botMode, effective: a.mode, reason: a.reason, listed: a.listed, source: p.source, ownKey: a.keyName ? (env[a.keyName] ? `${a.keyName} (set)` : `${a.keyName} (NOT set — the shared key is used)`) : "", signIn, graceMinutes: full.identity?.graceMinutes, allowlisted: counts[p.id] || 0, expiry: expiryFor(full, settings) });
   }
   return {
     access: { default: settings.default, floor: settings.floor },
@@ -1495,6 +1538,11 @@ async function settingsView(env, settings) {
     source: settings.source,
     file: SETTINGS_FILE?.access || {},
     adminTotp: adminNeedsCode(env),
+    // Demo mode (the tour strip, the sample bots), the guide bot, and whether the gateway has been seen working.
+    demo: { tour: settings.demo?.tour !== false, bots: settings.demo?.bots !== false },
+    guide: (() => { const g = bots.find((x) => x.tour); return g ? { id: g.id, name: g.name, listed: g.listed } : null; })(),
+    sampleBots: bots.filter((x) => x.demo).map((x) => x.name),
+    gateway: await gatewaySeen(env),
     pepperSet: Boolean(env.FOODLOG_PEPPER),          // user ids are salted with a real secret, not the dev pepper
     modes: ACCESS_MODES.map((id) => ({ id, line: MODE_LINES[id] })),
     order: ACCESS_MODES.join(" < "),

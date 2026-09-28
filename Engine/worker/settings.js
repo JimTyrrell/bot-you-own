@@ -109,6 +109,14 @@ async function readRows(env) {
 // What ships in the box: the guided tour, and the sample bots. Config, then the file,
 // then the saved row — later wins, same as every other setting. Both default ON so a
 // fresh button-deploy has something to click the moment it comes up.
+// What the page may save: only the two switches, only real booleans. Anything else is dropped.
+export function cleanDemo(d) {
+  if (!d || typeof d !== "object") return null;
+  const out = {};
+  if (typeof d.tour === "boolean") out.tour = d.tour;
+  if (typeof d.bots === "boolean") out.bots = d.bots;
+  return Object.keys(out).length ? out : null;
+}
 export function mergeDemo(c, f, row) {
   const pick = (...vals) => { for (const v of vals) if (typeof v === "boolean") return v; return true; };
   return {
@@ -149,7 +157,7 @@ function mergeBadge(c, f, s) {
 }
 
 // The Settings screen's Save: one row per key, live within 10 s everywhere.
-export async function saveSettings(env, { access, createYourOwn, identity, expiry, signup, links, brand, keys } = {}) {
+export async function saveSettings(env, { access, createYourOwn, identity, expiry, signup, links, brand, keys, demo } = {}) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT)`).run();
   const put = (key, obj) => env.DB.prepare(`INSERT INTO settings (key, json, updated_at, updated_by) VALUES (?, ?, ?, 'admin') ON CONFLICT(key) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at, updated_by = excluded.updated_by`).bind(key, JSON.stringify(obj), new Date().toISOString());
   const ops = [];
@@ -161,6 +169,7 @@ export async function saveSettings(env, { access, createYourOwn, identity, expir
   if (links && cleanLinks(links)) ops.push(put("links", cleanLinks(links)));
   if (brand && cleanBrand(brand)) ops.push(put("brand", cleanBrand(brand)));
   if (keys && cleanKeys(keys)) ops.push(put("keys", cleanKeys(keys)));
+  if (demo && cleanDemo(demo)) ops.push(put("demo", cleanDemo(demo)));
   if (ops.length) await env.DB.batch(ops);
   CACHE = { at: 0, rows: null };
 }
@@ -169,6 +178,6 @@ export async function saveSettings(env, { access, createYourOwn, identity, expir
 export function settingsFileContent(s) {
   const e = s.expiry || EXPIRY_BUILT_IN;
   const { source, ...su } = s.signup || SIGNUP_BUILT_IN;
-  return JSON.stringify({ access: { default: s.default, floor: s.floor }, createYourOwn: { show: s.createYourOwn.show, text: s.createYourOwn.text, url: s.createYourOwn.url }, identity: { graceMinutes: s.identity?.graceMinutes ?? DEFAULT_GRACE_MINUTES }, expiry: { onLapse: e.onLapse, graceDays: e.graceDays, warnDays: e.warnDays, defaultDays: e.defaultDays }, signup: su }, null, 2) + "\n";
+  return JSON.stringify({ access: { default: s.default, floor: s.floor }, createYourOwn: { show: s.createYourOwn.show, text: s.createYourOwn.text, url: s.createYourOwn.url }, identity: { graceMinutes: s.identity?.graceMinutes ?? DEFAULT_GRACE_MINUTES }, expiry: { onLapse: e.onLapse, graceDays: e.graceDays, warnDays: e.warnDays, defaultDays: e.defaultDays }, signup: su, demo: { tour: s.demo?.tour !== false, bots: s.demo?.bots !== false } }, null, 2) + "\n";
 }
 export const SETTINGS_FILE_VIEW = SETTINGS_FILE;

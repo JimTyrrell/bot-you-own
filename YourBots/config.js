@@ -114,7 +114,9 @@ export const CONFIG = {
   // different times: the tour teaches YOUR site and sells the workshop it came from,
   // while the sample bots are just examples to copy. Someone may want the tour gone on
   // day one and keep Example Co as a reference, or exactly the other way round.
-  // Both are presentation, not security — flip them in Settings, live, no redeploy.
+  // Both are presentation, not security — flip them live, no redeploy: the last pill in the
+  // tour strip ("Turn off demo mode", the owner's five-step walkthrough, also at ?panel=owner)
+  // or Under the hood → Security → Demo, which is also where they are switched back on.
   //   tour  false → no stop strip, no pointing finger, no $ badges, no intro modal.
   //                 The guide bot (YourBots/tour) stays; it just becomes a normal bot.
   //   bots  false → the sample bots (marked "demo": true) leave the sidebar. Nothing is
