@@ -1525,7 +1525,7 @@ async function settingsView(env, settings) {
     createYourOwn: settings.createYourOwn,
     signup: settings.signup,
     brand: settings.brand,
-    keys: settings.keys,
+    keyPrefix: settings.keys,                        // Settings → Workshop keys (the rows with an end date are `keys`, below)
     identity: { graceMinutes: settings.identity?.graceMinutes, source: settings.identity?.source },
     allowlist: { keySet: allowlistKeySet(env), counts, global: counts[GLOBAL_SCOPE] || 0 },
     // When access runs out: the policy, everyone who currently has an end date, and
