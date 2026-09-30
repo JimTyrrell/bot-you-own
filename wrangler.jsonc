@@ -35,12 +35,17 @@
     { "name": "UNLOCK_LIMITER", "namespace_id": "1002", "simple": { "limit": 10, "period": 60 } }
   ],
 
-  // The audit log (D1). The Worker creates its own table on first use, so there is
-  // no schema step. The Deploy button provisions a fresh database in the attendee's
-  // account; Jim's terminal deploy uses this one. Remove the block to log nowhere
-  // but Workers Logs. Read it under the hood → Audit, or with the queries in docs/CUSTOMIZE.md.
+  // The audit log, the settings, the people, Plate (D1). The Worker creates its own
+  // tables on first use, so there is no schema step. There is deliberately NO
+  // database_id here: on deploy, wrangler looks for a database named bot-you-own-logs
+  // in YOUR account and connects to it, or creates it if there is none — so the same
+  // file deploys on any account, from the button, from a connected repo, or from a
+  // terminal. (An id pinned here was one owner's database, and every other account's
+  // build failed with "D1 binding 'DB' references database … which was not found".)
+  // Remove the block to log nowhere but Workers Logs. Read it under the hood → Audit,
+  // or with the queries in docs/CUSTOMIZE.md.
   "d1_databases": [
-    { "binding": "DB", "database_name": "bot-you-own-logs", "database_id": "cc9d43d1-46fa-4c1e-8501-a0565bdd7b77" }
+    { "binding": "DB", "database_name": "bot-you-own-logs" }
   ],
 
   // Plate can keep each meal's photos (so a scale can be zoomed into later) in R2:
