@@ -47,7 +47,7 @@ import { identify, signInMethods, verifyIdToken } from "../identity/index.js";
 import { resolve as resolveExpiry, lapseReply, noticeFor, EXPIRY_BUILT_IN } from "./expiry.js";
 import { join as idJoin, userIdFor, userById as idUserById, bindDevice, linkByCode, deviceCount, listDevices, pendingByEmail, touch as idTouch, DEV_PEPPER, pepperOf } from "../identity/devices.js";
 import { applyLabelMath, scaleGrams } from "./track-yield.js";
-import { runVision, PROMPTS, extractJson, withBrands, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize, mergeCorrection } from "./track-vision.js";
+import { runVision, PROMPTS, labelTurn, extractJson, withBrands, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize, mergeCorrection } from "./track-vision.js";
 import { lookupBarcode, useBarcodes, rememberLabel, saveReceipt, listReceipts, deleteReceipt, setWeight, listWeights, importWeights, householdOf, createHousehold, joinHousehold, leaveHousehold, canView } from "./track-extras.js";
 import { ensureDaySchema, dayChat, addWords, afterMeal, editedMeal, confirmedMeal, removedMeal, listFavourites, nameFavourite, forgetFavourite, matchFavourite, recentTwin, steadyItems, repeatMeals, retimeFavourite, localHour, askDay, summaryFor, classifySay, looksLikeFood } from "./track-day.js";
 
@@ -195,14 +195,22 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
     if (!(await allowed(env, request))) return json({ error: "rate-limited" }, 429);
     let form; try { form = await request.formData(); } catch { return json({ error: "bad request" }, 400); }
     const files = form.getAll("photo").filter((f) => f && typeof f.arrayBuffer === "function" && f.size <= 300 * 1024).slice(0, MAX_PHOTOS);
+    // Two landmarks, in order: a scale's display (bottom), else a Nutrition Facts heading (top of its panel,
+    // Engine/worker/track-vision.js → labelTurn). A photo with neither — a barcode alone, the front of a
+    // can, a plate — is left as it is: on those, nothing we have gets it right reliably.
     const TURN = { bottom: 0, none: 0, left: 270, right: 90, top: 180 };
-    const edges = await Promise.all(files.map(async (f) => {
+    const looks = await Promise.all(files.map(async (f) => {
+      const bytes = await f.arrayBuffer();
+      let edge = "none";
       try {
-        const out = await runVision(env, cfg, { images: [{ bytes: await f.arrayBuffer(), mime: "image/jpeg" }], prompt: PROMPTS.scaleEdge(), maxTokens: 12 });
-        return (String(out.text || "").toLowerCase().match(/\b(top|bottom|left|right|none)\b/) || [])[1] || "none";
-      } catch { return "none"; }
+        const out = await runVision(env, cfg, { images: [{ bytes, mime: "image/jpeg" }], prompt: PROMPTS.scaleEdge(), maxTokens: 12, temperature: 0 });
+        edge = (String(out.text || "").toLowerCase().match(/\b(top|bottom|left|right|none)\b/) || [])[1] || "none";
+      } catch {}
+      if (edge !== "none") return { turn: TURN[edge] ?? 0, scale: true, by: "scale" };
+      const t = await labelTurn(env, cfg, bytes);
+      return t === null ? { turn: 0, scale: false, by: "" } : { turn: t, scale: false, by: "label" };
     }));
-    return json({ ok: true, turn: edges.map((e) => TURN[e] ?? 0), scale: edges.map((e) => e !== "none") });
+    return json({ ok: true, turn: looks.map((l) => l.turn), scale: looks.map((l) => l.scale), by: looks.map((l) => l.by) });
   }
   if (sub === "photo") {
     if (request.method !== "POST") return json({ error: "POST only" }, 405);

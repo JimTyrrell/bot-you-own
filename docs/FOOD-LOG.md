@@ -98,9 +98,14 @@ food log) like any bot; Export / Commit to GitHub write `project.json`.
   `@cf/openai/whisper-large-v3-turbo` (about $0.0005 a minute of audio).
 - **Snap a plate:** the big green button opens the camera. The photo is shrunk in
   the browser to ≤ 1024 px before upload (a 12 MP photo never goes over the wire).
-  Back comes the list of foods; **½× 1× 1½× 2×** buttons, a grams field (⚖️),
-  **"Wrong food?"** → type "that's chicken, not pork" → it looks again with your
-  correction; Save. Under it, always: *Photo estimates are typically within about
+  Sideways or upside-down photos are straightened first, by landmark: a kitchen
+  scale's display sits at the bottom, a Nutrition Facts heading at the top of its
+  panel. Photos with neither (a barcode alone, the front of a can, a plate) are left
+  as they are — asked outright, no model on Workers AI can tell which way a photo is
+  turned, so the app never guesses. ↻ on a photo turns it by hand.
+  Back comes the list of foods; a weight field (⚖️, grams or ounces, with the
+  eighths a kitchen scale shows), **"Wrong food?"** → type "that's chicken, not
+  pork" → it looks again with your correction; Save. Under it, always: *Photo estimates are typically within about
   30%. Fix the portion when it's off.*
 - **Type it:** "2 eggs and toast" → same list, same buttons.
 - **Barcode:** Chrome/Android read the code in the browser (`BarcodeDetector`);

@@ -61,7 +61,7 @@ export const PROMPTS = {
 // --- One call. `image` is raw bytes (ArrayBuffer/Uint8Array) or null for text-only.
 // images: [{ bytes, mime }] — several photos of one eating occasion go to the model in ONE call, so the
 // front of a tub and its nutrition label are seen together (and counted once). `image` is the single-photo form.
-export async function runVision(env, cfg, { image = null, mime = "image/jpeg", images = null, prompt, maxTokens = 900 }) {
+export async function runVision(env, cfg, { image = null, mime = "image/jpeg", images = null, prompt, maxTokens = 900, system = "", temperature = null }) {
   if (!env.AI) throw new Error("No Workers AI binding (wrangler.jsonc → ai).");
   const content = [{ type: "text", text: prompt }];
   const all = images && images.length ? images : image ? [{ bytes: image, mime }] : [];
@@ -72,16 +72,56 @@ export async function runVision(env, cfg, { image = null, mime = "image/jpeg", i
   const t0 = Date.now();
   const r = await env.AI.run(cfg.model, {
     messages: [
-      { role: "system", content: "Answer with the JSON object only. Never think out loud. Never add commentary before or after the JSON." },
+      { role: "system", content: system || "Answer with the JSON object only. Never think out loud. Never add commentary before or after the JSON." },
       { role: "user", content },
     ],
     max_tokens: maxTokens,
+    ...(temperature === null ? {} : { temperature }),   // the orientation questions are asked at 0: the same photo must get the same answer
     ...NO_THINK,
   });
   const text = String(r?.choices?.[0]?.message?.content ?? r?.response ?? r?.description ?? "");
   const usage = r?.usage || null;
   console.log(JSON.stringify({ event: "foodlog-vision", model: cfg.model, ms: Date.now() - t0, images: all.length, neurons: usage?.neurons ?? null, tokens: usage?.total_tokens ?? null }));
   return { text, usage };
+}
+
+// --- WHICH WAY IS UP, from landmarks whose place on the page is known. ---------------------------------------
+// Asked outright which way a photo is turned, every vision model on Workers AI is close to guessing
+// (measured 2026-09-29 on 28 turned photos: the best got 14, chance is 7), and reading the print all four
+// ways doesn't separate them either — they read sideways print nearly as well as upright. What they CAN do is
+// find things. A kitchen scale's display sits at the bottom (PROMPTS.scaleEdge, Gemma, 28/28). On a Nutrition
+// Facts label the word "Calories" sits just BELOW the heading, and the heading's box says which way the words
+// run — Moondream's `point` and `detect` (8/8 on the label photos, never wrong on the other 20). Gemma decides
+// first whether a heading is there at all (28/28); Moondream's own yes/no said yes to a label's torn-off bottom.
+// Returns how far CLOCKWISE to turn the photo so the label reads upright: 0, 90, 180, 270 — or null (no say).
+export const ORIENT_MODEL = "@cf/moondream/moondream3.1-9B-A2B";
+export async function labelTurn(env, cfg, bytes) {
+  if (!env.AI) return null;
+  const size = imageSize(bytes); if (!size || !size.w || !size.h) return null;
+  const image = `data:image/${size.type === "png" ? "png" : "jpeg"};base64,${toBase64(bytes)}`;
+  const md = (input) => env.AI.run(ORIENT_MODEL, { image, stream: false, temperature: 0, ...input }).then((r) => r?.result || r || {}).catch(() => ({}));
+  const [gate, head, cal, box] = await Promise.all([
+    runVision(env, cfg, { image: bytes, prompt: "Is the heading 'Nutrition Facts' printed and visible in this photo? Answer yes or no.", maxTokens: 5, system: "Answer with one word.", temperature: 0 }).catch(() => ({ text: "" })),
+    md({ task: "point", target: "the heading Nutrition Facts" }),
+    md({ task: "point", target: "the word Calories" }),
+    md({ task: "detect", target: "the words Nutrition Facts", max_objects: 5 }),
+  ]);
+  const hp = Array.isArray(head.points) && head.points.length === 1 ? head.points[0] : null;
+  const cp = Array.isArray(cal.points) && cal.points.length ? cal.points[0] : null;
+  const boxes = Array.isArray(box.objects) ? box.objects : [];
+  console.log(JSON.stringify({ event: "foodlog-orient-label", gate: String(gate.text || "").slice(0, 20), headingPoints: (head.points || []).length, caloriesPoints: (cal.points || []).length, boxes: boxes.length, w: size.w, h: size.h }));
+  if (!/^\s*y/i.test(String(gate.text || ""))) return null;
+  if (!hp || !cp || !boxes.length) return null;
+  // The box that holds the heading point: `detect` also returns the other lines of the panel, and now and then the panel itself.
+  const dist = (x) => Math.hypot(Math.max(x.x_min - hp.x, 0, hp.x - x.x_max) * size.w, Math.max(x.y_min - hp.y, 0, hp.y - x.y_max) * size.h);
+  const b = boxes.reduce((a, x) => (dist(x) < dist(a) ? x : a));
+  if (dist(b) > 0.03 * Math.max(size.w, size.h)) return null;                        // no box where the heading is: no say
+  const bw = (b.x_max - b.x_min) * size.w, bh = (b.y_max - b.y_min) * size.h;
+  if (Math.max(bw, bh) < 1.4 * Math.min(bw, bh)) return null;                       // a square box is not a line of words
+  const dx = (cp.x - hp.x) * size.w, dy = (cp.y - hp.y) * size.h;                    // from the heading to "Calories": the label's "down"
+  if (Math.abs(bw > bh ? dy : dx) < 0.015 * Math.max(size.w, size.h)) return null;   // "Calories" on top of the heading: nothing to read
+  if (bw > bh) return dy > 0 ? 0 : 180;                                             // words run left–right: upright, or upside down
+  return dx < 0 ? 270 : 90;                                                         // words run up–down: "down" at the left = turned 90° clockwise, so turn 270° more
 }
 
 // The first {...} in the reply, code fences and all stripped. null if none.

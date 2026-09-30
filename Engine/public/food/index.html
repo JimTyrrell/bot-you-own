@@ -1548,7 +1548,7 @@ async function turnBy(blob, deg) { let b = blob; for (let k = 0; k < ((deg / 90)
 async function straighten(pics) {
   try {
     const fd = new FormData();
-    for (const a of pics) fd.append('photo', await shrink(a.photo, 512, 0.7), 'p.jpg');
+    for (const a of pics) fd.append('photo', await shrink(a.photo, 512, 0.7), 'p.jpg');   // 512: the scale-edge answer was measured at this size and wobbles at 768
     const r = await api('orient', { body: fd });
     const turn = (r && r.turn) || [];
     straighten.scales = ((r && r.scale) || []).map((v, i) => (v ? i : -1)).filter((i) => i >= 0);
