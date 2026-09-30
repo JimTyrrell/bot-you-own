@@ -1,6 +1,13 @@
 # Deploying — the button, the terminal, and the gateway
 
 ## A. The button (attendees)
+
+A note on the database: `wrangler.jsonc` names the D1 database (`bot-you-own-logs`)
+but pins no id on purpose. On the first deploy wrangler creates that database in
+*your* account; on every deploy after, it keeps using it. If a build ever fails with
+"D1 binding 'DB' references database … which was not found", the config being built
+still has an id in it: pull the latest `main`.
+
 Public GitHub repo → README button → Cloudflare copies it into your account,
 builds, deploys. Requirements (from Cloudflare's docs): the repo is **public**, on
 github.com or gitlab.com, and `wrangler.jsonc` has defaults for every binding.
