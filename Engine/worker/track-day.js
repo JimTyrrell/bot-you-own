@@ -60,6 +60,12 @@ const words = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").
 const STOP = new Set(["the", "a", "an", "and", "with", "of", "my", "some", "again", "same", "usual", "log", "had", "ate", "for", "on", "in", "to", "it", "that", "this", "please", "me", "i", "just", "one", "two", "as", "like", "yesterday", "today", "breakfast", "lunch", "dinner", "snack", "another", "more", "again"]);
 const FOOD_HINT = /\b(again|same|usual|log|had|ate|eat|eating|breakfast|lunch|dinner|snack|bowl|plate|cup|slice|glass|piece|grams?|g\b|oz\b|ml\b|serving|portion|another)\b/i;
 const QUESTION_HINT = /\?|^(what|how|why|should|can|could|is|are|was|were|do|does|did|am|will|would|which|when|where|who)\b/i;
+// "can you log some berries", "please add a banana", "log 1 cup strawberries?": a request to log, not a question.
+// Only "you" asks — "can I add a banana and stay under?" is still a question for the coach.
+const LOG_ASK = /^(?:(?:hey|hi|ok|okay|so)[,!.\s]+)?(?:(?:can|could|would|will)\s+(?:you|u)\s+(?:please\s+)?|please\s+)?(?:log|add|track|record|enter|save|note|put\s+(?:in|down))\b[:,]?\s*/i;
+export const isLogAsk = (text) => LOG_ASK.test(String(text || "").trim());
+// The food alone, for the estimate and the favourite match: "can you log some berries please?" → "some berries".
+export const stripLogAsk = (text) => String(text || "").trim().replace(LOG_ASK, "").replace(/[\s,]*(?:for me)?[\s,]*(?:please|pls|thanks|thank you)?[\s.!?]*$/i, "").trim() || String(text || "").trim();
 const mealKey = (items) => items.map((i) => i.name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()).filter(Boolean).sort().join("|").slice(0, 400);
 const fmt = (n) => Math.round(Number(n) || 0).toLocaleString("en-US");
 // The same meal, worded differently ("Orgain Creatine" / "Orgain CREATINE MICRONIZED CREATINE MONOHYDRATE"): as many
@@ -383,7 +389,7 @@ async function factsFor(env, who, date) {
     weights_kg: w.reverse().map((x) => ({ date: x.date, kg: x.kg })),
   };
 }
-const COACH_RULES = `You are the between-meals coach inside a food log. Speak plainly and briefly, like a good coach texting: two to four sentences, no bullet lists, no headings, no emoji. Use ONLY the numbers in the facts; never invent a calorie, gram or weight, and never estimate a food yourself (the log does that). If the person asks what to eat, suggest in terms of what is left today (protein, calories) and their own logged foods where possible. You are not a doctor: no medical advice, no diagnosis, no supplements or drugs; if they mention pain, fainting, an eating disorder, pregnancy or a medical condition, say kindly that this is one for their coach or a clinician and stop. Do not moralise about food. Estimates in the log are roughly ±30%; say "about" rather than exact.`;
+const COACH_RULES = `You are the between-meals coach inside a food log. Speak plainly and briefly, like a good coach texting: two to four sentences, no bullet lists, no headings, no emoji. Use ONLY the numbers in the facts; never invent a calorie, gram or weight, and never estimate a food yourself (the log does that). You cannot log, add, change or remove food: never say or suggest that anything was logged, added or saved by you. If the person wants to log something, tell them to type just the food and amount (like "1 cup blueberries") and the log will save it. If the person asks what to eat, suggest in terms of what is left today (protein, calories) and their own logged foods where possible. You are not a doctor: no medical advice, no diagnosis, no supplements or drugs; if they mention pain, fainting, an eating disorder, pregnancy or a medical condition, say kindly that this is one for their coach or a clinician and stop. Do not moralise about food. Estimates in the log are roughly ±30%; say "about" rather than exact.`;
 export async function askDay(env, who, { date, text, coachName = "" }) {
   const facts = await factsFor(env, who, date);
   const system = `${COACH_RULES}${coachName ? ` The person's human coach is ${coachName}.` : ""}\n\nFACTS (JSON, the only numbers you may use):\n${JSON.stringify(facts)}`;
@@ -477,6 +483,7 @@ function publicFacts(f, kind) {
 export function classifySay(text) {
   const t = String(text || "").trim();
   if (!t) return "empty";
+  if (isLogAsk(t)) return "log";
   if (QUESTION_HINT.test(t) && !/\b(again|same as|usual)\b/i.test(t)) return "question";
   return "log";
 }

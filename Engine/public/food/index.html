@@ -1589,9 +1589,11 @@ async function sendPhotos(text) {
   const fd = new FormData();
   if ((straighten.scales || []).length) fd.append('scales', straighten.scales.join(','));
   pics.forEach((a, i) => fd.append('photo', a.photo, 'photo' + (i + 1) + '.jpg'));
-  // The earliest photo's own time, if it's more than 10 minutes ago: the meal goes in then, on that day.
-  const taken = pics.map((a) => a.takenAt).filter((t) => t && t < Date.now() - 10 * 60 * 1000 && t > Date.now() - 14 * 864e5).sort((a, b) => a - b)[0];
-  fd.append('thumb', pics[0].thumb, 'thumb.jpg'); fd.append('kind', 'food'); fd.append('text', text); fd.append('date', taken ? localDate(new Date(taken)) : day);
+  // The earliest photo's own time, if it's more than 10 minutes ago AND on the day on screen: the meal goes in at
+  // that time. A photo from another day (an old one from the camera roll) goes on the day on screen — filing it
+  // under the day it was taken made meals vanish from the screen the person was looking at.
+  const taken = pics.map((a) => a.takenAt).filter((t) => t && t < Date.now() - 10 * 60 * 1000 && localDate(new Date(t)) === day).sort((a, b) => a - b)[0];
+  fd.append('thumb', pics[0].thumb, 'thumb.jpg'); fd.append('kind', 'food'); fd.append('text', text); fd.append('date', day);
   if (taken) fd.append('taken', new Date(taken).toISOString());
   fd.append('tz', String(TZ)); fd.append('zone', ZONE); fd.append('planned', day > localDate() ? '1' : '');
   const r = await api('photo', { body: fd });

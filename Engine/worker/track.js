@@ -49,7 +49,7 @@ import { join as idJoin, userIdFor, userById as idUserById, bindDevice, linkByCo
 import { applyLabelMath, scaleGrams } from "./track-yield.js";
 import { runVision, PROMPTS, labelTurn, extractJson, withBrands, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize, mergeCorrection } from "./track-vision.js";
 import { lookupBarcode, useBarcodes, rememberLabel, saveReceipt, listReceipts, deleteReceipt, setWeight, listWeights, importWeights, householdOf, createHousehold, joinHousehold, leaveHousehold, canView } from "./track-extras.js";
-import { ensureDaySchema, dayChat, addWords, afterMeal, editedMeal, confirmedMeal, removedMeal, listFavourites, nameFavourite, forgetFavourite, matchFavourite, recentTwin, steadyItems, repeatMeals, retimeFavourite, localHour, askDay, summaryFor, classifySay, looksLikeFood } from "./track-day.js";
+import { ensureDaySchema, dayChat, addWords, afterMeal, editedMeal, confirmedMeal, removedMeal, listFavourites, nameFavourite, forgetFavourite, matchFavourite, recentTwin, steadyItems, repeatMeals, retimeFavourite, localHour, askDay, summaryFor, classifySay, looksLikeFood, isLogAsk, stripLogAsk } from "./track-day.js";
 
 const THUMB_MAX_PX = 256, THUMB_MAX_BYTES = 48 * 1024;
 let HONESTY = "Photo estimates are typically within about 30%. Fix the portion when it's off.";   // per bot: project.json → food.honesty
@@ -71,6 +71,8 @@ export async function ensureTrackSchema(env) {
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS track_households (id TEXT PRIMARY KEY, name TEXT, code TEXT UNIQUE, created_at TEXT NOT NULL)`),
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS track_members (household_id TEXT NOT NULL, user_id TEXT PRIMARY KEY, name TEXT, joined_at TEXT NOT NULL)`),
     env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_track_members_h ON track_members(household_id)`),
+    // A meal's photos when no R2 bucket is bound (the default): base64 in pieces, so a big photo never meets D1's row limit.
+    env.DB.prepare(`CREATE TABLE IF NOT EXISTS track_photo_parts (meal_id TEXT NOT NULL, i INTEGER NOT NULL, part INTEGER NOT NULL, user_id TEXT NOT NULL, mime TEXT, data TEXT NOT NULL, PRIMARY KEY (meal_id, i, part))`),
   ]);
   // Where the person WAS when they logged (v3.13): the zone's name and the browser's UTC offset, so a lunch
   // eaten at noon in New York still reads "12:00 EDT" two weeks later from Denver. `time` became the LOCAL clock
@@ -118,7 +120,7 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
     return handleCoach(request, env, url, cfg, p.slice(admin.length));
   }
 
-  if (p === api + "config") return json({ enabled: true, id: bot.id, name: cfg.name, coachName: cfg.coachName, honesty: cfg.honesty, signIn: cfg.signIn, methods: { passkeys: cfg.methods.passkeys, totp: cfg.methods.totp, providers: cfg.signIn.map((s) => s.provider) }, dailyPhotoLimit: cfg.dailyPhotoLimit, maxPhotoBytes: cfg.maxPhotoBytes, photosKept: Boolean(env.PHOTOS), api, page });
+  if (p === api + "config") return json({ enabled: true, id: bot.id, name: cfg.name, coachName: cfg.coachName, honesty: cfg.honesty, signIn: cfg.signIn, methods: { passkeys: cfg.methods.passkeys, totp: cfg.methods.totp, providers: cfg.signIn.map((s) => s.provider) }, dailyPhotoLimit: cfg.dailyPhotoLimit, maxPhotoBytes: cfg.maxPhotoBytes, photosKept: Boolean(env.PHOTOS || env.DB), api, page });
   if (!env.DB) return json({ error: "The food log needs the D1 database (wrangler.jsonc → d1_databases)." }, 503);
   await ensureTrackSchema(env);
   if (cfg.pepper === DEV_PEPPER) console.warn("FOODLOG_PEPPER is not set — user ids use the dev pepper. Set it before real people use this: npx wrangler secret put FOODLOG_PEPPER");
@@ -506,8 +508,8 @@ async function photo(request, env, cfg, me) {
     if (mealId && form.get("preview") === "1") {
       const was = await readMeal(env, mealId);
       if (!was || !(await env.DB.prepare(`SELECT 1 FROM track_meals WHERE id = ? AND user_id = ?`).bind(mealId, me.id).first())) return json({ error: "no such meal" }, 404);
-      if (env.PHOTOS && form.get("replacePhotos") === "1") {
-        try { await forgetPhotos(env, me.id, mealId); await Promise.all(images.map((im, i) => env.PHOTOS.put(photoKey(me.id, mealId, i), im.bytes, { httpMetadata: { contentType: im.mime } }))); await env.DB.prepare(`UPDATE track_meals SET photos = ? WHERE id = ?`).bind(images.length, mealId).run(); was.photos = images.length; } catch (err) { console.warn("photos not replaced", err?.message || err); }
+      if (form.get("replacePhotos") === "1") {
+        try { await forgetPhotos(env, me.id, mealId); await keepPhotos(env, me.id, mealId, images); await env.DB.prepare(`UPDATE track_meals SET photos = ? WHERE id = ?`).bind(images.length, mealId).run(); was.photos = images.length; } catch (err) { console.warn("photos not replaced", err?.message || err); }
       }
       return json({ ok: true, preview: true, meal: { ...was, items, ...totalsOf(items) }, notes: (labelNote ? labelNote + " " : "") + String(parsed?.notes || "").slice(0, 300), ...(form.get("debug") === "1" ? { raw: out.text.slice(0, 4000) } : {}) });
     }
@@ -515,10 +517,10 @@ async function photo(request, env, cfg, me) {
     if (!meal) return json({ error: "no such meal" }, 404);
     // Keep the photos with a new meal (R2), so they can be looked at — and a scale zoomed into — later.
     // "Read again" on a saved meal sends its photos back (straightened): they replace the stored ones.
-    if (env.PHOTOS && (!mealId || form.get("replacePhotos") === "1")) {
+    if (!mealId || form.get("replacePhotos") === "1") {
       if (mealId) await forgetPhotos(env, me.id, meal.id);
       try {
-        await Promise.all(images.map((im, i) => env.PHOTOS.put(photoKey(me.id, meal.id, i), im.bytes, { httpMetadata: { contentType: im.mime } })));
+        await keepPhotos(env, me.id, meal.id, images);
         await env.DB.prepare(`UPDATE track_meals SET photos = ? WHERE id = ?`).bind(images.length, meal.id).run();
         meal.photos = images.length;
       } catch (err) { console.warn("photos not kept", err?.message || err); }
@@ -637,14 +639,15 @@ async function say(env, cfg, me, body) {
   if (!text) return json({ error: "empty", reason: "Say what you ate, or ask something." }, 400);
   const kind = classifySay(text);
   if (kind === "log") {
-    const m = await matchFavourite(env, me, text);
+    const asked = isLogAsk(text), food = asked ? stripLogAsk(text) : text;
+    const m = await matchFavourite(env, me, food);
     if (m) {
       const f = m.favourite;
       const when = f.lastUsed ? new Date(f.lastUsed).toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" }) : "before";
       return json({ ok: true, kind: "repeat", favourite: f, question: `Logging your ${f.label} from ${when}, about ${Math.round(f.kcal)} kcal. Right?` });
     }
-    if (looksLikeFood(text)) {
-      const r = await textMeal(env, cfg, me, { text, date, tz: body.tz, zone: body.zone, planned: body.planned });
+    if (asked || looksLikeFood(text)) {
+      const r = await textMeal(env, cfg, me, { text: food, date, tz: body.tz, zone: body.zone, planned: body.planned });
       const d = await r.json();
       if (r.ok) return json({ ok: true, kind: "meal", ...d });
       if (d.error !== "no food") return json(d, r.status);
@@ -701,16 +704,35 @@ async function updateMealItems(env, me, id, items) {
   await env.DB.prepare(`UPDATE track_meals SET items_json = ?, kcal = ?, protein_g = ?, carbs_g = ?, fat_g = ? WHERE id = ?`).bind(JSON.stringify(items), t.kcal, t.protein_g, t.carbs_g, t.fat_g, id).run();
   return readMeal(env, id);
 }
-// ---- a meal's photos (R2) ----
+// ---- a meal's photos: R2 when a bucket is bound, else D1 (track_photo_parts) ----
+// Out of the box there is no R2 (it asks for a card), so photos live in the database and the scale can still be
+// zoomed into. Bind PHOTOS later and new photos go to R2; the ones already in D1 keep being served from there.
 const photoKey = (userId, mealId, i) => `meals/${userId}/${mealId}/${i}.jpg`;
+const PART_BYTES = 512 * 1024;                     // ≈ 700 KB of base64 a row, well under D1's 2 MB
+async function keepPhotos(env, userId, mealId, images) {
+  if (env.PHOTOS) return Promise.all(images.map((im, i) => env.PHOTOS.put(photoKey(userId, mealId, i), im.bytes, { httpMetadata: { contentType: im.mime } })));
+  const rows = [];
+  images.forEach((im, i) => {
+    const bytes = new Uint8Array(im.bytes);
+    for (let part = 0, at = 0; at < bytes.length; part++, at += PART_BYTES)
+      rows.push(env.DB.prepare(`INSERT OR REPLACE INTO track_photo_parts (meal_id, i, part, user_id, mime, data) VALUES (?, ?, ?, ?, ?, ?)`)
+        .bind(mealId, i, part, userId, im.mime || "image/jpeg", toBase64(bytes.subarray(at, at + PART_BYTES))));
+  });
+  for (let k = 0; k < rows.length; k += 4) await env.DB.batch(rows.slice(k, k + 4));   // a few rows a round trip
+}
 async function servePhoto(env, userId, mealId, i) {
   const obj = env.PHOTOS ? await env.PHOTOS.get(photoKey(userId, mealId, i)) : null;
-  if (!obj) return json({ error: "no such photo" }, 404);
-  return new Response(obj.body, { headers: { "content-type": obj.httpMetadata?.contentType || "image/jpeg", "cache-control": "private, no-store" } });
+  if (obj) return new Response(obj.body, { headers: { "content-type": obj.httpMetadata?.contentType || "image/jpeg", "cache-control": "private, no-store" } });
+  const parts = (await env.DB.prepare(`SELECT mime, data FROM track_photo_parts WHERE meal_id = ? AND i = ? AND user_id = ? ORDER BY part`).bind(mealId, Number(i), userId).all()).results || [];
+  if (!parts.length) return json({ error: "no such photo" }, 404);
+  const chunks = parts.map((r) => Uint8Array.from(atob(r.data), (c) => c.charCodeAt(0)));
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+  let at = 0; for (const c of chunks) { out.set(c, at); at += c.length; }
+  return new Response(out, { headers: { "content-type": parts[0].mime || "image/jpeg", "cache-control": "private, no-store" } });
 }
 async function forgetPhotos(env, userId, mealId) {
-  if (!env.PHOTOS) return;
-  try { const l = await env.PHOTOS.list({ prefix: `meals/${userId}/${mealId}/` }); if (l.objects.length) await env.PHOTOS.delete(l.objects.map((o) => o.key)); } catch (err) { console.warn("photos not deleted", err?.message || err); }
+  if (env.PHOTOS) { try { const l = await env.PHOTOS.list({ prefix: `meals/${userId}/${mealId}/` }); if (l.objects.length) await env.PHOTOS.delete(l.objects.map((o) => o.key)); } catch (err) { console.warn("photos not deleted", err?.message || err); } }
+  try { await env.DB.prepare(`DELETE FROM track_photo_parts WHERE meal_id = ? AND user_id = ?`).bind(mealId, userId).run(); } catch (err) { console.warn("photos not deleted (D1)", err?.message || err); }
 }
 async function readMeal(env, id) {
   const r = await env.DB.prepare(`SELECT * FROM track_meals WHERE id = ?`).bind(id).first();
