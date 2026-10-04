@@ -49,6 +49,7 @@ import { join as idJoin, userIdFor, userById as idUserById, bindDevice, linkByCo
 import { applyLabelMath, scaleGrams } from "./track-yield.js";
 import { runVision, PROMPTS, labelTurn, extractJson, withBrands, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize, mergeCorrection } from "./track-vision.js";
 import { lookupBarcode, useBarcodes, rememberLabel, saveReceipt, listReceipts, deleteReceipt, setWeight, listWeights, importWeights, householdOf, createHousehold, joinHousehold, leaveHousehold, canView } from "./track-extras.js";
+import { clefTurn, orientMode, logOrient, costOf, ORIENT_LOG_SQL, shapeOf, CLEF_MODEL } from "./track-orient.js";
 import { ensureDaySchema, dayChat, addWords, afterMeal, editedMeal, confirmedMeal, removedMeal, listFavourites, nameFavourite, forgetFavourite, matchFavourite, recentTwin, steadyItems, repeatMeals, retimeFavourite, localHour, askDay, summaryFor, classifySay, looksLikeFood, isLogAsk, stripLogAsk } from "./track-day.js";
 
 const THUMB_MAX_PX = 256, THUMB_MAX_BYTES = 48 * 1024;
@@ -73,6 +74,8 @@ export async function ensureTrackSchema(env) {
     env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_track_members_h ON track_members(household_id)`),
     // A meal's photos when no R2 bucket is bound (the default): base64 in pieces, so a big photo never meets D1's row limit.
     env.DB.prepare(`CREATE TABLE IF NOT EXISTS track_photo_parts (meal_id TEXT NOT NULL, i INTEGER NOT NULL, part INTEGER NOT NULL, user_id TEXT NOT NULL, mime TEXT, data TEXT NOT NULL, PRIMARY KEY (meal_id, i, part))`),
+    // Which way is up, Clef's second opinion (Engine/worker/track-orient.js): one row per photo looked at, or turned by hand.
+    env.DB.prepare(ORIENT_LOG_SQL),
   ]);
   // Where the person WAS when they logged (v3.13): the zone's name and the browser's UTC offset, so a lunch
   // eaten at noon in New York still reads "12:00 EDT" two weeks later from Denver. `time` became the LOCAL clock
@@ -82,6 +85,9 @@ export async function ensureTrackSchema(env) {
     const have = new Set(((await env.DB.prepare(`PRAGMA table_info(track_meals)`).all()).results || []).map((c) => c.name));
     // planned (v3.13): a meal that has not happened yet. Counts against the day's budget, never as eaten.
     for (const [col, decl] of [["tz", "TEXT"], ["tz_offset", "INTEGER"], ["planned", "INTEGER DEFAULT 0"], ["photos", "INTEGER DEFAULT 0"]]) if (!have.has(col)) await env.DB.prepare(`ALTER TABLE track_meals ADD COLUMN ${col} ${decl}`).run();
+    // rotated (v3.14): a photo kept in D1 that the person turned by hand — the same flag R2 keeps in its metadata.
+    const parts = new Set(((await env.DB.prepare(`PRAGMA table_info(track_photo_parts)`).all()).results || []).map((c) => c.name));
+    if (!parts.has("rotated")) await env.DB.prepare(`ALTER TABLE track_photo_parts ADD COLUMN rotated TEXT`).run();
   } catch (err) { console.warn("meal zone columns not added (times will show in UTC)", err?.message || err); }
   await ensureDaySchema(env);
   TRACK_SCHEMA_OK = true;
@@ -98,7 +104,7 @@ const localClock = (iso, offsetMin) => new Date(Date.parse(iso) - (offsetMin || 
 // --- The router. Called from index.js for one food bot: the app's page, its API, its coach API.
 //     `bot` is the resolved project (kind food); api/page/admin are the path prefixes it answers on
 //     ("/api/apps/plate/", "/apps/plate", "/api/admin/apps/plate/" — or the /food aliases).
-export async function handleTrack(request, env, url, { bot, api, page, admin, isAdmin = false, adminEnabled = false, allowed = async () => true, graceMinutes = 60, expiry: expCfg = EXPIRY_BUILT_IN } = {}) {
+export async function handleTrack(request, env, url, { ctx = null, bot, api, page, admin, isAdmin = false, adminEnabled = false, allowed = async () => true, graceMinutes = 60, expiry: expCfg = EXPIRY_BUILT_IN } = {}) {
   const cfg = foodConfig(bot, env);
   HONESTY = cfg.honesty;
   const p = url.pathname;
@@ -124,6 +130,21 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
   if (!env.DB) return json({ error: "The food log needs the D1 database (wrangler.jsonc → d1_databases)." }, 503);
   await ensureTrackSchema(env);
   if (cfg.pepper === DEV_PEPPER) console.warn("FOODLOG_PEPPER is not set — user ids use the dev pepper. Set it before real people use this: npx wrangler secret put FOODLOG_PEPPER");
+
+  // The orientation eval (Engine/tests/orient-eval.py): Clef's verdict on one photo, with every probability. Only on a
+  // local `wrangler dev` started with ORIENT_EVAL=1 — never on a deployed worker (the var is never set there, and the
+  // host must be this machine).
+  if (p === api + "orient-eval" && env.ORIENT_EVAL === "1" && ["localhost", "127.0.0.1"].includes(url.hostname) && request.method === "POST") {
+    let form; try { form = await request.formData(); } catch { return json({ error: "bad request" }, 400); }
+    const f = form.get("photo"), cw = form.get("cw");
+    if (!f || typeof f.arrayBuffer !== "function") return json({ error: "no photo" }, 400);
+    const bytes = await f.arrayBuffer(), size = imageSize(bytes);
+    if (!size?.w) return json({ error: "not a JPEG or PNG" }, 400);
+    const model = form.get("model") === "clef-flash" ? "clef-flash" : "clef";
+    const r = await clefTurn(env, { bytes, cw: cw && typeof cw.arrayBuffer === "function" ? await cw.arrayBuffer() : null, w: size.w, h: size.h, mime: size.type === "png" ? "image/png" : "image/jpeg", model });
+    const tokens = r.looks.reduce((a, l) => a + (l.tokens || 0), 0);
+    return json({ ok: true, w: size.w, h: size.h, ...r, tokens, cost_usd: costOf(tokens, model === "clef-flash" ? "@cf/cloudflare/clef-flash" : CLEF_MODEL) });
+  }
 
   // Who is this browser? Engine/identity/index.js — fails closed.
   const who = await identify(request, env, bot);
@@ -189,20 +210,30 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
   }
   // Which way is up? Small copies of the photos (the page makes them, ≤512 px); the answer is how far to turn
   // each one clockwise so its printed words and numbers read upright. The page turns them before the real read —
-  // a sideways OXO display read as 8.8 oz (or not at all); upright, 8 1/8 every time.
-  // Which photos need turning, before the real read: small copies in, a clockwise turn per photo out (0 when
-  // there's no scale display, or it's already at the bottom). One quick call per photo, in parallel. Fails open.
+  // a sideways OXO display read as 8.8 oz (or not at all); upright, 8 1/8 every time. One quick call per photo,
+  // in parallel; 0 when nothing has a say. Fails open. The answers line up with the photos sent, one for one.
   if (sub === "orient") {
     if (request.method !== "POST") return json({ error: "POST only" }, 405);
     if (!(await allowed(env, request))) return json({ error: "rate-limited" }, 429);
     let form; try { form = await request.formData(); } catch { return json({ error: "bad request" }, 400); }
-    const files = form.getAll("photo").filter((f) => f && typeof f.arrayBuffer === "function" && f.size <= 300 * 1024).slice(0, MAX_PHOTOS);
+    const usable = (f) => f && typeof f.arrayBuffer === "function" && f.size > 0 && f.size <= 300 * 1024;
+    const files = form.getAll("photo").slice(0, MAX_PHOTOS);
+    const hand = handOf(form.get("hand"));                    // turned by the person (↻): never turned again
+    const bytesOf = await Promise.all(files.map((f) => (usable(f) ? f.arrayBuffer() : null)));
+    // Clef's second opinion (track-orient.js), asked alongside the rules below. "shadow": logged, never acted on.
+    const { mode, sample } = orientMode(env);
+    const asks = bytesOf.map((bytes, i) => {
+      const size = bytes ? imageSize(bytes) : null;
+      if (!size?.w || mode === "off" || (mode === "shadow" && Math.random() >= sample)) return null;
+      const cwf = form.get("cw" + i);                          // the page's 90° clockwise copy of a landscape photo
+      return (async () => ({ size, ...(await clefTurn(env, { bytes, cw: usable(cwf) ? await cwf.arrayBuffer() : null, w: size.w, h: size.h, mime: size.type === "png" ? "image/png" : "image/jpeg" })) }))();
+    });
     // Two landmarks, in order: a scale's display (bottom), else a Nutrition Facts heading (top of its panel,
     // Engine/worker/track-vision.js → labelTurn). A photo with neither — a barcode alone, the front of a
-    // can, a plate — is left as it is: on those, nothing we have gets it right reliably.
+    // can, a plate — is left as it is: on those, the rules have no say.
     const TURN = { bottom: 0, none: 0, left: 270, right: 90, top: 180 };
-    const looks = await Promise.all(files.map(async (f) => {
-      const bytes = await f.arrayBuffer();
+    const looks = await Promise.all(bytesOf.map(async (bytes) => {
+      if (!bytes) return { turn: 0, scale: false, by: "" };
       let edge = "none";
       try {
         const out = await runVision(env, cfg, { images: [{ bytes, mime: "image/jpeg" }], prompt: PROMPTS.scaleEdge(), maxTokens: 12, temperature: 0 });
@@ -212,6 +243,35 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
       const t = await labelTurn(env, cfg, bytes);
       return t === null ? { turn: 0, scale: false, by: "" } : { turn: t, scale: false, by: "label" };
     }));
+    // What the page does with each photo today, next to what Clef would have done: one log row per photo.
+    const now = looks.map((l, i) => (hand.has(i) ? { turn: 0, by: "hand" } : { turn: l.turn, by: l.by || "none" }));
+    const record = async () => {
+      const said = await Promise.all(asks.map((a) => a || null));
+      for (let i = 0; i < said.length; i++) {
+        const v = said[i]; if (!v) continue;
+        const id = randomId(), tokens = v.looks.reduce((a, l) => a + (l.tokens || 0), 0);
+        const agree = v.verdict === "error" ? null : now[i].turn === v.turn ? 1 : 0;
+        // A disagreement keeps its small copy, to be looked at by eye (Engine/tests/orient-report.mjs --fetch).
+        let imageKey = null;
+        if (agree === 0 && env.PHOTOS) { imageKey = `orient-shadow/${id}.jpg`; try { await env.PHOTOS.put(imageKey, bytesOf[i], { httpMetadata: { contentType: "image/jpeg" }, customMetadata: { user: me.id } }); } catch { imageKey = null; } }
+        await logOrient(env, {
+          id, at: nowIso(), user_id: me.id, source: "orient", mode, shape: v.shape, w: v.size.w, h: v.size.h, hand: hand.has(i) ? 1 : 0,
+          cur_turn: now[i].turn, cur_by: now[i].by, clef_turn: v.turn, clef_verdict: v.verdict,
+          probs_json: JSON.stringify({ looks: v.looks.map((l) => ({ asked: l.asked, ms: l.ms, p: Object.fromEntries(Object.entries(l.p).map(([k, x]) => [k, Math.round(x * 1000) / 1000])) })), ...(v.error ? { error: v.error } : {}) }),
+          ms: v.looks.reduce((a, l) => a + (l.ms || 0), 0), tokens, cost_usd: costOf(tokens), agree, image_key: imageKey,
+        });
+      }
+      return said;
+    };
+    if (mode === "live") {
+      // Live: the landmark rules first (never wrong on the owner's photos); Clef only where they had no say.
+      const said = await record();
+      said.forEach((v, i) => { if (v && v.turn && !hand.has(i) && !looks[i].by) Object.assign(looks[i], { turn: v.turn, by: "clef" }); });
+    } else if (asks.some(Boolean)) {
+      const job = record().catch((err) => console.warn("orient shadow failed", err?.message || err));
+      if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(job);
+    }
+    hand.forEach((_, i) => { if (looks[i]) Object.assign(looks[i], { turn: 0, by: "hand" }); });
     return json({ ok: true, turn: looks.map((l) => l.turn), scale: looks.map((l) => l.scale), by: looks.map((l) => l.by) });
   }
   if (sub === "photo") {
@@ -230,6 +290,39 @@ export async function handleTrack(request, env, url, { bot, api, page, admin, is
     const row = await env.DB.prepare(`SELECT user_id FROM track_meals WHERE id = ?`).bind(pm[1]).first();
     if (!row || (row.user_id !== me.id && !(await canView(env, me.id, row.user_id)))) return json({ error: "no such photo" }, 404);
     return servePhoto(env, row.user_id, pm[1], pm[2]);
+  }
+  // ↻ on a saved photo (the viewer): the page turns the picture itself and sends the turned bytes (a Worker can't
+  // draw). The untouched original is kept once as <i>-orig.jpg and never overwritten; the photo carries
+  // rotated=<degrees>, so nothing automatic turns it again. A new card picture comes with it when the card showed
+  // this photo. Owner only.
+  const rm = sub.match(/^meal\/([^/]+)\/photo\/(\d{1,2})\/rotate$/);
+  if (rm && request.method === "POST") {
+    const row = await env.DB.prepare(`SELECT user_id, thumb FROM track_meals WHERE id = ?`).bind(rm[1]).first();
+    if (!row || row.user_id !== me.id) return json({ error: "no such meal" }, 404);
+    let form; try { form = await request.formData(); } catch { return json({ error: "bad request" }, 400); }
+    const f = form.get("photo"), deg = Number(form.get("deg"));
+    if (![90, 180, 270].includes(deg) || !f || typeof f.arrayBuffer !== "function" || !f.size || f.size > cfg.maxPhotoBytes) return json({ error: "bad request", reason: "That turn couldn't be saved." }, 400);
+    const i = Number(rm[2]), was = await getPhoto(env, me.id, rm[1], i);
+    if (!was) return json({ error: "no such photo" }, 404);
+    const bytes = await f.arrayBuffer();
+    const a = imageSize(was.bytes), b = imageSize(bytes);
+    // The new picture must be the old one turned: a quarter turn swaps width and height, a half turn keeps them.
+    const fits = a?.w && b?.w && (deg === 180 ? Math.abs(a.w - b.w) <= 2 && Math.abs(a.h - b.h) <= 2 : Math.abs(a.w - b.h) <= 2 && Math.abs(a.h - b.w) <= 2);
+    if (!fits) return json({ error: "bad photo", reason: "That turn couldn't be saved — reload and try again." }, 400);
+    await keepOriginal(env, me.id, rm[1], i, was);
+    const rotated = String(((Number(was.meta.rotated) || 0) + deg) % 360);
+    await putPhoto(env, me.id, rm[1], i, bytes, "image/jpeg", { ...was.meta, rotated });
+    let thumb = null;
+    if (form.get("thumb")) {
+      thumb = await cleanThumb(form.get("thumb"));
+      if (thumb) {
+        await env.DB.prepare(`UPDATE track_meals SET thumb = ? WHERE id = ?`).bind(thumb, rm[1]).run();
+        // A favourite learned from this meal carries the same picture: it turns too.
+        if (row.thumb) await env.DB.prepare(`UPDATE track_favourites SET thumb = ? WHERE user_id = ? AND thumb = ?`).bind(thumb, me.id, row.thumb).run().catch(() => {});
+      }
+    }
+    await logOrient(env, { id: randomId(), at: nowIso(), user_id: me.id, source: "rotate", shape: shapeOf(b.w, b.h), w: b.w, h: b.h, hand: deg });
+    return json({ ok: true, rotated: Number(rotated), thumb });
   }
   // The meal's picture (the thumbnail on its card), set from one of its own photos. The page makes the
   // small JPEG itself (≤256 px); cleanThumb checks it. Owner only.
@@ -411,6 +504,7 @@ async function photo(request, env, cfg, me) {
   const correction = String(form.get("correction") || "").trim().slice(0, 200);
   const said = String(form.get("text") || "").trim().slice(0, 600);
   const mealId = String(form.get("mealId") || "").trim();
+  const hand = handOf(form.get("hand"));                  // photos the person turned by hand: stored with rotated=<degrees>
   // When the photos were taken (the page reads it from the photo itself): an earlier moment in the last two weeks.
   const takenMs = Date.parse(String(form.get("taken") || ""));
   const taken = Number.isFinite(takenMs) && takenMs < Date.now() - 10 * 60 * 1000 && takenMs > Date.now() - 14 * 864e5 ? new Date(takenMs).toISOString() : null;
@@ -509,7 +603,7 @@ async function photo(request, env, cfg, me) {
       const was = await readMeal(env, mealId);
       if (!was || !(await env.DB.prepare(`SELECT 1 FROM track_meals WHERE id = ? AND user_id = ?`).bind(mealId, me.id).first())) return json({ error: "no such meal" }, 404);
       if (form.get("replacePhotos") === "1") {
-        try { await forgetPhotos(env, me.id, mealId); await keepPhotos(env, me.id, mealId, images); await env.DB.prepare(`UPDATE track_meals SET photos = ? WHERE id = ?`).bind(images.length, mealId).run(); was.photos = images.length; } catch (err) { console.warn("photos not replaced", err?.message || err); }
+        try { await storePhotos(env, me.id, mealId, images, hand, { replace: true }); await env.DB.prepare(`UPDATE track_meals SET photos = ? WHERE id = ?`).bind(images.length, mealId).run(); was.photos = images.length; } catch (err) { console.warn("photos not replaced", err?.message || err); }
       }
       return json({ ok: true, preview: true, meal: { ...was, items, ...totalsOf(items) }, notes: (labelNote ? labelNote + " " : "") + String(parsed?.notes || "").slice(0, 300), ...(form.get("debug") === "1" ? { raw: out.text.slice(0, 4000) } : {}) });
     }
@@ -518,9 +612,8 @@ async function photo(request, env, cfg, me) {
     // Keep the photos with a new meal (R2), so they can be looked at — and a scale zoomed into — later.
     // "Read again" on a saved meal sends its photos back (straightened): they replace the stored ones.
     if (!mealId || form.get("replacePhotos") === "1") {
-      if (mealId) await forgetPhotos(env, me.id, meal.id);
       try {
-        await keepPhotos(env, me.id, meal.id, images);
+        await storePhotos(env, me.id, meal.id, images, hand, { replace: Boolean(mealId) });
         await env.DB.prepare(`UPDATE track_meals SET photos = ? WHERE id = ?`).bind(images.length, meal.id).run();
         meal.photos = images.length;
       } catch (err) { console.warn("photos not kept", err?.message || err); }
@@ -709,26 +802,78 @@ async function updateMealItems(env, me, id, items) {
 // zoomed into. Bind PHOTOS later and new photos go to R2; the ones already in D1 keep being served from there.
 const photoKey = (userId, mealId, i) => `meals/${userId}/${mealId}/${i}.jpg`;
 const PART_BYTES = 512 * 1024;                     // ≈ 700 KB of base64 a row, well under D1's 2 MB
-async function keepPhotos(env, userId, mealId, images) {
-  if (env.PHOTOS) return Promise.all(images.map((im, i) => env.PHOTOS.put(photoKey(userId, mealId, i), im.bytes, { httpMetadata: { contentType: im.mime } })));
-  const rows = [];
-  images.forEach((im, i) => {
-    const bytes = new Uint8Array(im.bytes);
-    for (let part = 0, at = 0; at < bytes.length; part++, at += PART_BYTES)
-      rows.push(env.DB.prepare(`INSERT OR REPLACE INTO track_photo_parts (meal_id, i, part, user_id, mime, data) VALUES (?, ?, ?, ?, ?, ?)`)
-        .bind(mealId, i, part, userId, im.mime || "image/jpeg", toBase64(bytes.subarray(at, at + PART_BYTES))));
-  });
-  for (let k = 0; k < rows.length; k += 4) await env.DB.batch(rows.slice(k, k + 4));   // a few rows a round trip
-}
-async function servePhoto(env, userId, mealId, i) {
-  const obj = env.PHOTOS ? await env.PHOTOS.get(photoKey(userId, mealId, i)) : null;
-  if (obj) return new Response(obj.body, { headers: { "content-type": obj.httpMetadata?.contentType || "image/jpeg", "cache-control": "private, no-store" } });
-  const parts = (await env.DB.prepare(`SELECT mime, data FROM track_photo_parts WHERE meal_id = ? AND i = ? AND user_id = ? ORDER BY part`).bind(mealId, Number(i), userId).all()).results || [];
-  if (!parts.length) return json({ error: "no such photo" }, 404);
+// One photo, wherever it lives (R2 first, then D1): { bytes, mime, meta } — meta.rotated is set when the person turned
+// it by hand. null if there is none.
+async function getPhoto(env, userId, mealId, i) {
+  if (env.PHOTOS) {
+    const o = await env.PHOTOS.get(photoKey(userId, mealId, i));
+    if (o) return { bytes: await o.arrayBuffer(), mime: o.httpMetadata?.contentType || "image/jpeg", meta: { ...(o.customMetadata || {}) } };
+  }
+  const parts = (await env.DB.prepare(`SELECT mime, data, rotated FROM track_photo_parts WHERE meal_id = ? AND i = ? AND user_id = ? ORDER BY part`).bind(mealId, Number(i), userId).all()).results || [];
+  if (!parts.length) return null;
   const chunks = parts.map((r) => Uint8Array.from(atob(r.data), (c) => c.charCodeAt(0)));
   const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
   let at = 0; for (const c of chunks) { out.set(c, at); at += c.length; }
-  return new Response(out, { headers: { "content-type": parts[0].mime || "image/jpeg", "cache-control": "private, no-store" } });
+  return { bytes: out.buffer, mime: parts[0].mime || "image/jpeg", meta: parts[0].rotated != null ? { rotated: String(parts[0].rotated) } : {} };
+}
+// Write one photo where new photos go: R2 when a bucket is bound, else D1 (its old pieces replaced).
+async function putPhoto(env, userId, mealId, i, bytes, mime = "image/jpeg", meta = {}) {
+  if (env.PHOTOS) return env.PHOTOS.put(photoKey(userId, mealId, i), bytes, { httpMetadata: { contentType: mime }, ...(Object.keys(meta).length ? { customMetadata: meta } : {}) });
+  const b = new Uint8Array(bytes), rotated = meta.rotated !== undefined ? String(meta.rotated) : null;
+  const rows = [env.DB.prepare(`DELETE FROM track_photo_parts WHERE meal_id = ? AND i = ? AND user_id = ?`).bind(mealId, Number(i), userId)];
+  for (let part = 0, at = 0; at < b.length; part++, at += PART_BYTES)
+    rows.push(env.DB.prepare(`INSERT OR REPLACE INTO track_photo_parts (meal_id, i, part, user_id, mime, data, rotated) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .bind(mealId, Number(i), part, userId, mime || "image/jpeg", toBase64(b.subarray(at, at + PART_BYTES)), rotated));
+  for (let k = 0; k < rows.length; k += 4) await env.DB.batch(rows.slice(k, k + 4));   // a few rows a round trip
+}
+// The photo as it first arrived, kept once before anything overwrites it, and never overwritten: <i>-orig.jpg in R2,
+// or photo number i + ORIG in D1 (never served: photo numbers in the address are two digits).
+const ORIG = 1000;
+async function keepOriginal(env, userId, mealId, i, photo) {
+  if (env.PHOTOS) {
+    const key = photoKey(userId, mealId, i).replace(/\.jpg$/, "-orig.jpg");
+    if (await env.PHOTOS.head(key)) return;
+    return env.PHOTOS.put(key, photo.bytes, { httpMetadata: { contentType: photo.mime }, customMetadata: photo.meta || {} });
+  }
+  if (await env.DB.prepare(`SELECT 1 FROM track_photo_parts WHERE meal_id = ? AND i = ? AND user_id = ? LIMIT 1`).bind(mealId, Number(i) + ORIG, userId).first()) return;
+  return putPhoto(env, userId, mealId, Number(i) + ORIG, photo.bytes, photo.mime, photo.meta || {});
+}
+async function servePhoto(env, userId, mealId, i) {
+  const ph = await getPhoto(env, userId, mealId, i);
+  if (!ph) return json({ error: "no such photo" }, 404);
+  // x-rotated: the person turned this photo by hand (the page then leaves it as it is when it reads it again).
+  return new Response(ph.bytes, { headers: { "content-type": ph.mime, "cache-control": "private, no-store", ...(ph.meta.rotated !== undefined ? { "x-rotated": String(ph.meta.rotated) } : {}) } });
+}
+// "0:90,2:180" → Map { 0 → 90, 2 → 180 }: which photos the person turned by hand, and by how much (clockwise).
+function handOf(v) {
+  const m = new Map();
+  for (const part of String(v || "").split(",")) {
+    const [i, d] = part.split(":").map(Number);
+    if (Number.isInteger(i) && i >= 0 && i < MAX_PHOTOS && [0, 90, 180, 270].includes(d)) m.set(i, d);
+  }
+  return m;
+}
+const sameBytes = (a, b) => { const x = new Uint8Array(a), y = new Uint8Array(b); if (x.length !== y.length) return false; for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false; return true; };
+// Store a meal's photos. replace: "Read again" sends them back (straightened) — each stored photo is kept as its
+// original first if the new bytes differ, keeps its metadata (a hand turn stays a hand turn), and photos beyond the
+// new count go (their originals stay until the meal is deleted).
+async function storePhotos(env, userId, mealId, images, hand = new Map(), { replace = false } = {}) {
+  await Promise.all(images.map(async (im, i) => {
+    let meta = {};
+    if (replace) {
+      const old = await getPhoto(env, userId, mealId, i);
+      if (old) { meta = { ...old.meta }; if (!sameBytes(old.bytes, im.bytes)) await keepOriginal(env, userId, mealId, i, old); }
+    }
+    if (hand.has(i)) meta.rotated = String(hand.get(i));
+    await putPhoto(env, userId, mealId, i, im.bytes, im.mime, meta);
+  }));
+  if (!replace) return;
+  if (env.PHOTOS) {
+    const l = await env.PHOTOS.list({ prefix: `meals/${userId}/${mealId}/` });
+    const extra = l.objects.map((o) => o.key).filter((k) => { const m = k.match(/\/(\d+)\.jpg$/); return m && Number(m[1]) >= images.length; });
+    if (extra.length) await env.PHOTOS.delete(extra);
+  }
+  await env.DB.prepare(`DELETE FROM track_photo_parts WHERE meal_id = ? AND user_id = ? AND i >= ? AND i < ?`).bind(mealId, userId, images.length, ORIG).run();
 }
 async function forgetPhotos(env, userId, mealId) {
   if (env.PHOTOS) { try { const l = await env.PHOTOS.list({ prefix: `meals/${userId}/${mealId}/` }); if (l.objects.length) await env.PHOTOS.delete(l.objects.map((o) => o.key)); } catch (err) { console.warn("photos not deleted", err?.message || err); } }

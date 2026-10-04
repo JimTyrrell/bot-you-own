@@ -206,6 +206,10 @@
   .mph.lifting { transform:scale(1.08); box-shadow:0 0 0 2px var(--accent); transition:transform .15s; }
   .zcover { position:absolute; bottom:calc(40px + env(safe-area-inset-bottom)); left:50%; transform:translateX(-50%); z-index:3; background:rgba(0,0,0,.6); color:#fff; border:1px solid rgba(255,255,255,.35); border-radius:999px; padding:9px 16px; font-size:14px; }
   .zcover[hidden] { display:none; }
+  .zbtns { display:flex; gap:10px; }
+  .zturn { width:40px; height:40px; padding:0; border-radius:50%; background:rgba(0,0,0,.6); border:1px solid rgba(255,255,255,.35); color:#fff; font-size:20px; box-shadow:0 1px 6px rgba(0,0,0,.4); }
+  .zturn[hidden] { display:none; }
+  .zturn:disabled { opacity:.5; }
   .zoom { position:fixed; inset:0; z-index:40; background:rgba(0,0,0,.92); display:flex; align-items:center; justify-content:center; animation:fadein .15s; }
   .zoom[hidden] { display:none; }
   .zbar { position:absolute; top:calc(10px + env(safe-area-inset-top)); left:14px; right:14px; display:flex; justify-content:space-between; align-items:center; color:#fff; font-size:14px; z-index:2; text-shadow:0 1px 3px #000; pointer-events:none; }
@@ -481,7 +485,7 @@
 <input type="file" id="pick" accept="image/*,.heic,.heif" multiple hidden>
 
 <!-- THE SHEET: one container, many contents -->
-<div class="zoom" id="zoom" hidden><div class="zbar"><span id="zcount"></span><button type="button" class="zx" id="zx" aria-label="Close">✕</button></div><div class="zstage" id="zstage"><img id="zimg" alt=""></div><button type="button" class="znav zprev" id="zprev" aria-label="Previous">‹</button><button type="button" class="znav znext" id="znext" aria-label="Next">›</button><p class="zhint" id="zhint"></p><button type="button" class="zcover" id="zcover" hidden>★ Use as the meal’s picture</button></div>
+<div class="zoom" id="zoom" hidden><div class="zbar"><span id="zcount"></span><span class="zbtns"><button type="button" class="zturn" id="zturn" title="Turn a quarter clockwise — saved, and never turned again automatically" aria-label="Turn this photo a quarter clockwise" hidden>↻</button><button type="button" class="zx" id="zx" aria-label="Close">✕</button></span></div><div class="zstage" id="zstage"><img id="zimg" alt=""></div><button type="button" class="znav zprev" id="zprev" aria-label="Previous">‹</button><button type="button" class="znav znext" id="znext" aria-label="Next">›</button><p class="zhint" id="zhint"></p><button type="button" class="zcover" id="zcover" hidden>★ Use as the meal’s picture</button></div>
 <div class="sheet" id="sheet" hidden><div class="box" role="dialog" aria-modal="true"><div class="grip"></div><button type="button" class="sheetx" id="sheetx" title="Close" aria-label="Close">✕</button><div id="sheetbody"></div></div></div>
 <div id="toast" class="toast" hidden></div>
 
@@ -596,13 +600,15 @@ async function readAgain(meal) {
     for (let i = 0; i < meal.photos; i++) {
       const r = await fetch(API + 'meal/' + encodeURIComponent(meal.id) + '/photo/' + i, { headers: { 'x-device-key': S.deviceKey }, cache: 'no-store' });
       if (!r.ok) throw new Error('photo');
-      const photo = await r.blob(); pics.push({ photo, thumb: await shrink(photo, 256, 0.7) });
+      const photo = await r.blob(), rot = r.headers.get('x-rotated');
+      pics.push({ photo, thumb: await shrink(photo, 256, 0.7), ...(rot !== null && rot !== '' ? { hand: Number(rot) || 0 } : {}) });
     }
     await straighten(pics);
     const scales = (straighten.scales || []).join(',');
     const said = ((CHAT && CHAT.turns) || []).filter((x) => x.kind === 'said' && x.mealId === meal.id).map((x) => x.text).join(' ');
     const fd = new FormData();
     pics.forEach((a, i) => fd.append('photo', a.photo, 'photo' + (i + 1) + '.jpg'));
+    const hand = handList(pics); if (hand) fd.append('hand', hand);
     fd.append('thumb', pics[0].thumb, 'thumb.jpg'); fd.append('kind', 'food'); fd.append('text', said); fd.append('date', meal.date);
     fd.append('tz', String(TZ)); fd.append('zone', ZONE); fd.append('mealId', meal.id); fd.append('replacePhotos', '1'); fd.append('preview', '1'); if (scales) fd.append('scales', scales);
     const r = await api('photo', { body: fd });
@@ -704,7 +710,8 @@ const Z = { meal: null, i: 0, s: 1, ox: 50, oy: 50, pts: new Map(), pinch: 0, mo
 function zoomDraw() { const im = $('zimg'); im.style.transformOrigin = Z.ox + '% ' + Z.oy + '%'; im.style.transform = 'scale(' + Z.s + ')'; $('zstage').classList.toggle('zoomed', Z.s > 1); }
 async function openZoom(meal, i) {
   Z.meal = meal; Z.i = (i + meal.photos) % meal.photos;
-  $('zcover').hidden = !(ED && ED.meal && ED.meal.id === meal.id && !ED.fresh && !$('sheet').hidden); Z.s = 1; Z.ox = Z.oy = 50; zoomDraw();
+  $('zcover').hidden = !(ED && ED.meal && ED.meal.id === meal.id && !ED.fresh && !$('sheet').hidden); Z.s = 1;
+  $('zturn').hidden = !(ED && ED.meal && ED.meal.id === meal.id && !$('sheet').hidden && !viewUser && !(DAY && DAY.readOnly)); Z.ox = Z.oy = 50; zoomDraw();
   $('zoom').hidden = false; $('zcount').textContent = meal.photos > 1 ? (Z.i + 1) + ' / ' + meal.photos : '';
   $('zprev').hidden = $('znext').hidden = meal.photos < 2;
   $('zhint').textContent = matchMedia('(hover: hover)').matches ? 'Click to zoom · move the mouse to look around · scroll to zoom more' : 'Tap to zoom · pinch · drag to look around';
@@ -714,6 +721,53 @@ function closeZoom() { $('zoom').hidden = true; Z.pts.clear(); }
 $('zx').onclick = closeZoom;
 $('zcover').onclick = async () => { const m = Z.meal, i = Z.i; closeZoom(); await setCover(m, i); };
 $('zcover').addEventListener('pointerup', (e) => e.stopPropagation());
+// ↻ in the viewer: turn a saved photo a quarter clockwise. The page turns the picture (the server can't draw) and
+// the server keeps the untouched original and marks the photo as turned by hand, so "Read again" and every
+// automatic step leave it as the person set it. The card's picture turns too when it is this photo.
+$('zturn').onclick = async () => {
+  const m = Z.meal, i = Z.i, b = $('zturn'); if (!m || b.disabled) return;
+  b.disabled = true;
+  try {
+    const url = await photoUrl(m, i); if (!url) throw new Error('');
+    const was = await (await fetch(url)).blob();
+    const photo = await turnBlob(was);
+    const fd = new FormData(); fd.append('photo', photo, 'photo.jpg'); fd.append('deg', '90');
+    if (m.thumb && await looksAlike(m.thumb, was)) fd.append('thumb', await thumbBlob(photo), 'thumb.jpg');
+    const r = await api('meal/' + encodeURIComponent(m.id) + '/photo/' + i + '/rotate', { body: fd });
+    if (!r.ok) throw new Error(r.reason || '');
+    const k = m.id + '/' + i; if (PHOTO_URLS[k]) URL.revokeObjectURL(PHOTO_URLS[k]); PHOTO_URLS[k] = URL.createObjectURL(photo);
+    if (MEAL_PHOTOS[m.id] && MEAL_PHOTOS[m.id][i]) MEAL_PHOTOS[m.id][i] = { photo, thumb: await shrink(photo, 256, 0.7) };
+    if (Z.meal === m && Z.i === i) { Z.s = 1; zoomDraw(); $('zimg').src = PHOTO_URLS[k]; }
+    const strip = $('sheetbody').querySelector('[data-ph="' + i + '"] img'); if (strip && ED && ED.meal && ED.meal.id === m.id) strip.src = PHOTO_URLS[k];
+    if (r.thumb) {
+      m.thumb = r.thumb; if (ED && ED.meal && ED.meal.id === m.id) ED.meal.thumb = r.thumb;
+      const inDay = (DAY && DAY.meals || []).find((x) => x.id === m.id); if (inDay) inDay.thumb = r.thumb;
+      const t = $('edthumb'); if (t && ED && ED.meal && ED.meal.id === m.id) t.innerHTML = '<img src="' + r.thumb + '" alt="">';
+      refresh();
+    }
+    toast('✓ Turned and saved');
+  } catch (e) { toast((e && e.message) || 'Couldn’t turn that photo — try again.', 4000); }
+  b.disabled = false;
+};
+$('zturn').addEventListener('pointerup', (e) => e.stopPropagation());
+// Is this card picture (a data: URL) the same photo? Compared small, in grey: the card may show another photo (★).
+async function looksAlike(src, blob) {
+  try {
+    const sig = (im, w, h) => { const c = document.createElement('canvas'); c.width = c.height = 12; const g = c.getContext('2d'); g.drawImage(im, 0, 0, w, h, 0, 0, 12, 12); const d = g.getImageData(0, 0, 12, 12).data, o = []; for (let k = 0; k < d.length; k += 4) o.push(d[k] * 0.3 + d[k + 1] * 0.59 + d[k + 2] * 0.11); return o; };
+    const t = await new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src; });
+    const p = await bitmapOf(blob);
+    if (Math.abs(t.naturalWidth / t.naturalHeight - p.width / p.height) > 0.06) return false;
+    const a = sig(t, t.naturalWidth, t.naturalHeight), b = sig(p, p.width, p.height);
+    let d = 0; for (let k = 0; k < a.length; k++) d += Math.abs(a[k] - b[k]);
+    return d / a.length < 14;
+  } catch { return false; }
+}
+// A card picture: ≤256 px and under the server's 48 KB.
+async function thumbBlob(blob) {
+  let q = 0.72, t = await shrink(blob, 256, q);
+  while (t && t.size > 46 * 1024 && q > 0.3) { q -= 0.12; t = await shrink(blob, 256, q); }
+  return t;
+}
 $('zprev').onclick = () => openZoom(Z.meal, Z.i - 1);
 $('znext').onclick = () => openZoom(Z.meal, Z.i + 1);
 document.addEventListener('keydown', (e) => { if ($('zoom').hidden) return; if (e.key === 'Escape') { e.stopImmediatePropagation(); closeZoom(); } else if (e.key === 'ArrowLeft') $('zprev').onclick(); else if (e.key === 'ArrowRight') $('znext').onclick(); }, true);
@@ -1383,7 +1437,7 @@ async function restoreKept() {
   const att = await blobGet('attach');
   if (att && att.items && att.items.length) {
     if (k.sentAt && landedSince(k.sentAt, k.text)) await blobPut('attach', null);
-    else { ATTACH = att.items.map(({ photo, thumb, takenAt }) => ({ photo, thumb, takenAt, url: URL.createObjectURL(thumb) })); drawTray(); if (k.sentAt && !k.text) toast('Those photos hadn’t been read — they’re still in the box. Press ↑.', 5000); }
+    else { ATTACH = att.items.map(({ photo, thumb, takenAt, hand }) => ({ photo, thumb, takenAt, hand, url: URL.createObjectURL(thumb) })); drawTray(); if (k.sentAt && !k.text) toast('Those photos hadn’t been read — they’re still in the box. Press ↑.', 5000); }
   }
   if (k.text && !box.value) {
     if (!k.sentAt) { box.value = k.text; growSay(); }
@@ -1535,8 +1589,11 @@ function drawTray() {
 // ↻ on a photo in the box: a quarter turn clockwise, before it is read. Measured on real photos: a sideways
 // OXO display read as 8.8 oz (or nothing); turned upright, 8 1/8 oz three times out of three. The models can't
 // reliably tell which way a photo is turned on their own, so the person decides.
+// A photo as pixels, the right way up by its EXIF tag (a phone held sideways writes orientation 6 or 8 and leaves the
+// pixels sideways). Current browsers apply the tag by default; ask for it anyway, and fall back where the option is unknown.
+async function bitmapOf(blob) { try { return await createImageBitmap(blob, { imageOrientation: 'from-image' }); } catch { return createImageBitmap(blob); } }
 async function turnBlob(blob) {
-  const bmp = await createImageBitmap(blob);
+  const bmp = await bitmapOf(blob);
   const c = document.createElement('canvas'); c.width = bmp.height; c.height = bmp.width;
   const g = c.getContext('2d'); g.translate(c.width, 0); g.rotate(Math.PI / 2); g.drawImage(bmp, 0, 0);
   return new Promise((r) => c.toBlob(r, 'image/jpeg', 0.88));
@@ -1544,25 +1601,35 @@ async function turnBlob(blob) {
 // A photo turned by any quarter (90, 180, 270 clockwise).
 async function turnBy(blob, deg) { let b = blob; for (let k = 0; k < ((deg / 90) % 4 + 4) % 4; k++) b = await turnBlob(b); return b; }
 // Straighten photos before they're read: the server says, per photo, how far to turn it so a scale's display is
-// at the bottom (Engine/worker/track.js → orient). Photos without a scale come back 0. Fails open: unturned.
+// at the bottom, or a label's heading at the top (Engine/worker/track.js → orient). Others come back 0. Fails open:
+// unturned. A photo the person turned with ↻ (a.hand) is never turned here: their choice wins.
 async function straighten(pics) {
   try {
     const fd = new FormData();
-    for (const a of pics) fd.append('photo', await shrink(a.photo, 512, 0.7), 'p.jpg');   // 512: the scale-edge answer was measured at this size and wobbles at 768
+    for (let i = 0; i < pics.length; i++) {
+      const small = await shrink(pics[i].photo, 512, 0.7);   // 512: the scale-edge answer was measured at this size and wobbles at 768
+      fd.append('photo', small, 'p.jpg');
+      // A landscape photo goes turned a quarter clockwise too: the orientation check asks about that copy (track-orient.js).
+      const bm = await bitmapOf(small), wide = bm.width > bm.height * 1.02; bm.close?.();
+      if (wide) fd.append('cw' + i, await turnBlob(small), 'cw.jpg');
+    }
+    const hand = handList(pics); if (hand) fd.append('hand', hand);
     const r = await api('orient', { body: fd });
-    const turn = (r && r.turn) || [];
+    const turn = ((r && r.turn) || []).map((t, i) => (pics[i] && pics[i].hand !== undefined ? 0 : Number(t) || 0));
     straighten.scales = ((r && r.scale) || []).map((v, i) => (v ? i : -1)).filter((i) => i >= 0);
     await Promise.all(pics.map(async (a, i) => { const t = Number(turn[i]) || 0; if (!t) return; const [photo, thumb] = await Promise.all([turnBy(a.photo, t), turnBy(a.thumb, t)]); if (a.url) URL.revokeObjectURL(a.url); Object.assign(a, { photo, thumb, url: URL.createObjectURL(thumb), turned: t }); }));
     return turn;
   } catch { straighten.scales = []; return []; }
 }
+// "0:90,2:180": the photos turned by hand and how far — sent with them, so nothing turns them again.
+const handList = (pics) => pics.map((a, i) => (a.hand !== undefined ? i + ':' + a.hand : '')).filter(Boolean).join(',');
 async function turnAttached(i) {
   const a = ATTACH[i]; if (!a || a.turning) return; a.turning = true;
-  try { const [photo, thumb] = await Promise.all([turnBlob(a.photo), turnBlob(a.thumb)]); URL.revokeObjectURL(a.url); Object.assign(a, { photo, thumb, url: URL.createObjectURL(thumb) }); }
+  try { const [photo, thumb] = await Promise.all([turnBlob(a.photo), turnBlob(a.thumb)]); URL.revokeObjectURL(a.url); Object.assign(a, { photo, thumb, url: URL.createObjectURL(thumb), hand: ((a.hand || 0) + 90) % 360 }); }
   catch { toast('Couldn’t turn that photo.'); }
   a.turning = false; drawTray(); keepAttach();
 }
-const keepAttach = () => blobPut('attach', ATTACH.length ? { userId: S.userId, at: Date.now(), items: ATTACH.map(({ photo, thumb, takenAt }) => ({ photo, thumb, takenAt })) } : null);
+const keepAttach = () => blobPut('attach', ATTACH.length ? { userId: S.userId, at: Date.now(), items: ATTACH.map(({ photo, thumb, takenAt, hand }) => ({ photo, thumb, takenAt, hand })) } : null);
 async function addPhotos(files) {
   const list = imagesIn(files);
   if (!list.length) return;
@@ -1589,6 +1656,7 @@ async function sendPhotos(text) {
   const fd = new FormData();
   if ((straighten.scales || []).length) fd.append('scales', straighten.scales.join(','));
   pics.forEach((a, i) => fd.append('photo', a.photo, 'photo' + (i + 1) + '.jpg'));
+  const hand = handList(pics); if (hand) fd.append('hand', hand);
   // The earliest photo's own time, if it's more than 10 minutes ago AND on the day on screen: the meal goes in at
   // that time. A photo from another day (an old one from the camera roll) goes on the day on screen — filing it
   // under the day it was taken made meals vanish from the screen the person was looking at.
@@ -1667,7 +1735,7 @@ async function photoTakenAt(file) {
 }
 // Shrink in the browser: ≤1024 px JPEG over the wire, and a ≤256 px thumbnail for the meal card.
 async function shrink(file, max, quality) {
-  const bmp = await (window.createImageBitmap ? createImageBitmap(file) : new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(file); }));
+  const bmp = await (window.createImageBitmap ? bitmapOf(file) : new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = URL.createObjectURL(file); }));
   const s = Math.min(1, max / Math.max(bmp.width, bmp.height));
   const c = document.createElement('canvas'); c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
   c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);

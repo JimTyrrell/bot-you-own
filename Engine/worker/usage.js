@@ -37,6 +37,9 @@ export const PRICES = {
   "@cf/moonshotai/kimi-k2.6":                    { in: 0.950, out: 4.000 },
   "@cf/moonshotai/kimi-k2.7-code":               { in: 0.950, out: 4.000 },
   "@cf/moondream/moondream3.1-9B-A2B":           { in: 0.300, out: 1.000 },
+  // Clef (decision models, 2026-09-29): billed on input only — the catalogue lists no output price.
+  "@cf/cloudflare/clef":                         { in: 0.240, out: 0 },
+  "@cf/cloudflare/clef-flash":                   { in: 0.090, out: 0 },
 };
 
 // Workers Free: 100,000 requests a day across the whole account. Documented, not

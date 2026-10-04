@@ -153,7 +153,7 @@ export default {
       const bot = await resolveProject(env, id);
       if (bot.id !== id || bot.kind === "chat") return url.pathname.startsWith("/api/") ? json({ error: "not found" }, 404) : new Response("Not found", { status: 404 });
       const paths = app.alias ? { page: "/food", api: "/api/food/", admin: "/api/admin/food/" } : { page: `/apps/${id}`, api: `/api/apps/${id}/`, admin: `/api/admin/apps/${id}/` };
-      if (bot.kind === "food") return handleTrack(request, env, url, { bot, ...paths, isAdmin, adminEnabled, allowed, graceMinutes: graceMinutesFor(bot, settings.identity?.graceMinutes), expiry: expiryFor(bot, settings) });
+      if (bot.kind === "food") return handleTrack(request, env, url, { ctx, bot, ...paths, isAdmin, adminEnabled, allowed, graceMinutes: graceMinutesFor(bot, settings.identity?.graceMinutes), expiry: expiryFor(bot, settings) });
       return json({ error: "not found" }, 404);
     }
     // --- IDENTITY, shared by every kind: passkeys and authenticator codes (Engine/identity/index.js).

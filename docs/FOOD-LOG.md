@@ -102,7 +102,17 @@ food log) like any bot; Export / Commit to GitHub write `project.json`.
   scale's display sits at the bottom, a Nutrition Facts heading at the top of its
   panel. Photos with neither (a barcode alone, the front of a can, a plate) are left
   as they are — asked outright, no model on Workers AI can tell which way a photo is
-  turned, so the app never guesses. ↻ on a photo turns it by hand.
+  turned, so the app never guesses. ↻ on a photo turns it by hand — in the box before
+  sending, or on a saved photo in the viewer (the original is kept as `<i>-orig.jpg`,
+  and a photo turned by hand is never turned again automatically). A second opinion,
+  Clef (`@cf/cloudflare/clef`, a decision model that returns a probability per
+  answer), runs in shadow when `ORIENT_CLEF=shadow`: it is asked where the top of
+  the thing points, its verdict is logged next to what the page did
+  (`track_orient_log`), and nothing changes until `ORIENT_CLEF=live` — then it acts
+  only where the landmarks had no say, and only at ≥ 0.8. `npm run deploy:photos`
+  sets shadow; `Engine/tests/orient-eval.py` measures it on a folder of photos and
+  `Engine/tests/orient-report.mjs` reads the shadow log
+  (Engine/worker/track-orient.js has the rules).
   Back comes the list of foods; a weight field (⚖️, grams or ounces, with the
   eighths a kitchen scale shows), **"Wrong food?"** → type "that's chicken, not
   pork" → it looks again with your correction; Save. Under it, always: *Photo estimates are typically within about
