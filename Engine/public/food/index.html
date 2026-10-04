@@ -257,6 +257,41 @@
   .thinking { display:flex; align-items:center; gap:10px; color:var(--muted); padding:20px 0; justify-content:center; }
   .thinking i { width:18px; height:18px; border:3px solid var(--edge); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
+  /* The live build-up while photos are read: each photo is scanned, ticked, captioned; foods slide in and their numbers count up. */
+  .build { background:var(--panel); border-radius:18px; padding:12px 14px; margin:10px 0; animation:buildin .3s cubic-bezier(.2,.8,.2,1); }
+  .build .bph { display:flex; gap:8px; overflow-x:auto; padding-bottom:2px; }
+  .build .bt { width:66px; flex:none; text-align:center; font-size:11px; color:var(--muted); }
+  .build .bt .im { position:relative; width:66px; height:66px; border-radius:12px; overflow:hidden; background:var(--edge); }
+  .build .bt img { width:100%; height:100%; object-fit:cover; display:block; transition:transform .45s cubic-bezier(.2,.8,.2,1); }
+  .build .bt.look .im::after { content:''; position:absolute; left:0; right:0; height:45%; top:-45%; background:linear-gradient(to bottom, rgba(16,163,127,0), rgba(16,163,127,.5) 70%, rgba(255,255,255,.8) 72%, rgba(16,163,127,0)); animation:scan 1.2s ease-in-out infinite; }
+  .build .bt.seen .im::before { content:'✓'; position:absolute; right:4px; top:4px; width:18px; height:18px; border-radius:50%; background:var(--accent); color:#fff; font-size:11px; line-height:18px; z-index:1; animation:pop .35s cubic-bezier(.3,1.6,.5,1); }
+  .build .bt .cap { margin-top:4px; line-height:1.25; height:2.5em; overflow:hidden; }
+  .build .bt.seen .cap { color:var(--text); animation:capin .3s; }
+  .build .brows { margin-top:6px; }
+  .build .brow { display:flex; justify-content:space-between; align-items:baseline; gap:10px; padding:7px 0; border-top:1px solid var(--edge); animation:rowin .4s cubic-bezier(.2,.8,.2,1); }
+  .build .brow .nm { font-weight:600; }
+  .build .brow .sub { font-size:12px; color:var(--muted); margin-top:1px; }
+  .build .brow .chip { display:inline-block; font-size:11px; padding:1px 7px; border-radius:999px; background:var(--bg); border:1px solid var(--edge); margin:2px 4px 0 0; animation:capin .3s; }
+  .build .brow .kc { white-space:nowrap; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .build .brow.firm .kc, .build .tot .kc { color:var(--text); }
+  .build .brow.gone { animation:rowout .35s forwards; }
+  .build .flash { animation:flash .7s; border-radius:6px; }
+  .build .tot { display:flex; justify-content:space-between; font-weight:700; padding-top:8px; border-top:1px solid var(--edge); font-variant-numeric:tabular-nums; }
+  .build .tot small { font-weight:400; color:var(--muted); }
+  .build .tot[hidden] { display:none; }
+  .build .stage { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); margin-top:8px; }
+  .build .stage i { width:14px; height:14px; border:2px solid var(--edge); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; flex:none; }
+  .build.done .stage i { border:0; animation:none; width:auto; height:auto; color:var(--accent); font-style:normal; }
+  .build.done .stage i::before { content:'✓'; }
+  .build .stage span { animation:capin .3s; }
+  @keyframes buildin { from { opacity:0; transform:translateY(10px); } }
+  @keyframes scan { to { top:100%; } }
+  @keyframes pop { from { transform:scale(0); } }
+  @keyframes capin { from { opacity:0; transform:translateY(3px); } }
+  @keyframes rowin { from { opacity:0; transform:translateY(8px); } }
+  @keyframes rowout { to { opacity:0; transform:translateX(12px); } }
+  @keyframes flash { 0% { background:rgba(16,163,127,.28); } 100% { background:transparent; } }
+  @media (prefers-reduced-motion: reduce) { .build, .build *, .build *::before, .build *::after { animation:none !important; transition:none !important; } }
   button.saving::before { content:''; display:inline-block; width:14px; height:14px; margin-right:8px; vertical-align:-2px; border:2px solid rgba(255,255,255,.45); border-top-color:#fff; border-radius:50%; animation:spin .7s linear infinite; }
   .toast { position:fixed; left:50%; transform:translateX(-50%); bottom:calc(150px + env(safe-area-inset-bottom)); background:var(--text); color:var(--bg); padding:10px 16px; border-radius:999px; font-size:14px; z-index:30; max-width:90%; text-align:center; }
   .presets { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
@@ -809,7 +844,7 @@ async function checkBuild() {
   if (!BUILT || document.hidden) return;
   const b = await buildNow();
   if (!b || b === BUILT) return;
-  const busy = !$('sheet').hidden || LOADING || $('saygo').disabled || document.querySelector('#thread .thinking');
+  const busy = !$('sheet').hidden || LOADING || $('saygo').disabled || document.querySelector('#thread .thinking, #thread .build');
   if (busy) return;                                   // mid-review or mid-send: try again next time
   location.reload();
 }
@@ -1603,11 +1638,11 @@ async function turnBy(blob, deg) { let b = blob; for (let k = 0; k < ((deg / 90)
 // Straighten photos before they're read: the server says, per photo, how far to turn it so a scale's display is
 // at the bottom, or a label's heading at the top (Engine/worker/track.js → orient). Others come back 0. Fails open:
 // unturned. A photo the person turned with ↻ (a.hand) is never turned here: their choice wins.
-async function straighten(pics) {
+async function straighten(pics, smalls = null) {
   try {
     const fd = new FormData();
     for (let i = 0; i < pics.length; i++) {
-      const small = await shrink(pics[i].photo, 512, 0.7);   // 512: the scale-edge answer was measured at this size and wobbles at 768
+      const small = (smalls && smalls[i]) || await shrink(pics[i].photo, 512, 0.7);   // 512: the scale-edge answer was measured at this size and wobbles at 768
       fd.append('photo', small, 'p.jpg');
       // A landscape photo goes turned a quarter clockwise too: the orientation check asks about that copy (track-orient.js).
       const bm = await bitmapOf(small), wide = bm.width > bm.height * 1.02; bm.close?.();
@@ -1648,11 +1683,170 @@ async function addPhotos(files) {
   }
   keepAttach(); $('say').focus();
 }
+// ---------- the live build-up ----------
+// Each photo's quick look (Engine/worker/track.js → peek) arrives as one line of JSON the moment that photo is read.
+async function peekPhotos(smalls, onLine) {
+  try {
+    const fd = new FormData(); smalls.forEach((b) => fd.append('photo', b, 'p.jpg'));
+    const r = await fetch(API + 'peek', { method: 'POST', headers: { 'x-device-key': S.deviceKey }, body: fd });
+    if (!r.ok || !r.body) return;
+    const rd = r.body.getReader(), dec = new TextDecoder(); let buf = '';
+    for (;;) {
+      const { value, done } = await rd.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      for (let k; (k = buf.indexOf('\n')) >= 0;) { const l = buf.slice(0, k); buf = buf.slice(k + 1); try { onLine(JSON.parse(l)); } catch {} }
+    }
+  } catch {}                                          // the quick looks are a show; the full read still comes
+}
+// A number that counts to its new value (and glows when it changes).
+function countTo(el, to) {
+  const from = Number(el.dataset.v || 0); to = Math.round(Number(to) || 0); el.dataset.v = to;
+  if (from === to && el.textContent) return;
+  const flash = el.closest('.kc, .tot') || el; flash.classList.remove('flash'); void flash.offsetWidth; flash.classList.add('flash');
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) { el.textContent = to.toLocaleString(); return; }
+  const t0 = performance.now(), d = 550;
+  const step = (t) => { const k = Math.max(0, Math.min(1, (t - t0) / d)), e = 1 - Math.pow(1 - k, 3); el.textContent = Math.round(from + (to - from) * e).toLocaleString(); if (k < 1) requestAnimationFrame(step); };
+  requestAnimationFrame(step);
+}
+// The same food seen on two photos ("Ketchup" on the label, "Tomato Ketchup" on the front) is one row: the shorter
+// name's words all in the longer one, or the same brand and a word in common.
+const BUILD_SKIP = new Set(['fresh', 'organic', 'large', 'small', 'sliced', 'raw', 'cooked', 'plain', 'whole', 'with', 'and', 'the', 'mixed', 'food', 'drink']);
+const buildWords = (s) => String(s || '').toLowerCase().replace(/[^a-z ]+/g, ' ').split(' ').filter((w) => w.length > 2 && !BUILD_SKIP.has(w)).map((w) => (w.length > 4 && /ies$/.test(w) ? w.slice(0, -3) + 'y' : w.length > 3 && /[^s]s$/.test(w) ? w.slice(0, -1) : w));
+function sameFood(a, b) {
+  // Brand and name together: the final read writes "Heinz Ketchup", a quick look "Tomato Ketchup" with brand Heinz.
+  const x = buildWords((a.brand || '') + ' ' + a.name), y = buildWords((b.brand || '') + ' ' + b.name); if (!x.length || !y.length) return false;
+  const [short, long] = x.length <= y.length ? [x, new Set(y)] : [y, new Set(x)];
+  if (short.every((w) => long.has(w))) return true;
+  return Boolean(a.brand && b.brand && a.brand.toLowerCase() === b.brand.toLowerCase() && short.some((w) => long.has(w)));
+}
+function buildCard(pics) {
+  const el = document.createElement('div'); el.className = 'build';
+  const urls = pics.map((a) => URL.createObjectURL(a.thumb));
+  el.innerHTML = '<div class="bph">' + pics.map((a, i) => '<div class="bt look" data-i="' + i + '"><div class="im"><img src="' + urls[i] + '" alt=""></div><div class="cap">' + (pics.length > 1 ? 'Photo ' + (i + 1) : '') + '</div></div>').join('') + '</div>'
+    + '<div class="rows"></div><div class="tot" hidden><span>So far <small></small></span><span><b class="kc"><span class="n"></span></b> kcal</span></div><div class="stage"><i></i><span>Straightening ' + (pics.length === 1 ? 'the photo' : 'the photos') + '…</span></div>';
+  // Keep the card in sight just above the box (scrollThread goes to the very bottom, which can push it off the top).
+  // Measured straight away (a frame callback can wait while the tab is in the background).
+  const keep = () => {
+    if (!el.isConnected) return;
+    const r = el.getBoundingClientRect(), d = $('dock'), room = innerHeight - (d && !d.hidden ? d.offsetHeight + 12 : 0);
+    if (r.bottom > room || r.top < 0) window.scrollTo({ top: Math.max(0, scrollY + (r.height > room - 16 ? r.top - 8 : r.bottom - room + 8)), behavior: 'smooth' });
+  };
+  const attach = () => { if (!el.isConnected) { $('thread').appendChild(el); keep(); } };
+  attach();
+  const rows = [], seen = new Set();
+  let settled = false, hints = null, labels = 0;
+  const stage = (t) => { attach(); const sp = el.querySelector('.stage span'); if (sp.textContent !== t) { const n = document.createElement('span'); n.textContent = t; sp.replaceWith(n); } };
+  const tile = (i) => el.querySelector('.bt[data-i="' + i + '"]');
+  function draw() {
+    attach();
+    const box = el.querySelector('.rows');
+    for (const r of rows) {
+      if (!r.el) { r.el = document.createElement('div'); r.el.className = 'brow'; r.el.innerHTML = '<div><div class="nm"></div><div class="sub"></div></div><div class="kc">' + '<span class="tilde">~</span><span class="n"></span> kcal</div>'; box.appendChild(r.el); }
+      r.el.querySelector('.nm').textContent = (r.brand && !r.name.toLowerCase().includes(r.brand.toLowerCase()) ? r.brand + ' ' : '') + r.name;
+      const chips = [...(r.grams ? [Math.round(r.grams) + ' g'] : []), ...(r.scale ? ['⚖ ' + r.scale] : []), ...(r.label ? ['label · ' + Math.round(r.label.kcal) + ' kcal' + (r.label.serving ? ' per ' + r.label.serving : '')] : [])];
+      const sub = r.el.querySelector('.sub'), html = chips.map((c) => '<span class="chip">' + esc(c) + '</span>').join('');
+      if (sub.dataset.h !== html) { sub.dataset.h = html; sub.innerHTML = html; }
+      r.el.querySelector('.tilde').hidden = r.firm;
+      r.el.classList.toggle('firm', r.firm);
+      countTo(r.el.querySelector('.n'), r.kcal);
+    }
+    const live = rows.filter((r) => !r.gone), tot = el.querySelector('.tot');
+    tot.hidden = !live.length;
+    if (live.length) {
+      countTo(tot.querySelector('.n'), live.reduce((a, r) => a + (Number(r.kcal) || 0), 0));
+      const P = live.reduce((a, r) => a + (r.p || 0), 0), C = live.reduce((a, r) => a + (r.c || 0), 0), F = live.reduce((a, r) => a + (r.f || 0), 0);
+      tot.querySelector('small').textContent = 'P ' + Math.round(P) + ' · C ' + Math.round(C) + ' · F ' + Math.round(F);
+    }
+    keep();
+  }
+  // One photo's quick look, merged into what we have.
+  const caption = (i, text) => { const t = tile(i), c = t && t.querySelector('.cap'); if (c && text && c.textContent !== text) { const n = c.cloneNode(); n.textContent = text; c.replaceWith(n); } };
+  // Foods from one photo into the rows: the same food seen again (on another photo, or again in the final answer) is
+  // the same row. Returns the rows they went into.
+  function take(l, items) {
+    const mine = [];
+    for (const it of items) {
+      if (!it || !it.name) continue;
+      let r = rows.find((x) => !x.labelOnly && sameFood(x, it));
+      // A row that was only a label so far takes the first food named next to it.
+      if (!r && l.label) r = rows.find((x) => x.labelOnly && x.label && Math.round(x.label.kcal) === Math.round(l.label.kcal));
+      if (!r) { r = { name: it.name, brand: it.brand, kcal: 0, p: 0, c: 0, f: 0, grams: 0, photos: new Set(), firm: false }; rows.push(r); }
+      if (r.labelOnly) { Object.assign(r, { labelOnly: false, name: it.name, brand: it.brand || r.brand }); }
+      if (!r.brand && it.brand) r.brand = it.brand;
+      if (it.name.length > r.name.length) r.name = it.name;
+      // Better numbers win: an amount on a scale or a plate over a guess with none.
+      const better = it.kcal > 0 && (!r.kcal || ((l.kind === 'scale' || l.kind === 'food') && it.grams > 0));
+      if (better) Object.assign(r, { kcal: it.kcal, p: it.protein_g, c: it.carbs_g, f: it.fat_g, grams: it.grams });
+      r.photos.add(l.i); mine.push(r);
+    }
+    return mine;
+  }
+  // Each food is merged the moment the server sends it (part "item"); the photo's whole answer comes last.
+  function line(l) {
+    if (settled || !l || l.done || typeof l.i !== 'number') return;
+    if (l.part === 'head') { caption(l.i, l.shows); return; }
+    if (l.part === 'item') { take(l, [l.item]); draw(); if (!hints) stage(labels ? 'Reading the label…' : 'Finding the foods…'); return; }
+    const t = tile(l.i); if (t) { t.classList.remove('look'); t.classList.add('seen'); }
+    caption(l.i, l.shows);
+    seen.add(l.i);
+    const mine = take(l, l.items || []);
+    if (l.label) {
+      labels++;
+      // The same label photographed three times is one label, not three foods.
+      const r = mine[0] || rows.find((x) => x.label && Math.round(x.label.kcal) === Math.round(l.label.kcal)) || (rows.length === 1 ? rows[0] : null);
+      if (r) { r.label = r.label || l.label; if (!r.kcal) Object.assign(r, { kcal: l.label.kcal, p: l.label.protein_g, c: l.label.carbs_g, f: l.label.fat_g }); }
+      else rows.push({ name: 'Nutrition label', brand: '', labelOnly: true, label: l.label, kcal: l.label.kcal, p: l.label.protein_g, c: l.label.carbs_g, f: l.label.fat_g, grams: 0, photos: new Set([l.i]), firm: false });
+    }
+    if (l.scale && /[1-9]/.test(l.scale)) { const r = mine[0] || (rows.length === 1 ? rows[0] : null); if (r) r.scale = l.scale; }
+    draw();
+    if (seen.size < pics.length) stage(labels ? 'Reading the label…' : 'Looking at each photo… ' + seen.size + ' of ' + pics.length);
+    else if (!hints) waiting();
+  }
+  // Everything is seen; the full read is still checking it: say what it is doing.
+  function waiting() {
+    const say = ['Putting it all together…', 'Counting each food once, not once per photo…', ...(labels ? ['Checking the label against the amount…'] : []), 'Adding up protein, carbs and fat…'];
+    let k = 0; stage(say[0]); hints = setInterval(() => { if (!settled) stage(say[++k % say.length]); }, 2200);
+  }
+  return {
+    line,
+    reading(text) { if (!settled && !hints && seen.size < pics.length) stage(seen.size ? 'Looking at each photo… ' + seen.size + ' of ' + pics.length : 'Looking at ' + (pics.length === 1 ? 'the photo' : 'each photo') + (text ? ' and your words' : '') + '…'); },
+    // A photo the straightening step turned: its tile turns too, then shows the upright picture.
+    turned(i, deg, thumb) {
+      const img = tile(i)?.querySelector('img'); if (!img) return;
+      img.style.transform = 'rotate(' + (deg > 180 ? deg - 360 : deg) + 'deg)';
+      setTimeout(() => { URL.revokeObjectURL(urls[i]); urls[i] = URL.createObjectURL(thumb); img.style.transition = 'none'; img.src = urls[i]; img.style.transform = 'none'; void img.offsetWidth; img.style.transition = ''; }, 470);
+    },
+    // The full read is in: each row becomes the food it really is (numbers count to the real ones), extra rows go, missing ones arrive.
+    async settle(meal) {
+      settled = true; clearInterval(hints);
+      el.querySelectorAll('.bt').forEach((t) => { t.classList.remove('look'); t.classList.add('seen'); });
+      const used = new Set();
+      for (const it of meal.items || []) {
+        let r = rows.find((x) => !used.has(x) && !x.gone && (sameFood(x, it) || (x.labelOnly && it.from_label)));
+        if (!r) { r = { photos: new Set(), kcal: 0 }; rows.push(r); }
+        used.add(r);
+        Object.assign(r, { name: it.name, brand: '', labelOnly: false, kcal: it.kcal, p: it.protein_g, c: it.carbs_g, f: it.fat_g, grams: it.grams, scale: it.scale_text || r.scale || '', firm: true });
+      }
+      rows.forEach((r) => { if (!used.has(r)) { r.gone = true; r.el && r.el.classList.add('gone'); } });
+      draw();
+      el.querySelector('.tot span').firstChild.textContent = 'Total ';
+      el.classList.add('done'); stage('Ready — check it and Save');
+      await sleep(matchMedia('(prefers-reduced-motion: reduce)').matches ? 300 : 1100);
+    },
+    remove() { settled = true; clearInterval(hints); el.remove(); urls.forEach((u) => URL.revokeObjectURL(u)); },
+  };
+}
 async function sendPhotos(text) {
-  const pics = ATTACH.slice(), n = pics.length; $('tray').classList.add('sending');
-  const thinking = document.createElement('div'); thinking.className = 'thinking'; thinking.innerHTML = '<i></i> Reading ' + (n === 1 ? 'the photo' : n + ' photos') + (text ? ' and your words' : '') + '…'; $('thread').appendChild(thinking); scrollThread();
+  const pics = ATTACH.slice(); $('tray').classList.add('sending');
+  // The card that fills in while we work: every photo is looked at on its own straight away (peek, 2–3 s each, in
+  // parallel) and shown as it lands; the full read of all the photos together then settles it.
+  const B = buildCard(pics);
+  const smalls = await Promise.all(pics.map((a) => shrink(a.photo, 512, 0.7)));
+  peekPhotos(smalls, (l) => B.line(l));
   // A scale photographed sideways is read wrong (8⅛ oz came back as 8.8, or nothing): straighten first.
-  const turned = await straighten(pics); if (turned.some(Boolean)) drawTray();
+  const turned = await straighten(pics, smalls); if (turned.some(Boolean)) drawTray();
+  turned.forEach((t, i) => { if (t) B.turned(i, t, pics[i].thumb); });
+  B.reading(text);
   const fd = new FormData();
   if ((straighten.scales || []).length) fd.append('scales', straighten.scales.join(','));
   pics.forEach((a, i) => fd.append('photo', a.photo, 'photo' + (i + 1) + '.jpg'));
@@ -1665,8 +1859,10 @@ async function sendPhotos(text) {
   if (taken) fd.append('taken', new Date(taken).toISOString());
   fd.append('tz', String(TZ)); fd.append('zone', ZONE); fd.append('planned', day > localDate() ? '1' : '');
   const r = await api('photo', { body: fd });
-  thinking.remove(); $('tray').classList.remove('sending');
-  if (!r.ok) { if (!r.offline) keepSet({ sentAt: null }); return { ok: false, reason: r.reason }; }
+  $('tray').classList.remove('sending');
+  if (!r.ok) { B.remove(); if (!r.offline) keepSet({ sentAt: null }); return { ok: false, reason: r.reason }; }
+  if (r.kind !== 'receipt') await B.settle(r.meal);
+  B.remove();
   pics.forEach((a) => URL.revokeObjectURL(a.url)); ATTACH = []; drawTray(); keepAttach();
   if (r.kind === 'receipt') { toast('That’s a receipt — saved' + (r.shared ? ' to the household' : '') + '.', 3500); return openReceipts().then(() => ({ ok: true })); }
   MEAL_PHOTOS[r.meal.id] = pics.map(({ photo, thumb }) => ({ photo, thumb }));

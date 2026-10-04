@@ -113,6 +113,12 @@ food log) like any bot; Export / Commit to GitHub write `project.json`.
   sets shadow; `Engine/tests/orient-eval.py` measures it on a folder of photos and
   `Engine/tests/orient-report.mjs` reads the shadow log
   (Engine/worker/track-orient.js has the rules).
+  While the photos are read, a card fills in: each photo is looked at on its own at
+  once (`POST peek`, one streamed line of JSON per food the moment the model writes
+  it, in parallel across photos), so the first foods show in about a second and a
+  full plate in two or three — the same label photographed three times is one food.
+  The full read of all the photos together then settles the card (numbers count to
+  the real ones) and is the one that is saved.
   Back comes the list of foods; a weight field (⚖️, grams or ounces, with the
   eighths a kitchen scale shows), **"Wrong food?"** → type "that's chicken, not
   pork" → it looks again with your correction; Save. Under it, always: *Photo estimates are typically within about

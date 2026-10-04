@@ -47,7 +47,7 @@ import { identify, signInMethods, verifyIdToken } from "../identity/index.js";
 import { resolve as resolveExpiry, lapseReply, noticeFor, EXPIRY_BUILT_IN } from "./expiry.js";
 import { join as idJoin, userIdFor, userById as idUserById, bindDevice, linkByCode, deviceCount, listDevices, pendingByEmail, touch as idTouch, DEV_PEPPER, pepperOf } from "../identity/devices.js";
 import { applyLabelMath, scaleGrams } from "./track-yield.js";
-import { runVision, PROMPTS, labelTurn, extractJson, withBrands, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize, mergeCorrection } from "./track-vision.js";
+import { runVision, streamVision, PROMPTS, labelTurn, extractJson, withBrands, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize, mergeCorrection } from "./track-vision.js";
 import { lookupBarcode, useBarcodes, rememberLabel, saveReceipt, listReceipts, deleteReceipt, setWeight, listWeights, importWeights, householdOf, createHousehold, joinHousehold, leaveHousehold, canView } from "./track-extras.js";
 import { clefTurn, orientMode, logOrient, costOf, ORIENT_LOG_SQL, shapeOf, CLEF_MODEL } from "./track-orient.js";
 import { ensureDaySchema, dayChat, addWords, afterMeal, editedMeal, confirmedMeal, removedMeal, listFavourites, nameFavourite, forgetFavourite, matchFavourite, recentTwin, steadyItems, repeatMeals, retimeFavourite, localHour, askDay, summaryFor, classifySay, looksLikeFood, isLogAsk, stripLogAsk } from "./track-day.js";
@@ -85,6 +85,9 @@ export async function ensureTrackSchema(env) {
     const have = new Set(((await env.DB.prepare(`PRAGMA table_info(track_meals)`).all()).results || []).map((c) => c.name));
     // planned (v3.13): a meal that has not happened yet. Counts against the day's budget, never as eaten.
     for (const [col, decl] of [["tz", "TEXT"], ["tz_offset", "INTEGER"], ["planned", "INTEGER DEFAULT 0"], ["photos", "INTEGER DEFAULT 0"]]) if (!have.has(col)) await env.DB.prepare(`ALTER TABLE track_meals ADD COLUMN ${col} ${decl}`).run();
+    // peeks (v3.14): quick per-photo looks today (the page's live build-up), capped apart from the photo reads.
+    const usage = new Set(((await env.DB.prepare(`PRAGMA table_info(track_usage)`).all()).results || []).map((c) => c.name));
+    if (!usage.has("peeks")) await env.DB.prepare(`ALTER TABLE track_usage ADD COLUMN peeks INTEGER DEFAULT 0`).run();
     // rotated (v3.14): a photo kept in D1 that the person turned by hand — the same flag R2 keeps in its metadata.
     const parts = new Set(((await env.DB.prepare(`PRAGMA table_info(track_photo_parts)`).all()).results || []).map((c) => c.name));
     if (!parts.has("rotated")) await env.DB.prepare(`ALTER TABLE track_photo_parts ADD COLUMN rotated TEXT`).run();
@@ -273,6 +276,43 @@ export async function handleTrack(request, env, url, { ctx = null, bot, api, pag
     }
     hand.forEach((_, i) => { if (looks[i]) Object.assign(looks[i], { turn: 0, by: "hand" }); });
     return json({ ok: true, turn: looks.map((l) => l.turn), scale: looks.map((l) => l.scale), by: looks.map((l) => l.by) });
+  }
+  // The quick look: every photo read ON ITS OWN, in parallel, each answer streamed back the moment it lands (one JSON
+  // object per line). The page builds the meal up from these while the full read — all the photos together, the one
+  // that is saved — is still running. Small copies (≤512 px, the ones made for orient). Capped per day apart from
+  // the photo reads; any failure is just a line that says so. Nothing is stored.
+  if (sub === "peek") {
+    if (request.method !== "POST") return json({ error: "POST only" }, 405);
+    if (!(await allowed(env, request))) return json({ error: "rate-limited" }, 429);
+    let form; try { form = await request.formData(); } catch { return json({ error: "bad request" }, 400); }
+    const files = form.getAll("photo").slice(0, MAX_PHOTOS);
+    const peeks = (await env.DB.prepare(`SELECT peeks FROM track_usage WHERE user_id = ? AND date = ?`).bind(me.id, todayUtc()).first().catch(() => null))?.peeks || 0;
+    if (peeks + files.length > cfg.dailyPhotoLimit * MAX_PHOTOS) return json({ error: "daily-limit" }, 429);
+    await env.DB.prepare(`INSERT INTO track_usage (user_id, date, photos, peeks) VALUES (?, ?, 0, ?) ON CONFLICT(user_id, date) DO UPDATE SET peeks = COALESCE(peeks, 0) + excluded.peeks`).bind(me.id, todayUtc(), files.length).run().catch(() => {});
+    const { readable, writable } = new TransformStream();
+    const out = writable.getWriter(), enc = new TextEncoder();
+    const line = (o) => out.write(enc.encode(JSON.stringify(o) + "\n")).catch(() => {});
+    const t0 = Date.now();
+    const work = (async () => {
+      await Promise.all(files.map(async (f, i) => {
+        if (!f || typeof f.arrayBuffer !== "function" || !f.size || f.size > 300 * 1024) return line({ i, error: "skipped" });
+        try {
+          // Streamed: what the photo shows as soon as it is written, then each food the moment its entry is complete,
+          // then the whole answer (with the label and the scale) once it is done.
+          let head = false, sent = 0;
+          const text = await streamVision(env, cfg, { images: [{ bytes: await f.arrayBuffer(), mime: "image/jpeg" }], prompt: PROMPTS.peek(), maxTokens: 700, temperature: 0 }, (t) => {
+            if (!head) { const sv = salvagePeek(t); if (sv.shows && /"kind"\s*:\s*"[a-z]+"/.test(t)) { head = true; line({ i, part: "head", ms: Date.now() - t0, shows: sv.shows.slice(0, 60) }); } }
+            const items = salvagePeek(t).items;
+            for (; sent < items.length; sent++) { const one = cleanPeek({ items: [items[sent]] }).items[0]; if (one) line({ i, part: "item", ms: Date.now() - t0, item: one }); }
+          });
+          await line({ i, ms: Date.now() - t0, ...cleanPeek(extractJson(text) || salvagePeek(text)) });
+        } catch (err) { console.warn("peek failed", err?.message || err); await line({ i, error: "model" }); }
+      }));
+      await line({ done: true, ms: Date.now() - t0 });
+      await out.close().catch(() => {});
+    })();
+    if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(work);
+    return new Response(readable, { headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } });
   }
   if (sub === "photo") {
     if (request.method !== "POST") return json({ error: "POST only" }, 405);
@@ -488,6 +528,29 @@ async function signIn(env, cfg, body, keyHash, me) {
 // The Fix line sends the items on screen as `current`. What the model needs to see of each
 // to leave it alone — no ids, no per-100 g table — and a forgiving reader for the field.
 const slim = (items) => items.map(({ name, portion, grams, kcal, protein_g, carbs_g, fat_g }) => ({ name, portion, grams, kcal, protein_g, carbs_g, fat_g }));
+// A quick look cut off mid-answer (a full plate is a long answer): every food that was written out whole still counts.
+function salvagePeek(raw) {
+  const t = String(raw || ""), items = [];
+  // Each food is a short list, ["Fried eggs","",100,140,12,1,10] (a third the length of an object, so it streams three
+  // times sooner); an object with "name" is taken too.
+  for (const m of t.matchAll(/\[\s*"[^"]*"\s*,\s*"[^"]*"(?:\s*,\s*-?[\d.]+){5}\s*\]|\{\s*"name"[^{}]*\}/g)) { try { items.push(asPeekItem(JSON.parse(m[0]))); } catch {} }
+  const field = (k) => (t.match(new RegExp(`"${k}"\\s*:\\s*"([^"]*)"`)) || [])[1] || "";
+  return { shows: field("shows"), kind: field("kind"), items, scale: field("scale") };
+}
+const asPeekItem = (x) => (Array.isArray(x) ? { name: x[0], brand: x[1], grams: x[2], kcal: x[3], protein_g: x[4], carbs_g: x[5], fat_g: x[6] } : x);
+// A quick look, made safe to show: short strings, numbers in range, at most six items.
+function cleanPeek(p) {
+  const str = (v, n) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+  const num = (v, max) => { const x = Number(v); return Number.isFinite(x) ? Math.round(clamp(x, 0, max) * 10) / 10 : 0; };
+  const kinds = ["food", "label", "scale", "package", "barcode", "receipt", "other"];
+  const lab = p?.label || {};
+  return {
+    shows: str(p?.shows, 60), kind: kinds.includes(p?.kind) ? p.kind : "other",
+    items: (Array.isArray(p?.items) ? p.items : []).map(asPeekItem).filter((it) => str(it?.name, 40)).slice(0, 6).map((it) => ({ name: str(it.name, 40), brand: str(it.brand, 30), grams: num(it.grams, 5000), kcal: num(it.kcal, 5000), protein_g: num(it.protein_g, 500), carbs_g: num(it.carbs_g, 800), fat_g: num(it.fat_g, 500) })),
+    label: num(lab.kcal, 5000) || num(lab.protein_g, 500) ? { serving: str(lab.serving, 30), kcal: num(lab.kcal, 5000), protein_g: num(lab.protein_g, 500), carbs_g: num(lab.carbs_g, 800), fat_g: num(lab.fat_g, 500) } : null,
+    scale: str(p?.scale, 20),
+  };
+}
 function listFrom(v) { try { const x = typeof v === "string" ? JSON.parse(v) : v; return Array.isArray(x) ? x : []; } catch { return []; } }
 
 // --- PHOTO: one call to the vision model, four kinds of picture. -----------------------

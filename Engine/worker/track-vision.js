@@ -42,6 +42,15 @@ export const PROMPTS = {
   // The page turns the photo so the display is at the bottom — how a scale is seen from the counter.
   // Just the display, one photo, nothing else to do — the full meal read skipped it in some runs.
   scaleRead: () => `This photo shows a kitchen scale. Read its digital display exactly: the number and the unit printed next to it (g, oz, lb, kg, ml). Ounce displays show whole ounces then a SMALL stacked fraction in eighths — a big 8 with a small 1 over 8 is "8 1/8 oz", never 8.8. A decimal point only appears on gram or kilogram displays. Answer ONLY with JSON: {"display":"8 1/8 oz"} — or {"display":""} if you cannot read it.`,
+  // One photo on its own, asked little, so it comes back in 2–3 s while the full read of all the photos together is
+  // still running: the page shows it at once and builds the meal up as each photo lands (Engine/worker/track.js →
+  // peek). Provisional only — the full read is the one that is saved.
+  peek: () => `You are looking at ONE photo from a meal someone is logging. It may be food, a package, a nutrition label, a kitchen scale, a barcode or a receipt. Answer ONLY with JSON, no prose: {"shows":"","kind":"food","items":[["name","brand",0,0,0,0,0]],"label":{"serving":"","kcal":0,"protein_g":0,"carbs_g":0,"fat_g":0},"scale":""}
+- "shows": what this photo shows, 2 to 5 plain words ("strawberries on a scale", "Nutrition Facts panel", "front of a can").
+- "kind": one of food, label, scale, package, barcode, receipt, other.
+- "items": each food or drink you can see, ONCE, as a short list: [name, brand, grams, kcal, protein g, carbs g, fat g] — e.g. ["Fried eggs","",100,140,12,1,10]. Name: 1–3 everyday words, normal capitals, no brand in it. Brand only if it is printed on THIS photo, else "". Numbers: a rough estimate for the amount shown. A nutrition label or barcode with no product name printed on it: []. A receipt: [].
+- "label": only if a nutrition facts panel is readable: the serving size as printed and the per-serving numbers exactly; else all 0 and "".
+- "scale": the digital display of a kitchen scale exactly as shown, with its unit ("96 g", "8 1/8 oz"); else "".`,
   scaleEdge: () => `Look at this photo. Is there a kitchen scale with a digital display (the screen with the numbers)? If so, which edge of the photo is the display closest to? Answer with exactly one word: top, bottom, left, right — or none if there is no scale display.`,
   // Photos + the person's words, sent together: ONE eating occasion. The words are the instructions
   // (amounts, extra foods not pictured, a name to save it under); the photos are the evidence.
@@ -83,6 +92,40 @@ export async function runVision(env, cfg, { image = null, mime = "image/jpeg", i
   const usage = r?.usage || null;
   console.log(JSON.stringify({ event: "foodlog-vision", model: cfg.model, ms: Date.now() - t0, images: all.length, neurons: usage?.neurons ?? null, tokens: usage?.total_tokens ?? null }));
   return { text, usage };
+}
+
+// The same call, streamed: onText gets each piece of the answer as the model writes it (the peek uses it to send each
+// food the moment it is written out). Returns the whole text. Workers AI streams server-sent events: "data: {…}" lines
+// carrying either `response` or an OpenAI-style `choices[0].delta.content`, ending with "data: [DONE]".
+export async function streamVision(env, cfg, { images, prompt, maxTokens = 900, system = "", temperature = null }, onText) {
+  if (!env.AI) throw new Error("No Workers AI binding (wrangler.jsonc → ai).");
+  const content = [{ type: "text", text: prompt }];
+  images.forEach((im) => content.push({ type: "image_url", image_url: { url: `data:${im.mime || "image/jpeg"};base64,${toBase64(im.bytes)}` } }));
+  const t0 = Date.now();
+  const stream = await env.AI.run(cfg.model, {
+    messages: [
+      { role: "system", content: system || "Answer with the JSON object only. Never think out loud. Never add commentary before or after the JSON." },
+      { role: "user", content },
+    ],
+    max_tokens: maxTokens, stream: true,
+    ...(temperature === null ? {} : { temperature }),
+    ...NO_THINK,
+  });
+  const rd = stream.getReader(), dec = new TextDecoder();
+  let buf = "", text = "", first = 0;
+  for (;;) {
+    const { value, done } = await rd.read(); if (done) break;
+    buf += dec.decode(value, { stream: true });
+    for (let k; (k = buf.indexOf("\n")) >= 0;) {
+      const ln = buf.slice(0, k).trim(); buf = buf.slice(k + 1);
+      if (!ln.startsWith("data:")) continue;
+      const data = ln.slice(5).trim(); if (!data || data === "[DONE]") continue;
+      let piece = ""; try { const j = JSON.parse(data); piece = j?.choices?.[0]?.delta?.content ?? j?.response ?? ""; } catch {}
+      if (piece) { if (!first) first = Date.now() - t0; text += piece; onText(text); }
+    }
+  }
+  console.log(JSON.stringify({ event: "foodlog-vision-stream", model: cfg.model, ms: Date.now() - t0, firstMs: first, images: images.length, chars: text.length }));
+  return text;
 }
 
 // --- WHICH WAY IS UP, from landmarks whose place on the page is known. ---------------------------------------
