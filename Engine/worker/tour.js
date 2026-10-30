@@ -20,7 +20,9 @@ import { isAllowed } from "./allowlist.js";
 import { CONFIG } from "../../YourBots/config.js";
 
 //  DEPLOY CODES. The owner makes a code under the hood (Sign-ups → Deploy codes), says who
-//  it was given to, and hands it over in a DM. A code may be used by any number of email
+//  it was given to, and hands it over in a DM. The "DM <owner>" line in the key box is
+//  Settings → Workshop keys (dmName, dmUrl) — this deployment's owner, since the keys live here.
+//  A code may be used by any number of email
 //  addresses — that's fine, because every use is logged against the code, and the code
 //  says who it was given to. Redeeming one unlocks Deploy for that person on this bot.
 //    GET  /api/admin/deploy-codes                 the codes, with uses
@@ -96,7 +98,7 @@ export const deployUrl = (env, links) => {
   return code ? `https://deploy.workers.cloudflare.com/?url=${code}` : "";
 };
 
-export async function tourState(env, request, guide, { stop = "", code = "", links = null, reset = false } = {}) {
+export async function tourState(env, request, guide, { stop = "", code = "", links = null, keys = null, reset = false } = {}) {
   const stops = Array.isArray(guide?.tour?.stops) ? guide.tour.stops : [];
   let done = {}, user = null, redeemed = null;
   if (env.DB) {
@@ -128,7 +130,7 @@ export async function tourState(env, request, guide, { stop = "", code = "", lin
   // code) — the same gate as deploy. Not in the page, not in the repo, not for the merely signed-up.
   const out = user && deploy.allowed ? { code: links?.code || "", prompts: links?.prompts || "" } : null;
   const c = CONFIG.community || {};
-  return { stops, done: stopsDone, signedUp: Boolean(user), deploy, redeemed, links: out, community: c.show ? { name: c.name, url: c.url, pitch: c.pitch, workshopName: c.workshopName || "the workshop", workshopUrl: c.workshopUrl || c.url, workshopPitch: c.workshopPitch || "", dmName: c.dmName || "", dmUrl: c.dmUrl || "" } : null };
+  return { stops, done: stopsDone, signedUp: Boolean(user), deploy, redeemed, links: out, community: c.show ? { name: c.name, url: c.url, pitch: c.pitch, workshopName: c.workshopName || "the workshop", workshopUrl: c.workshopUrl || c.url, workshopPitch: c.workshopPitch || "", dmName: keys?.dmName || "", dmUrl: keys?.dmUrl || "" } : null };   // dmName/dmUrl: Settings → Workshop keys (this deployment's owner makes the keys, so they are who to DM)
 }
 
 // For the Sign-ups tab: how far each person got, keyed by user id. { id: { n, of } }

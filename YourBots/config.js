@@ -31,8 +31,10 @@ export const CONFIG = {
     // The membership. Same page out of the box (the walkthrough lives in that group's classroom); point it at your trial or sales page when you have one.
     workshopName: "the membership", workshopUrl: "https://www.skool.com/sovereign-operator/about",
     workshopPitch: "The deploy walkthrough, the recordings, and the people who have done it: from the button to a bot on your own domain with the sign-up funnel on.",
-    // The human path: joined, no key in hand → message this person. A Skool profile link works.
-    dmName: "Jim", dmUrl: "https://www.skool.com/@jim-tyrrell-8465?g=sovereign-operator",
+    // The human path — joined, no key in hand → message this person — is NOT here. Keys are
+    // made in your deployment (Under the hood → Sign-ups), so the one who hands them out is
+    // you: name and link live in Settings → Workshop keys, in your database. That way a copy
+    // of this project never sends its visitors to someone who can't make its keys.
   },
 
   // ---- 2. WHICH PROJECT OPENS FIRST ------------------------------------------
@@ -331,7 +333,7 @@ export const CONFIG = {
   links: { code: "", checklist: "", prompts: "" },
 
   // ---- 6e. WORKSHOP KEYS: PREFIX-1234-5678. Make yours in Under the hood → Sign-ups. ------
-  keys: { prefix: "SO" },   // letters only, up to 6 — the prefix says whose key it is
+  keys: { prefix: "SO" },   // letters only, up to 6 — the prefix says whose key it is. Who hands them out (name + link): Settings → Workshop keys, not this file.
 
   // ---- 6c. THE FOOD LOG: /food — snap a plate, get the numbers ----------------
   // A photo food log a coach deploys for their clients. Not a chat bot: a page

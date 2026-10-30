@@ -831,11 +831,18 @@ Settings → Allowlist) **or who has redeemed a deploy code**. Everyone else see
 the workshop and the free group, a box for a code, and the licensed prompts.
 
 **Deploy codes** (Under the hood → Sign-ups → Deploy codes): make one, say who
-you gave it to, DM it. A code looks like `K7M4-P2QX`. Any number of email
+you gave it to, DM it. A code looks like `SO-1234-5678` (the prefix is yours:
+Settings → Workshop keys). Any number of email
 addresses may use it: every use is logged against the code with the email and
 the time, and the code says who had it, so handing it round is visible rather
 than blocked. Optional cap on uses. Disable one and it stops at once. The return window (Settings) decides how long after activity a typed email
 is trusted on a new device; 15 minutes is the demo's setting.
+
+**Who hands out keys** (Settings → Workshop keys): your name and a link where
+people can message you. The key box then ends with "Joined but no key in hand?
+DM *you*". Keys are made in your deployment, so this is always you, never the
+project you copied: a fresh copy shows no DM line at all until its owner fills
+this in. It is saved in your database, not in the repo.
 
 **One sign-up, every bot.** A browser that signed up on any bot of this
 deployment is let into the others in email mode without the form again; the

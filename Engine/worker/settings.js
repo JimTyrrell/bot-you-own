@@ -27,8 +27,22 @@ import { expirySettings, cleanExpiryConfig, EXPIRY_BUILT_IN } from "./expiry.js"
 
 const KEYS = ["access", "createYourOwn", "identity", "expiry", "signup", "links", "brand", "keys", "demo"];
 // ---- Workshop keys look like PREFIX-1234-5678. The prefix is yours (letters, up to 6).
-export function cleanKeys(k) { if (!k || typeof k !== "object") return null; const p = String(k.prefix || "").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 6); return p ? { prefix: p } : null; }
-function mergeKeys(c, f, s) { let cur = { prefix: "SO" }, source = "built-in"; for (const [layer, label] of [[c, "YourBots/config.js"], [f, "YourBots/settings.json"], [s, "saved (Settings screen)"]]) { const v = cleanKeys(layer); if (v) { cur = v; source = label; } } return { ...cur, source }; }
+//      dmName / dmUrl: who hands keys out. Keys are made in THIS deployment (Sign-ups → Deploy
+//      codes), so the person to message is this deployment's owner — never the project it was
+//      copied from. Blank out of the box, so a fresh copy shows no "DM …" line until its owner
+//      fills it in (Settings → Workshop keys). Saved in the database, never written to the repo.
+export function cleanKeys(k) {
+  if (!k || typeof k !== "object") return null;
+  const p = String(k.prefix || "").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 6);
+  const dmName = String(k.dmName || "").trim().slice(0, 80);
+  const u = String(k.dmUrl || "").trim().slice(0, 500), dmUrl = /^https?:\/\//.test(u) ? u : "";
+  return p || dmName || dmUrl ? { prefix: p, dmName, dmUrl } : null;
+}
+function mergeKeys(c, f, s) {
+  let cur = { prefix: "SO", dmName: "", dmUrl: "" }, source = "built-in";
+  for (const [layer, label] of [[c, "YourBots/config.js"], [f, "YourBots/settings.json"], [s, "saved (Settings screen)"]]) { const v = cleanKeys(layer); if (v) { cur = { prefix: v.prefix || cur.prefix, dmName: v.dmName, dmUrl: v.dmUrl }; source = label; } }
+  return { ...cur, source };
+}
 
 // ---- Who runs this site and what it's called: config.js ships a placeholder; Settings makes it yours.
 export function cleanBrand(b) {

@@ -176,7 +176,7 @@ export default {
       if (!bid || guide.id !== bid || !guide.tour) return json({ error: "which guide? send { bot }" }, 400);
       let stop = "", code = "", reset = false;
       if (request.method === "POST") { if (!(await allowed(env, request))) return json({ error: "rate-limited" }, 429); const b = (await request.clone().json().catch(() => ({}))) || {}; stop = String(b.stop || "").slice(0, 20); code = String(b.code || "").slice(0, 20); reset = b.reset === true; }
-      return json(await tourState(env, request, guide, { stop, code, reset, links: settings.links }));
+      return json(await tourState(env, request, guide, { stop, code, reset, links: settings.links, keys: settings.keys }));
     }
 
     if (url.pathname.startsWith("/api/admin/") || url.pathname.startsWith("/engine/")) {
