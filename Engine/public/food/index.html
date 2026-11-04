@@ -67,6 +67,13 @@
   body.tuck #t-chat .mini { top:env(safe-area-inset-top, 0px); }
   /* Always room to scroll the header out of sight, even on a day with one meal. */
   #s-home { min-height:calc(100vh + var(--hdr, 98px)); }
+  /* The Chat tab is a column that fills that height, with the thread pinned to its bottom: a short day's newest
+     meal sits just above the composer (like a chat), instead of at the top with an empty slab under it. */
+  #s-home { display:flex; flex-direction:column; }
+  #s-home[hidden] { display:none; }
+  #t-chat { flex:1; display:flex; flex-direction:column; }
+  #t-chat[hidden] { display:none; }
+  #t-chat #thread { margin-top:auto; }
   .datenav { display:flex; align-items:center; gap:4px; }
   .datenav button { padding:8px 12px; border-radius:999px; }
   .streak { font-size:13px; color:var(--muted); }
