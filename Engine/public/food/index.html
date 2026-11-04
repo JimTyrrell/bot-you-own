@@ -557,9 +557,17 @@ function shift(date, n) { const d = new Date(date + 'T12:00:00'); d.setDate(d.ge
 const $ = (id) => document.getElementById(id);
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
 // cheer(text): the motivational popup after a meal lands. Tap anywhere, or it goes by itself.
-function cheer(text, ms = 7000) { if (!text) return; $('cheertext').textContent = text; $('cheer').hidden = false; clearTimeout(cheer._t); cheer._t = setTimeout(closeCheer, ms); }
-function closeCheer() { $('cheer').hidden = true; clearTimeout(cheer._t); }
-document.addEventListener('DOMContentLoaded', () => { $('cheer').onclick = closeCheer; $('cheerok').onclick = closeCheer; });
+// The page's scroll is remembered on open and put back on close: on iPhone, hiding a focused button sent the
+// page to the top. On the Chat tab the thread goes back to its end instead — that is where the new meal is.
+function cheer(text, ms = 7000) { if (!text) return; cheer._y = window.scrollY; $('cheertext').textContent = text; $('cheer').hidden = false; clearTimeout(cheer._t); cheer._t = setTimeout(closeCheer, ms); }
+function closeCheer() {
+  if ($('cheer').hidden) return;
+  clearTimeout(cheer._t); if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  $('cheer').hidden = true;
+  const y = cheer._y || 0;
+  requestAnimationFrame(() => { if (SCREEN === 'home' && tab === 'chat') scrollThread(); else window.scrollTo({ top: y }); });
+}
+document.addEventListener('DOMContentLoaded', () => { $('cheer').onclick = closeCheer; $('cheerok').onclick = (e) => { e.stopPropagation(); closeCheer(); }; });
 function toast(msg, ms = 2600) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(t._t); t._t = setTimeout(() => t.hidden = true, ms); }
 function show(name) { SCREEN = name; if (name !== 'home') SHEET_PATH = ''; syncUrl(); if (name === 'join' && S.email && !$('email').value) $('email').value = S.email; document.querySelectorAll('.screen').forEach((s) => s.hidden = s.id !== 's-' + name); $('dock').hidden = name !== 'home' || Boolean(viewUser); window.scrollTo(0, 0); }
 // sheet(html, path): a path makes the sheet linkable (PAGE + path); without one the URL stays put.
@@ -1196,7 +1204,7 @@ async function refresh() {
   refresh.key = key; refresh.n = n;
   if (d.quote && d.quote.text && !viewUser) QUOTE = d.quote.text;
   renderDay(); renderFavs(); padForDock();
-  if (landed && !viewUser && d.quote && d.quote.text) setTimeout(() => sheetClosed().then(() => cheer(d.quote.text)), 500);
+  if (landed && !viewUser && d.quote && d.quote.text) setTimeout(() => sheetClosed().then(() => setTimeout(() => cheer(d.quote.text), 700)), 500);
   if (!refresh.tucked && SCREEN === 'home') { refresh.tucked = true; setTimeout(() => tuckHeader(), 0); }
   if (tab === 'day') loadSummary('day'); if (tab === 'week') loadSummary('week');
   if (tab === 'chat' && day === localDate() && !viewUser) loadYesterday();
