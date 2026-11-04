@@ -1198,10 +1198,12 @@ async function refresh() {
   }
   if (!d.ok) return toast(d.reason || 'Couldn’t load the day.');
   DAY = d; WEEK = w; CHAT = c.ok ? c : { turns: [] }; FAVS = f && f.ok ? f : null;
-  // The motivational line comes with every day read, so it changes with each log. One more meal on the same day
-  // than last time = something just landed: show it as a popup once the editor (if any) has been closed.
-  const key = day + '|' + (viewUser ? viewUser.id : ''), n = (d.meals || []).length, landed = refresh.key === key && n > (refresh.n || 0);
-  refresh.key = key; refresh.n = n;
+  // The motivational line comes with every day read, so it changes with each log. A meal id on the same day that
+  // was not there last time = something just landed: show it as a popup once the editor (if any) has been closed.
+  // (Ids, not a count: a delete and a log between two reads would cancel out.)
+  const key = day + '|' + (viewUser ? viewUser.id : ''), ids = new Set((d.meals || []).map((m) => m.id));
+  const landed = refresh.key === key && [...ids].some((id) => !(refresh.ids || new Set()).has(id));
+  refresh.key = key; refresh.ids = ids;
   if (d.quote && d.quote.text && !viewUser) QUOTE = d.quote.text;
   renderDay(); renderFavs(); padForDock();
   if (landed && !viewUser && d.quote && d.quote.text) setTimeout(() => sheetClosed().then(() => setTimeout(() => cheer(d.quote.text), 700)), 500);
