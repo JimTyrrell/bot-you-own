@@ -559,13 +559,13 @@ function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&am
 // cheer(text): the motivational popup after a meal lands. Tap anywhere, or it goes by itself.
 // The page's scroll is remembered on open and put back on close: on iPhone, hiding a focused button sent the
 // page to the top. On the Chat tab the thread goes back to its end instead — that is where the new meal is.
-function cheer(text, ms = 7000) { if (!text) return; cheer._y = window.scrollY; $('cheertext').textContent = text; $('cheer').hidden = false; clearTimeout(cheer._t); cheer._t = setTimeout(closeCheer, ms); }
+function cheer(text, ms = 7000) { if (!text) return; if (SCREEN === 'home' && tab === 'chat') toEnd(); cheer._y = window.scrollY; $('cheertext').textContent = text; $('cheer').hidden = false; clearTimeout(cheer._t); cheer._t = setTimeout(closeCheer, ms); }
 function closeCheer() {
   if ($('cheer').hidden) return;
   clearTimeout(cheer._t); if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
   $('cheer').hidden = true;
   const y = cheer._y || 0;
-  requestAnimationFrame(() => { if (SCREEN === 'home' && tab === 'chat') scrollThread(); else window.scrollTo({ top: y }); });
+  if (SCREEN === 'home' && tab === 'chat') { toEnd(); setTimeout(toEnd, 300); } else window.scrollTo({ top: y });
 }
 document.addEventListener('DOMContentLoaded', () => { $('cheer').onclick = closeCheer; $('cheerok').onclick = (e) => { e.stopPropagation(); closeCheer(); }; });
 function toast(msg, ms = 2600) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(t._t); t._t = setTimeout(() => t.hidden = true, ms); }
@@ -1341,7 +1341,8 @@ document.addEventListener('focusin', (e) => {
 });
 document.addEventListener('mouseup', (e) => { const el = e.target; if (el.tagName === 'INPUT' && /^(decimal|numeric)$/.test(el.inputMode || '') && el.selectionStart === el.selectionEnd && el.dataset.sel !== '1') { el.dataset.sel = '1'; el.setSelectionRange(0, el.value.length); } });
 document.addEventListener('focusout', (e) => { if (e.target.dataset) delete e.target.dataset.sel; });
-function scrollThread() { requestAnimationFrame(() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'smooth' })); }
+const toEnd = () => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'auto' });
+function scrollThread() { requestAnimationFrame(toEnd); setTimeout(toEnd, 350); setTimeout(toEnd, 900); }
 // The dock is fixed and its height changes (chips come and go): the page always leaves room for it.
 function padForDock() { const d = $('dock'); if (d.hidden) return; $('app').style.paddingBottom = (d.offsetHeight + 12) + 'px'; }
 window.addEventListener('resize', padForDock);
