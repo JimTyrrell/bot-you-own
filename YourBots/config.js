@@ -367,4 +367,39 @@ export const CONFIG = {
     "Weighing it up", "Reading that back", "Sifting", "Deliberating", "Ruminating",
     "Chewing on it", "Looking that up", "Marshalling the facts", "Considering", "Composing",
   ],
+
+  // ---- 8. MOTIVATIONAL QUOTES: the line under the greeting ----------------------
+  // When a chat starts, one line from this list shows under the bot's greeting —
+  // picked at random each time, so people see a different one on each visit.
+  // ${name} becomes the visitor's FIRST name (what the sign-up gate collected).
+  // No name? "fallback" is used instead ("friend"); leave it empty and the
+  // placeholder is simply dropped and the sentence tidied up: "Keep going, ${name}."
+  // becomes "Keep going." Under the hood → Settings → Motivational quotes edits the
+  // list live (the saved copy wins) and is where you give ONE person their own
+  // lines, by email address — those live in the database, never in this file.
+  // Every quote here is public domain (the author died more than seventy years ago,
+  // or the translation is that old). Nothing to credit; the names are kept because
+  // a quote without one reads like the bot's own opinion. Engine/worker/quotes.js.
+  quotes: {
+    show: true,
+    fallback: "",            // what ${name} becomes when there is no name; "" = drop it
+    list: [
+      "“Well done is better than well said.” — Benjamin Franklin. Go do one thing well today, ${name}.",
+      "“It is hard to fail, but it is worse never to have tried to succeed.” — Theodore Roosevelt. So try, ${name}.",
+      "“Great works are performed not by strength but by perseverance.” — Samuel Johnson. One more step, ${name}.",
+      "“Our doubts are traitors, and make us lose the good we oft might win by fearing to attempt.” — William Shakespeare. Attempt it anyway, ${name}.",
+      "“If there is no struggle, there is no progress.” — Frederick Douglass. The hard part is the progress, ${name}.",
+      "“Courage is resistance to fear, mastery of fear, not absence of fear.” — Mark Twain. You do not have to feel brave to act brave, ${name}.",
+      "“I am not afraid of storms, for I am learning how to sail my ship.” — Louisa May Alcott. Keep sailing, ${name}.",
+      "“Nothing will ever be attempted, if all possible objections must be first overcome.” — Samuel Johnson. Start before you are ready, ${name}.",
+      "“The harder the conflict, the more glorious the triumph.” — Thomas Paine. Earn it today, ${name}.",
+      "“Every artist was first an amateur.” — Ralph Waldo Emerson. Begin badly, ${name}; begin anyway.",
+      "“A wise man will make more opportunities than he finds.” — Francis Bacon. Make one today, ${name}.",
+      "“The heights by great men reached and kept were not attained by sudden flight, but they, while their companions slept, were toiling upward in the night.” — Henry Wadsworth Longfellow. Small, steady, upward, ${name}.",
+      "“Genius is one per cent inspiration and ninety-nine per cent perspiration.” — Thomas Edison. Sweat a little today, ${name}.",
+      "“No great thing is created suddenly.” — Epictetus. Patience, ${name}.",
+      "“Lost time is never found again.” — Benjamin Franklin. Spend this hour on purpose, ${name}.",
+      "“Do what you can, with what you have, where you are.” — Theodore Roosevelt. That is enough to start, ${name}.",
+    ],
+  },
 };

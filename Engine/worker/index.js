@@ -1,6 +1,7 @@
 import { CONFIG } from "../../YourBots/config.js";
 import { normaliseProject, normaliseWebsite, savedProjects, saveProject, deleteSavedProject, inFolder, resolveProject, resolveList, pickPublic, hrefFor, exportFiles, KINDS, KIND_LABELS, cleanKind } from "./projects.js";
 import { getSettings, saveSettings, settingsFileContent, cleanBadge, cleanSignup, publicSignup, cleanLinks, cleanBrand, cleanKeys, cleanDemo, SETTINGS_FILE_VIEW as SETTINGS_FILE } from "./settings.js";
+import { cleanQuotes, pickQuote } from "./quotes.js";
 // The GitHub repo this deploys from: the GITHUB_REPO secret first, config.js second (blank in the template on purpose).
 const repoOf = (env) => String(env?.GITHUB_REPO || CONFIG.github?.repo || "").trim();
 import { listSignups, signupsCsv } from "./signups.js";
@@ -345,8 +346,10 @@ export default {
         // Demo mode: the tour and the sample bots. A change to one switch keeps the other as it is.
         const dmIn = cleanDemo(b?.demo);
         const dm = dmIn ? { tour: settings.demo?.tour !== false, bots: settings.demo?.bots !== false, ...dmIn } : null;
-        await saveSettings(env, { access: next, createYourOwn: badge, identity: ident, expiry: exp, signup: su, links: lk, brand: br, keys: ky, demo: dm });
-        await logAdminEvent(env, request, "settings-save", "access", `default ${settings.default} → ${next.default} · floor ${settings.floor} → ${next.floor}${badge ? ` · badge ${badge.show ? `"${badge.text}"` : "hidden"}` : ""}${ident ? ` · return window ${settings.identity?.graceMinutes} → ${Math.round(Number(ident.graceMinutes))} min` : ""}${exp ? ` · when access lapses ${settings.expiry?.onLapse} → ${exp.onLapse ?? settings.expiry?.onLapse}${exp.graceDays !== undefined ? `, grace ${exp.graceDays}d` : ""}` : ""}`);
+        // Motivational quotes: the shared list, the switches, and one person's own lines by email (Engine/worker/quotes.js).
+        const qt = b?.quotes ? cleanQuotes(b.quotes, settings.quotes) : null;
+        await saveSettings(env, { access: next, createYourOwn: badge, identity: ident, expiry: exp, signup: su, links: lk, brand: br, keys: ky, demo: dm, quotes: qt });
+        await logAdminEvent(env, request, "settings-save", "access", `default ${settings.default} → ${next.default} · floor ${settings.floor} → ${next.floor}${badge ? ` · badge ${badge.show ? `"${badge.text}"` : "hidden"}` : ""}${ident ? ` · return window ${settings.identity?.graceMinutes} → ${Math.round(Number(ident.graceMinutes))} min` : ""}${exp ? ` · when access lapses ${settings.expiry?.onLapse} → ${exp.onLapse ?? settings.expiry?.onLapse}${exp.graceDays !== undefined ? `, grace ${exp.graceDays}d` : ""}` : ""}${qt ? ` · quotes ${qt.show ? "on" : "off"}, ${qt.list.length} shared, ${Object.keys(qt.people).length} personal` : ""}`);
         if (dm && (dm.tour !== (settings.demo?.tour !== false) || dm.bots !== (settings.demo?.bots !== false))) await logAdminEvent(env, request, "demo-mode", "demo", `tour ${settings.demo?.tour !== false ? "on" : "off"} → ${dm.tour ? "on" : "off"} · sample bots ${settings.demo?.bots !== false ? "shown" : "hidden"} → ${dm.bots ? "shown" : "hidden"}`);
         return json(await settingsView(env, await getSettings(env)));
       }
@@ -444,9 +447,14 @@ export default {
         }
         catch (err) { console.error("identity lookup failed on /api/config", err?.message || err); identity = { linked: false, pending: null }; }
       }
+      // The line under the greeting: a person's own list if they have one (by the email
+      // the gate gave us), else the shared list; ${name} filled from id_users.name.
+      // The page re-fills it with the name it holds, so the gate and this agree.
+      const quote = pickQuote(settings.quotes, { email: identity?.linked ? identity.email : "", name: identity?.linked ? identity.name : "" });
       return json({
         version: await versionStamp(env),
         identity,
+        quote,
         locked: view.key,                                                    // this bot needs a key (and the caller has one)
         accessMode: view.mode,
         access: view,
@@ -1526,6 +1534,7 @@ async function settingsView(env, settings) {
     signup: settings.signup,
     brand: settings.brand,
     keyPrefix: settings.keys,                        // Settings → Workshop keys (the rows with an end date are `keys`, below)
+    quotes: settings.quotes,                         // Settings → Motivational quotes (Engine/worker/quotes.js)
     identity: { graceMinutes: settings.identity?.graceMinutes, source: settings.identity?.source },
     allowlist: { keySet: allowlistKeySet(env), counts, global: counts[GLOBAL_SCOPE] || 0 },
     // When access runs out: the policy, everyone who currently has an end date, and

@@ -174,6 +174,7 @@
   .empty { margin:auto; max-width:760px; padding:40px 16px; text-align:center; }
   .empty h2 { font-size:26px; font-weight:600; margin:0 0 6px; }
   .empty p { color:var(--muted); margin:0 0 22px; }
+  .empty .quote { font-size:15px; font-style:italic; max-width:560px; margin:-10px auto 22px; line-height:1.5; }
   /* the persistent strip: one scrollable row, quieter than the big empty-state grid */
   /* One size, always wrapped, always in the same place: before the first message and after
      it, the row is identical, so nothing moves under the cursor when an answer arrives.
@@ -851,6 +852,20 @@ let needKey = false, needEmail = false, needAdmin = false;
 let ADMIN_ENABLED = false;
 let VISITOR_NAME = '';                                    // what they typed at the gate, first word used in greetings
 const firstName = () => (VISITOR_NAME || '').trim().split(/\s+/)[0] || '';
+// ${name} in a greeting or a quote → the first name; else the fallback word; else dropped and the
+// sentence tidied ("Keep going, ${name}." → "Keep going."). Mirrors Engine/worker/quotes.js → fillQuote.
+function fillName(text, fallback) {
+  let t = String(text || ''); const ph = /\$\{\s*name\s*\}/gi;
+  if (!ph.test(t)) return t;
+  const first = firstName().slice(0, 40), fb = String(fallback || '').trim().slice(0, 40);
+  if (first) return t.replace(ph, first);
+  if (fb) return t.replace(ph, (m, at) => (at === 0 || /[.!?]\s+$/.test(t.slice(0, at)) ? fb[0].toUpperCase() + fb.slice(1) : fb));
+  t = t.replace(/,\s*\$\{\s*name\s*\}\s*,\s*/gi, ' ');
+  t = t.replace(/(^|[.!?]\s+)\$\{\s*name\s*\}\s*[,:;!]?\s*(\S)/gi, (m, pre, ch) => pre + ch.toUpperCase());
+  t = t.replace(/\s*[,;:]?\s*\$\{\s*name\s*\}(?=\s*[.!?,;:]|\s*$)/gi, '');
+  t = t.replace(/\s*\$\{\s*name\s*\}\s*/gi, ' ');
+  return t.replace(/\s+([.!?,;:])/g, '$1').replace(/\s{2,}/g, ' ').trim();
+}
 // What the sign-up gate asks for (Under the hood → Settings → The sign-up gate). Comes with /api/config.
 let SIGNUP = { title: '', blurb: '', askName: 'optional', askPhone: 'off', marketing: { show: true, required: false, checked: false, text: '' }, sms: { show: false, required: false, checked: false, text: '' }, privacyLine: '' };
 // A few facts about this browser, hashed on the server and never stored raw: enough to see
@@ -1419,8 +1434,12 @@ function renderLog() {
     const hello = firstName() ? (isGuide ? 'Welcome, ' + firstName() + '. ' : '') : '';
     const next = isGuide ? TOUR.stops.find((s) => !TOUR.done[s]) : null;
     const nDone = isGuide ? TOUR.stops.filter((s) => TOUR.done[s]).length : 0;
-    const greet = p.greeting || 'What can I help with?';
-    empty.innerHTML = '<h2>' + esc(hello ? hello + greet.replace(/^(welcome|hello|hi)[.,!]?\s*/i, '') : greet) + '</h2><p>' + esc(p.tagline || '') + '</p>';
+    const greet = fillName(p.greeting || 'What can I help with?', state.cfg?.quote?.fallback);
+    // The motivational line (Under the hood → Settings → Motivational quotes): the server picked
+    // it for THIS visitor (their own list if they have one); the name is filled here so the gate
+    // and the page agree. Chat bots only — Plate and the other kinds draw their own screens.
+    const q = state.cfg?.quote && (!p.kind || p.kind === 'chat') ? fillName(state.cfg.quote.text, state.cfg.quote.fallback) : '';
+    empty.innerHTML = '<h2>' + esc(hello ? hello + greet.replace(/^(welcome|hello|hi)[.,!]?\s*/i, '') : greet) + '</h2><p>' + esc(p.tagline || '') + '</p>' + (q ? '<p class="quote">' + esc(q) + '</p>' : '');
     if (isGuide && TOUR.stops.length) {
       // The stops as a list, mirroring the strip: ticks on the done ones, a button on the next.
       const ol = document.createElement('ol'); ol.className = 'tourlist';
@@ -2814,6 +2833,8 @@ $('pform').addEventListener('submit', async (e) => {
 });
 
 // ---- Settings tab: who can use it, for the whole deployment — and what changed, and when ----
+// Textareas inside Under the hood: the page's bare textarea rule is the composer's, so these carry their own box.
+const QT_TA = 'width:100%;min-width:0;max-width:100%;box-sizing:border-box;margin-top:6px;padding:10px 12px;border:1px solid var(--edge);border-radius:10px;background:var(--bg);color:var(--text);font:inherit;resize:vertical;max-height:none';
 async function renderSettings() {
   const box = $('hoodbody');
   box.innerHTML = '<h4>Who can use it — the whole deployment</h4><div id="setbody"><p class="thinking"><span>Reading the settings</span></p></div><h4 style="margin-top:18px">What changed, and when — the last 50 admin writes</h4><div id="evbody"><p class="thinking"><span>Reading the record</span></p></div>';
@@ -2834,6 +2855,12 @@ async function renderSettings() {
       + '<div class="kv" style="margin-top:12px"><b>Shared key</b><span>' + (d.sharedKey ? 'ACCESS_PASSPHRASE is set.' : 'ACCESS_PASSPHRASE is NOT set — a bot that wants a key runs open and says so in the logs.') + '</span><b>Admin token</b><span>version ' + esc(d.adminTokenVersion) + ' — set the ADMIN_TOKEN_VERSION secret to a new value to log every admin out (docs/DEPLOY.md §B3).</span><b>Admin second factor</b><span>' + (d.adminTotp ? 'ON — ADMIN_TOTP_SECRET is set; the admin code needs the six digits too.' : 'off — set the ADMIN_TOTP_SECRET secret (a base32 key from an authenticator app) to require six digits with the admin code (docs/IDENTITY.md).') + '</span><b>Break-glass key</b><span>' + (d.breakGlass ? 'SET — ADMIN_UNLOCK_KEY typed where the admin code goes opens this door with no code and no authenticator step; every use is in the record below. Keep it somewhere the authenticator isn\'t.' : 'not set — set the ADMIN_UNLOCK_KEY secret (16+ random characters) so you can always get back in here if the authenticator is lost (docs/DEPLOY.md → B3d).') + '</span></div>'
       + '<h4>The return window</h4><p style="color:var(--muted);font-size:12.5px;margin:0 0 6px">A visitor in email / allow mode who types their email on a <b>new</b> computer within this many minutes of their last activity is trusted at once and their chats follow them (docs/IDENTITY.md). After it, the new computer waits for you to link it (Leads). <b>The trade-off:</b> inside the window, anyone who knows the email can pick up that person\'s recent conversation from their own computer. 0 = off. A bot can set its own in Configure. Now from: ' + esc(d.identity?.source || 'built-in') + '.</p><div class="row2"><input type="number" id="s_grace" min="0" max="10080" step="1" value="' + esc(String(d.identity?.graceMinutes ?? 60)) + '" style="max-width:160px" /><span style="color:var(--muted);font-size:12.5px;align-self:center">minutes</span></div>'
       + '<h4>The badge under the chat</h4><div class="caps"><label><input type="checkbox" id="s_badge_show"' + (d.createYourOwn.show ? ' checked' : '') + ' /> Show "create your own" (now from: ' + esc(d.createYourOwn.source) + ')</label></div><div class="row2" style="margin-top:6px"><input type="text" id="s_badge_text" value="' + esc(d.createYourOwn.text) + '" placeholder="Create your own bot" /><input type="url" id="s_badge_url" value="' + esc(d.createYourOwn.url) + '" placeholder="https://…" /></div>'
+      + '<h4>Motivational quotes — the line under the greeting</h4><p style="color:var(--muted);font-size:12.5px;margin:0 0 6px">When a chat starts, one line from this list shows under the bot\'s greeting, picked at random each time. <b>${name}</b> becomes the visitor\'s first name (what the sign-up gate collected). No name: the fallback word is used, or with none the placeholder is dropped and the sentence tidied ("Keep going, ${name}." → "Keep going."). A bot\'s greeting in Configure may use ${name} too. Every line that ships is public domain. Now from: ' + esc(d.quotes?.source || 'built-in') + '.</p>'
+      + '<div class="caps"><label><input type="checkbox" id="q_show"' + (d.quotes?.show !== false ? ' checked' : '') + ' /> Show a quote under the greeting</label></div>'
+      + '<input type="text" id="q_fallback" value="' + esc(d.quotes?.fallback || '') + '" placeholder="What ${name} becomes when there is no name, e.g. friend — empty = drop it" style="margin-top:6px" />'
+      + '<textarea id="q_list" rows="7" placeholder="One quote per line. Put ${name} where the first name goes." style="' + QT_TA + '">' + esc((d.quotes?.list || []).join('\n')) + '</textarea>'
+      + '<p style="color:var(--muted);font-size:12.5px;margin:8px 0 4px"><b>For one person.</b> An email address with its own lines: when that person is signed in, their list replaces the shared one. Kept in the database only — Commit to GitHub never writes an address into the repo.</p><div id="q_people"></div>'
+      + '<div class="row2" style="margin-top:6px"><input type="email" id="q_newemail" placeholder="someone@example.com" /><button class="btn" id="q_add" type="button">Add a person</button></div>'
       + '<h4>The sign-up gate — what "email" mode asks for</h4><p style="color:var(--muted);font-size:12.5px;margin:0 0 6px">The welcome page a new visitor meets when a bot is in email (or allow) mode. Fields can be required, optional or off; the boxes are never pre-ticked unless you say so. Every sign-up lands in the Sign-ups tab and, if set, is POSTed to the webhook. Now from: ' + esc(d.signup?.source || 'built-in') + '.</p>'
       + '<div class="row2"><input type="text" id="su_title" value="' + esc(d.signup?.title || '') + '" placeholder="Title, e.g. Try it, free" /><input type="text" id="su_blurb" value="' + esc(d.signup?.blurb || '') + '" placeholder="One or two sentences under the title" /></div>'
       + '<div class="row2" style="margin-top:6px"><div><label style="margin-top:0">Name</label><select id="su_name" style="margin:0"><option' + (d.signup?.askName === 'required' ? ' selected' : '') + '>required</option><option' + (d.signup?.askName === 'optional' ? ' selected' : '') + '>optional</option><option' + (d.signup?.askName === 'off' ? ' selected' : '') + '>off</option></select></div><div><label style="margin-top:0">Mobile number (the texting number)</label><select id="su_phone" style="margin:0"><option' + (d.signup?.askPhone === 'required' ? ' selected' : '') + '>required</option><option' + (d.signup?.askPhone === 'optional' ? ' selected' : '') + '>optional</option><option' + (d.signup?.askPhone === 'off' ? ' selected' : '') + '>off</option></select></div></div>'
@@ -2851,6 +2878,17 @@ async function renderSettings() {
       + '<h4>When access runs out</h4><div id="expbox"><p class="thinking"><span>Reading the windows</span></p></div>'
       + '<h4>Access over time — one person\'s whole history</h4><div id="timelinebox"></div>'
       + '<h4>Every bot, every kind, and what it actually requires</h4><div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12.5px">' + d.bots.map((b) => '<tr style="border-top:1px solid var(--edge);vertical-align:top"><td style="padding:6px 8px 6px 0;white-space:nowrap"><b>' + (b.kind && b.kind !== 'chat' ? '📷 ' : '') + esc(b.name) + '</b><br><span style="color:var(--muted)">' + esc(b.id) + ' · ' + esc(b.kind || 'chat') + (b.listed ? '' : ' · unlisted') + ' · ' + esc(b.source) + '</span></td><td style="padding:6px 8px;white-space:nowrap"><b>' + esc(b.effective) + '</b></td><td style="padding:6px 0;color:var(--muted)">' + esc(b.reason) + (b.ownKey ? '<br>own key: ' + esc(b.ownKey) : '') + (b.signIn ? '<br>sign-in: ' + esc(b.signIn) : '') + (b.graceMinutes !== undefined && b.graceMinutes !== null ? '<br>return window: ' + esc(String(b.graceMinutes)) + ' min (its own)' : '') + (b.effective === 'allow' ? '<br>allowlist: ' + (b.allowlisted || 0) + ' on its own list' + (d.allowlist?.global ? ', ' + d.allowlist.global + ' on the list for every bot' : '') : '') + '</td></tr>').join('') + '</table></div>';
+    // The per-person lists: a map in memory, drawn as one block per address, serialised on Save.
+    const QP = {}; for (const [em, lines] of Object.entries(d.quotes?.people || {})) QP[em] = (lines || []).join('\n');
+    const drawQPeople = () => {
+      const box = $('q_people'); const ems = Object.keys(QP).sort();
+      box.innerHTML = ems.length ? ems.map((em, i) => '<div style="margin-top:6px"><div style="display:flex;align-items:center;gap:8px"><b style="font-size:13px">' + esc(em) + '</b><button class="iconbtn" type="button" data-qrm="' + esc(em) + '" title="Remove this person\'s lines">✕ remove</button></div><textarea data-qem="' + esc(em) + '" rows="3" placeholder="Their lines, one per line — ${name} works here too" style="' + QT_TA + '">' + esc(QP[em]) + '</textarea></div>').join('') : '<p style="color:var(--muted);font-size:12.5px;margin:0">Nobody yet.</p>';
+      box.querySelectorAll('[data-qrm]').forEach((b) => { b.onclick = () => { delete QP[b.dataset.qrm]; drawQPeople(); }; });
+      box.querySelectorAll('[data-qem]').forEach((t) => { t.oninput = () => { QP[t.dataset.qem] = t.value; }; });
+    };
+    drawQPeople();
+    $('q_add').onclick = () => { const em = $('q_newemail').value.trim().toLowerCase(); if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) { $('s_msg').textContent = 'That is not an email address.'; return; } if (QP[em] === undefined) QP[em] = ''; $('q_newemail').value = ''; $('s_msg').textContent = ''; drawQPeople(); $('q_people').querySelector('[data-qem="' + em.replace(/"/g, '') + '"]')?.focus(); };
+    const quotesBody = () => { const people = {}; for (const [em, v] of Object.entries(QP)) { const lines = v.split('\n').map((x) => x.trim()).filter(Boolean); if (lines.length) people[em] = lines; } return { show: $('q_show').checked, fallback: $('q_fallback').value, list: $('q_list').value.split('\n').map((x) => x.trim()).filter(Boolean), people }; };
     renderAllowlist(d);
     renderExpiry(d);
     renderTimeline();
@@ -2860,7 +2898,7 @@ async function renderSettings() {
     $('s_save').onclick = async () => {
       $('s_save').disabled = true; $('s_msg').textContent = 'Saving…';
       try {
-        const r2 = await fetch('/api/admin/settings', { method: 'PUT', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ access: { default: $('s_default').value, floor: $('s_floor').value }, createYourOwn: { show: $('s_badge_show').checked, text: $('s_badge_text').value, url: $('s_badge_url').value }, identity: { graceMinutes: Number($('s_grace').value) }, signup: { title: $('su_title').value, blurb: $('su_blurb').value, askName: $('su_name').value, askPhone: $('su_phone').value, marketing: { show: $('su_m_show').checked, required: $('su_m_req').checked, checked: $('su_m_chk').checked, text: $('su_m_text').value }, sms: { show: $('su_s_show').checked, required: $('su_s_req').checked, checked: $('su_s_chk').checked, text: $('su_s_text').value }, privacyLine: $('su_privacy').value, webhook: $('su_webhook').value, blockThrowaway: $('su_throw').checked, checkMx: $('su_mx').checked }, links: { code: $('lk_code').value, checklist: $('lk_checklist').value, prompts: $('lk_prompts').value }, brand: { owner: $('br_owner').value, siteName: $('br_site').value }, keys: { prefix: $('ky_prefix').value, dmName: $('ky_dmname').value, dmUrl: $('ky_dmurl').value } }) });
+        const r2 = await fetch('/api/admin/settings', { method: 'PUT', headers: { 'content-type': 'application/json', ...adminHeaders() }, body: JSON.stringify({ access: { default: $('s_default').value, floor: $('s_floor').value }, createYourOwn: { show: $('s_badge_show').checked, text: $('s_badge_text').value, url: $('s_badge_url').value }, identity: { graceMinutes: Number($('s_grace').value) }, signup: { title: $('su_title').value, blurb: $('su_blurb').value, askName: $('su_name').value, askPhone: $('su_phone').value, marketing: { show: $('su_m_show').checked, required: $('su_m_req').checked, checked: $('su_m_chk').checked, text: $('su_m_text').value }, sms: { show: $('su_s_show').checked, required: $('su_s_req').checked, checked: $('su_s_chk').checked, text: $('su_s_text').value }, privacyLine: $('su_privacy').value, webhook: $('su_webhook').value, blockThrowaway: $('su_throw').checked, checkMx: $('su_mx').checked }, links: { code: $('lk_code').value, checklist: $('lk_checklist').value, prompts: $('lk_prompts').value }, brand: { owner: $('br_owner').value, siteName: $('br_site').value }, keys: { prefix: $('ky_prefix').value, dmName: $('ky_dmname').value, dmUrl: $('ky_dmurl').value }, quotes: quotesBody() }) });
         const d2 = await r2.json(); if (!r2.ok) throw new Error(d2.error || r2.status);
         renderSettings();
       } catch (err) { $('s_msg').textContent = 'Not saved: ' + err.message; $('s_save').disabled = false; }

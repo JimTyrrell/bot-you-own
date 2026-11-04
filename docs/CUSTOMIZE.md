@@ -794,6 +794,46 @@ separately. ⬇ CSV gives you the whole table.
 **Locking it down:** Settings → Floor → `key`. Every bot then needs the
 passphrase, whatever else says. One click, no deploy.
 
+## Motivational quotes · `config.js` → `quotes`
+
+When a chat starts, one line shows under the bot's greeting: a quote, picked at
+random from a list each time the empty screen is drawn. The list ships in
+`YourBots/config.js → quotes` and can be edited live in **Under the hood →
+Settings → Motivational quotes** (the saved copy wins, then `YourBots/settings.json`,
+then `config.js`). Engine: `Engine/worker/quotes.js`.
+
+| Knob | Values | Notes |
+|---|---|---|
+| `show` | `true` / `false` | Untick to turn the line off everywhere. |
+| `list` | one string per line | The shared pool. An empty list keeps the one below it; use `show` to turn quotes off. |
+| `fallback` | a word, or empty | What `${name}` becomes when there is no name. Empty = the placeholder is dropped and the sentence tidied. |
+| For one person | email → lines | Settings only. When that person is signed in, their list **replaces** the shared one. Kept in the database; Commit to GitHub never writes an address into `settings.json`. |
+
+**`${name}`** anywhere in a line (or in a bot's `greeting`) becomes the visitor's
+**first name** — the one the sign-up gate collected (`id_users.name`, so
+`signup.askName` has to be `optional` or `required` for anyone to have one). No
+name and no fallback, and the sentence is tidied rather than left with a hole:
+
+| Written | Shown to Amy | Shown to nobody |
+|---|---|---|
+| `Keep going, ${name}.` | Keep going, Amy. | Keep going. |
+| `${name}, start today.` | Amy, start today. | Start today. |
+| `Welcome, ${name}, to the show.` | Welcome, Amy, to the show. | Welcome to the show. |
+
+Who the visitor is comes from the device identity (docs/IDENTITY.md), never from
+the page, so one person's lines are only ever shown to the browser that signed in
+as that email. The admin sees the shared list. Bots of other kinds (Plate) draw
+their own screens and show no quote.
+
+**What ships** is sixteen lines, all public domain: Franklin, Roosevelt, Johnson,
+Shakespeare, Douglass, Twain, Alcott, Paine, Emerson, Bacon, Longfellow, Edison,
+Epictetus (George Long's 1877 translation). Nothing to credit; the names are kept
+because a quote without one reads like the bot's own opinion. Each is the quote
+word for word, then a short nudge of ours that carries the `${name}`.
+
+`node Engine/tests/quotes.mjs` (or `npm run test:quotes`) proves the filler, the
+merge and the pick — no server, no model.
+
 ## The tour and the community
 
 Out of the box the default bot is **Start here** (`YourBots/tour`), a concierge

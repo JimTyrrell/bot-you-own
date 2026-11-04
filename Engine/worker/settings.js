@@ -17,6 +17,8 @@
 //    expiry        { onLapse, graceDays,     what an end date DOES when it passes
 //                    warnDays, defaultDays } (Engine/worker/expiry.js); a bot's own
 //                                            project.json → expiry wins over this
+//    quotes        { show, fallback, list,    the line under the greeting (Engine/worker/quotes.js);
+//                    people }                  people = one person's own lines by email, D1 only
 // ============================================================================
 
 import { CONFIG } from "../../YourBots/config.js";
@@ -24,8 +26,9 @@ import SETTINGS_FILE from "../../YourBots/settings.json";
 import { accessSettings } from "./access.js";
 import { cleanGrace, DEFAULT_GRACE_MINUTES } from "../identity/devices.js";
 import { expirySettings, cleanExpiryConfig, EXPIRY_BUILT_IN } from "./expiry.js";
+import { cleanQuotes, mergeQuotes, quotesFileView } from "./quotes.js";
 
-const KEYS = ["access", "createYourOwn", "identity", "expiry", "signup", "links", "brand", "keys", "demo"];
+const KEYS = ["access", "createYourOwn", "identity", "expiry", "signup", "links", "brand", "keys", "demo", "quotes"];
 // ---- Workshop keys look like PREFIX-1234-5678. The prefix is yours (letters, up to 6).
 //      dmName / dmUrl: who hands keys out. Keys are made in THIS deployment (Sign-ups → Deploy
 //      codes), so the person to message is this deployment's owner — never the project it was
@@ -150,7 +153,8 @@ export async function getSettings(env) {
   const brand = mergeBrand({ owner: CONFIG.owner, siteName: CONFIG.siteName }, SETTINGS_FILE?.brand, rows.brand);
   const keys = mergeKeys(CONFIG.keys, SETTINGS_FILE?.keys, rows.keys);
   const demo = mergeDemo(CONFIG.demo, SETTINGS_FILE?.demo, rows.demo);
-  return { ...access, createYourOwn: badge, identity, expiry, signup, links, brand, keys, demo };
+  const quotes = mergeQuotes(CONFIG.quotes, SETTINGS_FILE?.quotes, rows.quotes);
+  return { ...access, createYourOwn: badge, identity, expiry, signup, links, brand, keys, demo, quotes };
 }
 // identity.graceMinutes: the return window, in minutes. 0 = off. Same three places, later wins.
 const graceOf = (i) => (i && typeof i === "object" && i.graceMinutes !== undefined && i.graceMinutes !== null && i.graceMinutes !== "" && Number.isFinite(Number(i.graceMinutes)) && Number(i.graceMinutes) >= -1 ? cleanGrace(i.graceMinutes) : null);
@@ -171,7 +175,7 @@ function mergeBadge(c, f, s) {
 }
 
 // The Settings screen's Save: one row per key, live within 10 s everywhere.
-export async function saveSettings(env, { access, createYourOwn, identity, expiry, signup, links, brand, keys, demo } = {}) {
+export async function saveSettings(env, { access, createYourOwn, identity, expiry, signup, links, brand, keys, demo, quotes } = {}) {
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, json TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by TEXT)`).run();
   const put = (key, obj) => env.DB.prepare(`INSERT INTO settings (key, json, updated_at, updated_by) VALUES (?, ?, ?, 'admin') ON CONFLICT(key) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at, updated_by = excluded.updated_by`).bind(key, JSON.stringify(obj), new Date().toISOString());
   const ops = [];
@@ -184,6 +188,7 @@ export async function saveSettings(env, { access, createYourOwn, identity, expir
   if (brand && cleanBrand(brand)) ops.push(put("brand", cleanBrand(brand)));
   if (keys && cleanKeys(keys)) ops.push(put("keys", cleanKeys(keys)));
   if (demo && cleanDemo(demo)) ops.push(put("demo", cleanDemo(demo)));
+  if (quotes && cleanQuotes(quotes)) ops.push(put("quotes", cleanQuotes(quotes)));
   if (ops.length) await env.DB.batch(ops);
   CACHE = { at: 0, rows: null };
 }
@@ -192,6 +197,6 @@ export async function saveSettings(env, { access, createYourOwn, identity, expir
 export function settingsFileContent(s) {
   const e = s.expiry || EXPIRY_BUILT_IN;
   const { source, ...su } = s.signup || SIGNUP_BUILT_IN;
-  return JSON.stringify({ access: { default: s.default, floor: s.floor }, createYourOwn: { show: s.createYourOwn.show, text: s.createYourOwn.text, url: s.createYourOwn.url }, identity: { graceMinutes: s.identity?.graceMinutes ?? DEFAULT_GRACE_MINUTES }, expiry: { onLapse: e.onLapse, graceDays: e.graceDays, warnDays: e.warnDays, defaultDays: e.defaultDays }, signup: su, demo: { tour: s.demo?.tour !== false, bots: s.demo?.bots !== false } }, null, 2) + "\n";
+  return JSON.stringify({ access: { default: s.default, floor: s.floor }, createYourOwn: { show: s.createYourOwn.show, text: s.createYourOwn.text, url: s.createYourOwn.url }, identity: { graceMinutes: s.identity?.graceMinutes ?? DEFAULT_GRACE_MINUTES }, expiry: { onLapse: e.onLapse, graceDays: e.graceDays, warnDays: e.warnDays, defaultDays: e.defaultDays }, signup: su, demo: { tour: s.demo?.tour !== false, bots: s.demo?.bots !== false }, quotes: quotesFileView(s.quotes) }, null, 2) + "\n";
 }
 export const SETTINGS_FILE_VIEW = SETTINGS_FILE;
