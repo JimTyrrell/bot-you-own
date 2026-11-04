@@ -66,14 +66,9 @@
   #t-chat .mini { position:sticky; top:var(--hdr, 98px); z-index:4; transition:top .2s ease; box-shadow:0 6px 12px -10px rgba(0,0,0,.35); }
   body.tuck #t-chat .mini { top:env(safe-area-inset-top, 0px); }
   /* Always room to scroll the header out of sight, even on a day with one meal. */
-  #s-home { min-height:calc(100vh + var(--hdr, 98px)); }
-  /* The Chat tab is a column that fills that height, with the thread pinned to its bottom: a short day's newest
-     meal sits just above the composer (like a chat), instead of at the top with an empty slab under it. */
-  #s-home { display:flex; flex-direction:column; }
-  #s-home[hidden] { display:none; }
-  #t-chat { flex:1; display:flex; flex-direction:column; }
-  #t-chat[hidden] { display:none; }
-  #t-chat #thread { margin-top:auto; }
+  /* No artificial height: a short day is as tall as its meals, so there is no empty slab under (or over) them.
+     The header tucks only when the day is long enough to scroll by its height (tuckNow checks). */
+  #s-home { min-height:0; }
   .datenav { display:flex; align-items:center; gap:4px; }
   .datenav button { padding:8px 12px; border-radius:999px; }
   .streak { font-size:13px; color:var(--muted); }
@@ -1338,7 +1333,7 @@ let tuckHeader = () => {};
       if (!$('s-home').hidden && !document.body.classList.contains('tuck')) { document.body.classList.add('slowtuck'); tuckNow(); setTimeout(() => document.body.classList.remove('slowtuck'), 800); }
     }, 1600);
   };
-  const tuckNow = () => { measure(); settleUntil = Date.now() + 900; const h = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--hdr')) || 98; if (scrollY < h) { scrollTo({ top: h, behavior: 'smooth' }); setTimeout(() => { if (scrollY < h - 2) scrollTo(0, h); lastY = scrollY; }, 850); } document.body.classList.add('tuck'); lastY = Math.max(scrollY, h); };
+  const tuckNow = () => { measure(); const h = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--hdr')) || 98; if (document.documentElement.scrollHeight - innerHeight < h) return; settleUntil = Date.now() + 900; if (scrollY < h) { scrollTo({ top: h, behavior: 'smooth' }); setTimeout(() => { if (scrollY < h - 2) scrollTo(0, h); lastY = scrollY; }, 850); } document.body.classList.add('tuck'); lastY = Math.max(scrollY, h); };
 })();
 // A number box selects all of itself when tapped: type to replace it, or delete once to clear it. (They are
 // text boxes with a number keypad, because iPhones won't select inside a type="number" box.)
