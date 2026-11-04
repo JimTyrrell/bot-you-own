@@ -330,6 +330,13 @@
   .back { background:transparent; padding:8px 4px; color:var(--muted); }
   .member { display:flex; align-items:center; gap:10px; background:var(--panel); border-radius:16px; padding:12px; margin:8px 0; }
   .member .av { width:38px; height:38px; border-radius:50%; background:var(--accent); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; }
+  /* the motivational popup after a meal lands (Settings → Motivational quotes) */
+  #cheer { position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center; padding:24px; background:rgba(0,0,0,.35); }
+  #cheer[hidden] { display:none; }
+  #cheer .card { max-width:420px; width:100%; text-align:center; padding:22px 20px 18px; animation:cheerin .25s ease-out; }
+  #cheer .card .em { font-size:28px; margin-bottom:6px; }
+  #cheer .card p { font-style:italic; font-size:16px; line-height:1.5; margin:0 0 14px; }
+  @keyframes cheerin { from { transform:translateY(12px); opacity:0 } to { transform:none; opacity:1 } }
 </style>
 </head>
 <body>
@@ -524,6 +531,7 @@
 <div class="zoom" id="zoom" hidden><div class="zbar"><span id="zcount"></span><span class="zbtns"><button type="button" class="zturn" id="zturn" title="Turn a quarter clockwise — saved, and never turned again automatically" aria-label="Turn this photo a quarter clockwise" hidden>↻</button><button type="button" class="zx" id="zx" aria-label="Close">✕</button></span></div><div class="zstage" id="zstage"><img id="zimg" alt=""></div><button type="button" class="znav zprev" id="zprev" aria-label="Previous">‹</button><button type="button" class="znav znext" id="znext" aria-label="Next">›</button><p class="zhint" id="zhint"></p><button type="button" class="zcover" id="zcover" hidden>★ Use as the meal’s picture</button></div>
 <div class="sheet" id="sheet" hidden><div class="box" role="dialog" aria-modal="true"><div class="grip"></div><button type="button" class="sheetx" id="sheetx" title="Close" aria-label="Close">✕</button><div id="sheetbody"></div></div></div>
 <div id="toast" class="toast" hidden></div>
+<div id="cheer" hidden><div class="card"><div class="em">✨</div><p id="cheertext"></p><button class="prim" id="cheerok" type="button" style="width:100%">Keep going</button></div></div>
 
 <script src="/id/qr.js"></script>
 <script>
@@ -548,6 +556,10 @@ function localDate(d = new Date()) { return new Date(d.getTime() - d.getTimezone
 function shift(date, n) { const d = new Date(date + 'T12:00:00'); d.setDate(d.getDate() + n); return localDate(d); }
 const $ = (id) => document.getElementById(id);
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
+// cheer(text): the motivational popup after a meal lands. Tap anywhere, or it goes by itself.
+function cheer(text, ms = 7000) { if (!text) return; $('cheertext').textContent = text; $('cheer').hidden = false; clearTimeout(cheer._t); cheer._t = setTimeout(closeCheer, ms); }
+function closeCheer() { $('cheer').hidden = true; clearTimeout(cheer._t); }
+document.addEventListener('DOMContentLoaded', () => { $('cheer').onclick = closeCheer; $('cheerok').onclick = closeCheer; });
 function toast(msg, ms = 2600) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(t._t); t._t = setTimeout(() => t.hidden = true, ms); }
 function show(name) { SCREEN = name; if (name !== 'home') SHEET_PATH = ''; syncUrl(); if (name === 'join' && S.email && !$('email').value) $('email').value = S.email; document.querySelectorAll('.screen').forEach((s) => s.hidden = s.id !== 's-' + name); $('dock').hidden = name !== 'home' || Boolean(viewUser); window.scrollTo(0, 0); }
 // sheet(html, path): a path makes the sheet linkable (PAGE + path); without one the URL stays put.
@@ -1178,7 +1190,13 @@ async function refresh() {
   }
   if (!d.ok) return toast(d.reason || 'Couldn’t load the day.');
   DAY = d; WEEK = w; CHAT = c.ok ? c : { turns: [] }; FAVS = f && f.ok ? f : null;
+  // The motivational line comes with every day read, so it changes with each log. One more meal on the same day
+  // than last time = something just landed: show it as a popup once the editor (if any) has been closed.
+  const key = day + '|' + (viewUser ? viewUser.id : ''), n = (d.meals || []).length, landed = refresh.key === key && n > (refresh.n || 0);
+  refresh.key = key; refresh.n = n;
+  if (d.quote && d.quote.text && !viewUser) QUOTE = d.quote.text;
   renderDay(); renderFavs(); padForDock();
+  if (landed && !viewUser && d.quote && d.quote.text) setTimeout(() => sheetClosed().then(() => cheer(d.quote.text)), 500);
   if (!refresh.tucked && SCREEN === 'home') { refresh.tucked = true; setTimeout(() => tuckHeader(), 0); }
   if (tab === 'day') loadSummary('day'); if (tab === 'week') loadSummary('week');
   if (tab === 'chat' && day === localDate() && !viewUser) loadYesterday();

@@ -109,6 +109,10 @@ const localClock = (iso, offsetMin) => new Date(Date.parse(iso) - (offsetMin || 
 //     `bot` is the resolved project (kind food); api/page/admin are the path prefixes it answers on
 //     ("/api/apps/plate/", "/apps/plate", "/api/admin/apps/plate/" — or the /food aliases).
 export async function handleTrack(request, env, url, { ctx = null, bot, api, page, admin, isAdmin = false, adminEnabled = false, allowed = async () => true, graceMinutes = 60, expiry: expCfg = EXPIRY_BUILT_IN, quotes = null } = {}) {
+  // The motivational line (Under the hood → Settings → Motivational quotes): this person's own list by email if
+  // they have one, else the shared one; ${name} from the gate's name, else the name on their targets. A fresh
+  // pick every time it is asked for — /me at boot, and every /day read, so it changes with each log.
+  const quoteFor = (who) => { const q = who ? pickQuote(quotes, { email: who.email, name: who.name || who.targets?.name || "" }) : null; return q ? { text: q.filled } : null; };
   const cfg = foodConfig(bot, env);
   HONESTY = cfg.honesty;
   const p = url.pathname;
@@ -191,11 +195,7 @@ export async function handleTrack(request, env, url, { ctx = null, bot, api, pag
         const quiet = expCfg.onLapse === "silent";
         return json(quiet ? { linked: false, reason: lapseReply(expiry, bot) } : { linked: true, error: "expired", reason: lapseReply(expiry, bot) }, 403);
       }
-      // The motivational line for the day screen (Under the hood → Settings → Motivational quotes):
-      // this person's own list if they have one, else the shared one; ${name} from the gate's name,
-      // else the name on their targets. Picked once per visit — /me is what the page boots from.
-      const quote = pickQuote(quotes, { email: me.email, name: me.name || me.targets?.name || "" });
-      return json({ linked: true, ...(await profile(env, me)), quote: quote ? { text: quote.filled } : null, access: expiry ? { until: expiry.until, state: expiry.state, days: expiry.days, notice: noticeFor(expiry), readOnly } : null });
+      return json({ linked: true, ...(await profile(env, me)), quote: quoteFor(me), access: expiry ? { until: expiry.until, state: expiry.state, days: expiry.days, notice: noticeFor(expiry), readOnly } : null });
     }
     return json(who.pending ? { linked: false, code: who.pending.code, email: who.pending.email, message: PENDING_MESSAGE } : { linked: false }, 401);
   }
@@ -418,7 +418,8 @@ export async function handleTrack(request, env, url, { ctx = null, bot, api, pag
     if (target !== me.id && !(await canView(env, me.id, target))) return json({ error: "not allowed", reason: "You can only see days of people in your household." }, 403);
     const who = target === me.id ? me : await userById(env, me.bot, target);
     if (!who) return json({ error: "no such user" }, 404);
-    return json(sub === "day" ? await dayView(env, who, pickDate(url.searchParams.get("date")), { readOnly: target !== me.id }) : await weekView(env, who, pickDate(url.searchParams.get("end"))));
+    // The day carries a fresh motivational line (the page shows it as a popup when a meal lands, and under the ring).
+    return json(sub === "day" ? { ...(await dayView(env, who, pickDate(url.searchParams.get("date")), { readOnly: target !== me.id })), quote: target === me.id ? quoteFor(me) : null } : await weekView(env, who, pickDate(url.searchParams.get("end"))));
   }
   // --- The day as a conversation (Engine/worker/track-day.js). ---------------------------
   if (sub === "chat") {
@@ -596,7 +597,10 @@ async function photo(request, env, cfg, me) {
   })) : Promise.resolve([]);
   let out, prompt;
   try {
-    prompt = kind === "food" ? (revising ? PROMPTS.revise(slim(current), correction, true) : files.length > 1 || said ? PROMPTS.meal(said, files.length) : PROMPTS.food(correction)) : PROMPTS[kind];
+    // One photo with no words used the short "food" prompt, which knows nothing about scales and gives no per-photo
+    // item map — so strawberries on a scale came back as "5 medium strawberries, 110 g" with the display ignored.
+    // A photo the page found a scale in takes the full meal prompt, like a multi-photo meal does.
+    prompt = kind === "food" ? (revising ? PROMPTS.revise(slim(current), correction, true) : files.length > 1 || said || scaleIdx.length ? PROMPTS.meal(said, files.length) : PROMPTS.food(correction)) : PROMPTS[kind];
     out = await runVision(env, cfg, { images, prompt, maxTokens: kind === "receipt" ? 1500 : 900 + 150 * (files.length - 1) });
   } catch (err) {
     console.error("foodlog vision failed", err?.message || err);
@@ -634,13 +638,30 @@ async function photo(request, env, cfg, me) {
   }
   // The focused scale readings go onto the food whose photos include that scale photo (the one without a label
   // item's own reading wins only if it agrees). Code turns the display into grams (track-yield.js scaleGrams).
+  // A plain food's grams follow the scale, with its numbers scaled to match. Only when the display can belong to
+  // exactly one food (one item on that photo) and the person gave no number of their own — a zeroed-bowl read across
+  // several photos legitimately leaves each berry below the display, and a typed weight always wins.
+  const weighTo = (it, w) => {
+    const g = Number(it.grams) || 0, f = g > 0 ? w / g : 0;
+    Object.assign(it, { grams: Math.round(w * 10) / 10, ...(f ? { kcal: Math.round((Number(it.kcal) || 0) * f), protein_g: (Number(it.protein_g) || 0) * f, carbs_g: (Number(it.carbs_g) || 0) * f, fat_g: (Number(it.fat_g) || 0) * f } : {}) });
+  };
+  const saidNumber = /\d/.test(said);
   for (const sr of await scaleReads) {
     if (!sr.display || !scaleGrams(sr.display) || !Array.isArray(parsed?.items)) continue;
-    const onIt = parsed.items.filter((i) => Array.isArray(i?.photos) && i.photos.map(Number).includes(sr.photo));
+    let onIt = parsed.items.filter((i) => Array.isArray(i?.photos) && i.photos.map(Number).includes(sr.photo));
+    if (!onIt.length && images.length === 1) onIt = parsed.items;          // the short prompt has no photo map: one photo, so every item is on it
     const it = onIt.length === 1 ? onIt[0] : onIt.find((i) => !Number(i?.weighed_g)) || null;
     if (!it) continue;
-    if (!String(it.scale_text || "").trim() || Math.abs((scaleGrams(it.scale_text) || 0) - scaleGrams(sr.display)) > 3) { it.scale_text = sr.display; it.weighed_g = Math.round(scaleGrams(sr.display) * 10) / 10; if (!Number(it.grams)) it.grams = it.weighed_g; }
+    const w = Math.round(scaleGrams(sr.display) * 10) / 10;
+    if (!String(it.scale_text || "").trim() || Math.abs((scaleGrams(it.scale_text) || 0) - w) > 3) { it.scale_text = sr.display; it.weighed_g = w; }
+    if (!Number(it.grams)) it.grams = w;
+    else if (onIt.length === 1 && !saidNumber && !(it.label_per_serving && Number(it.label_serving_g) > 0) && Math.abs((Number(it.grams) || 0) - w) > 2) weighTo(it, w);
     parsed.scale_read = true;
+  }
+  // The model's own reading (the meal prompt's scale_text / weighed_g) for a single food on a single photo: same rule.
+  if (Array.isArray(parsed?.items) && parsed.items.length === 1 && images.length === 1 && !saidNumber) {
+    const it = parsed.items[0], w = scaleGrams(it.scale_text) || Number(it.weighed_g) || 0;
+    if (w && !(it.label_per_serving && Number(it.label_serving_g) > 0) && Math.abs((Number(it.grams) || 0) - w) > 2) { weighTo(it, w); parsed.scale_read = true; }
   }
 
   if (kind === "food") {

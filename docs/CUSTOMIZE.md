@@ -823,8 +823,9 @@ name and no fallback, and the sentence is tidied rather than left with a hole:
 Who the visitor is comes from the device identity (docs/IDENTITY.md), never from
 the page, so one person's lines are only ever shown to the browser that signed in
 as that email. The admin sees the shared list. **Plate** (the food log) shows the
-same line under the ring on its Chat tab, picked once per visit from the same lists
-with the same `${name}` rules — the gate's name, else the name on their targets.
+same line under the ring on its Chat tab, and a popup with a fresh one every time a
+meal lands — the same lists, the same `${name}` rules (the gate's name, else the name on
+their targets). A new pick comes with every read of the day, so it changes as they log.
 
 **What ships** is sixteen lines, all public domain: Franklin, Roosevelt, Johnson,
 Shakespeare, Douglass, Twain, Alcott, Paine, Emerson, Bacon, Longfellow, Edison,
