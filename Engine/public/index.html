@@ -1437,7 +1437,7 @@ function renderLog() {
     const greet = fillName(p.greeting || 'What can I help with?', state.cfg?.quote?.fallback);
     // The motivational line (Under the hood → Settings → Motivational quotes): the server picked
     // it for THIS visitor (their own list if they have one); the name is filled here so the gate
-    // and the page agree. Chat bots only — Plate and the other kinds draw their own screens.
+    // and the page agree. Plate draws its own, on its day screen (Engine/public/food/index.html).
     const q = state.cfg?.quote && (!p.kind || p.kind === 'chat') ? fillName(state.cfg.quote.text, state.cfg.quote.fallback) : '';
     empty.innerHTML = '<h2>' + esc(hello ? hello + greet.replace(/^(welcome|hello|hi)[.,!]?\s*/i, '') : greet) + '</h2><p>' + esc(p.tagline || '') + '</p>' + (q ? '<p class="quote">' + esc(q) + '</p>' : '');
     if (isGuide && TOUR.stops.length) {

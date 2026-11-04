@@ -422,6 +422,7 @@
     <!-- CHAT: the day as a conversation -->
     <div id="t-chat">
       <div class="mini" data-go="targets" title="Tap to change your targets" style="cursor:pointer"><svg viewBox="0 0 34 34"><circle cx="17" cy="17" r="13" fill="none" stroke="var(--edge)" stroke-width="4"/><circle id="miniring" cx="17" cy="17" r="13" fill="none" stroke="var(--ring)" stroke-width="4" stroke-linecap="round" stroke-dasharray="81.7" stroke-dashoffset="81.7"/></svg><div><div class="k" id="minik">0 <small>kcal</small></div><div class="m" id="minim"></div></div></div>
+      <p class="muted small center" id="quote" hidden style="font-style:italic;margin:2px 12px 8px;line-height:1.45"></p>
       <div class="ycard" id="ycard" hidden></div>
       <div id="thread"></div>
       <p class="muted small center" id="empty" hidden>Nothing logged yet. Snap a plate, tap a favourite, or say what you ate.</p>
@@ -930,10 +931,15 @@ function showOffline(reason) {
   $('offlinewhy').textContent = reason || OFFLINE_REASON;
   show('offline');
 }
+let QUOTE = '';   // the line under the ring on the Chat tab; comes with /me
 function onLinked(me, signedIn) {
   // A fresh sign-in always starts on today's log (not wherever the page was when they signed out).
   if (signedIn) { day = localDate(); viewUser = null; paintTab('chat'); try { history.replaceState(null, '', PAGE); } catch {} }
   S.userId = me.userId; S.email = me.email; S.targets = me.targets; S.household = me.household; S.pending = null; save();
+  // The motivational line (Settings → Motivational quotes), already filled with their name by the server. Hidden while viewing someone else's day.
+  // /me carries it; a join, a sign-in or a device link does not — ask /me once for it, after the fact.
+  if (me.quote !== undefined) QUOTE = me.quote && me.quote.text ? me.quote.text : '';
+  else api('me').then((m) => { if (m && m.linked && m.quote && m.quote.text) { QUOTE = m.quote.text; $('quote').textContent = QUOTE; $('quote').hidden = Boolean(viewUser); } }).catch(() => {});
   $('whoami').textContent = S.email; $('whodevices').textContent = 'Signed in on ' + (me.devices || 1) + ' device' + ((me.devices || 1) === 1 ? '' : 's') + '.';
   // No targets yet: set them first — unless this is a shared meal's link; show them the meal, targets can wait.
   if (!S.targets && !/\/meal\/[^/]+\/?$/.test(location.pathname)) { show('targets'); prefillTargets(); return; }
@@ -1209,6 +1215,7 @@ function renderDay() {
   $('empty').textContent = day > today ? 'Nothing planned yet. Tap a favourite or say what you’ll have — it counts against the day, not as eaten, until you tap “Had it”.' : 'Nothing logged yet. Snap a plate, tap a favourite, or say what you ate.';
   $('streak').innerHTML = WEEK && WEEK.streak ? '🔥 <b>' + WEEK.streak + '</b> day' + (WEEK.streak === 1 ? '' : 's') : '';
   $('viewing').hidden = !viewUser; if (viewUser) $('viewing').textContent = 'Viewing ' + (DAY.name || viewUser.name) + '’s day (read-only)';
+  $('quote').textContent = QUOTE; $('quote').hidden = !QUOTE || Boolean(viewUser);
   const goal = t.kcal || 0, frac = goal ? Math.min(1, tot.kcal / goal) : 0;
   $('ring').style.strokeDashoffset = 326.7 * (1 - frac); $('ring').style.stroke = goal && tot.kcal > goal * 1.1 ? 'var(--over)' : 'var(--ring)';
   const pl = (DAY.planned && DAY.planned.kcal) || 0, leftAfter = goal - tot.kcal - pl;

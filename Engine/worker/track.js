@@ -44,6 +44,7 @@
 import { json, nowIso, pickDate, addDays, todayUtc, clamp, round1, cleanEmail, readJson, toBase64, randomId } from "./track-common.js";
 import { CONFIG } from "../../YourBots/config.js";
 import { identify, signInMethods, verifyIdToken } from "../identity/index.js";
+import { pickQuote } from "./quotes.js";
 import { resolve as resolveExpiry, lapseReply, noticeFor, EXPIRY_BUILT_IN } from "./expiry.js";
 import { join as idJoin, userIdFor, userById as idUserById, bindDevice, linkByCode, deviceCount, listDevices, pendingByEmail, touch as idTouch, DEV_PEPPER, pepperOf } from "../identity/devices.js";
 import { applyLabelMath, scaleGrams } from "./track-yield.js";
@@ -107,7 +108,7 @@ const localClock = (iso, offsetMin) => new Date(Date.parse(iso) - (offsetMin || 
 // --- The router. Called from index.js for one food bot: the app's page, its API, its coach API.
 //     `bot` is the resolved project (kind food); api/page/admin are the path prefixes it answers on
 //     ("/api/apps/plate/", "/apps/plate", "/api/admin/apps/plate/" — or the /food aliases).
-export async function handleTrack(request, env, url, { ctx = null, bot, api, page, admin, isAdmin = false, adminEnabled = false, allowed = async () => true, graceMinutes = 60, expiry: expCfg = EXPIRY_BUILT_IN } = {}) {
+export async function handleTrack(request, env, url, { ctx = null, bot, api, page, admin, isAdmin = false, adminEnabled = false, allowed = async () => true, graceMinutes = 60, expiry: expCfg = EXPIRY_BUILT_IN, quotes = null } = {}) {
   const cfg = foodConfig(bot, env);
   HONESTY = cfg.honesty;
   const p = url.pathname;
@@ -190,7 +191,11 @@ export async function handleTrack(request, env, url, { ctx = null, bot, api, pag
         const quiet = expCfg.onLapse === "silent";
         return json(quiet ? { linked: false, reason: lapseReply(expiry, bot) } : { linked: true, error: "expired", reason: lapseReply(expiry, bot) }, 403);
       }
-      return json({ linked: true, ...(await profile(env, me)), access: expiry ? { until: expiry.until, state: expiry.state, days: expiry.days, notice: noticeFor(expiry), readOnly } : null });
+      // The motivational line for the day screen (Under the hood → Settings → Motivational quotes):
+      // this person's own list if they have one, else the shared one; ${name} from the gate's name,
+      // else the name on their targets. Picked once per visit — /me is what the page boots from.
+      const quote = pickQuote(quotes, { email: me.email, name: me.name || me.targets?.name || "" });
+      return json({ linked: true, ...(await profile(env, me)), quote: quote ? { text: quote.filled } : null, access: expiry ? { until: expiry.until, state: expiry.state, days: expiry.days, notice: noticeFor(expiry), readOnly } : null });
     }
     return json(who.pending ? { linked: false, code: who.pending.code, email: who.pending.email, message: PENDING_MESSAGE } : { linked: false }, 401);
   }
