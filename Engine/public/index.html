@@ -795,6 +795,10 @@ try { TOKEN = localStorage.getItem('byo:token') || ''; TOKENS = JSON.parse(local
 // value kept here. It opens nothing by itself: the bot's door (key, admin) is checked first.
 let DEVICE = ''; try { DEVICE = localStorage.getItem('byo:device') || ''; } catch {}
 if (!/^[0-9a-f]{64}$/.test(DEVICE)) { DEVICE = [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, '0')).join(''); try { localStorage.setItem('byo:device', DEVICE); } catch {} }
+// The key Sign out threw away, kept seven days and sent once with the next join (x-device-prev):
+// the same email on this browser is back at once, whatever the return window; another email gets nothing from it.
+let DEVICE_PREV = ''; try { const p = JSON.parse(localStorage.getItem('byo:device:prev') || 'null'); if (p && /^[0-9a-f]{64}$/.test(p.key) && Date.now() - Number(p.at) < 7 * 864e5) DEVICE_PREV = p.key; else localStorage.removeItem('byo:device:prev'); } catch {}
+const forgetPrevDevice = () => { DEVICE_PREV = ''; try { localStorage.removeItem('byo:device:prev'); } catch {} };
 const tokenFor = (pid) => (pid && TOKENS[pid]) || TOKEN;
 const authHeaders = (pid) => { const t = tokenFor(pid || state.project?.id); return { 'x-device-key': DEVICE, ...(t ? { 'x-access-token': t } : {}) }; };
 // The sandbox routes accept the owner (by device key) OR an admin. authHeaders() only
@@ -986,11 +990,12 @@ $('lockform').addEventListener('submit', async (e) => {
       const gate = { name: $('lname').hidden ? '' : $('lname').value.trim(), phone: $('lphone').hidden ? '' : $('lphone').value.trim(), marketing: !$('lmarketingwrap').hidden && $('lmarketing').checked, sms: !$('lsmswrap').hidden && $('lsms').checked, fp: browserFacts(), source: document.referrer ? new URL(document.referrer).hostname : 'direct' };
       if (!$('lname').hidden && $('lname').required && !gate.name) { $('lockmsg').textContent = 'Please add your name.'; $('lname').focus(); return; }
       if (!$('lphone').hidden && $('lphone').required && !gate.phone) { $('lockmsg').textContent = 'Please add a mobile number we can text.'; $('lphone').focus(); return; }
-      const res = await fetch('/api/id/join', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(lock.project) }, body: JSON.stringify({ bot: lock.project, email: em, ...gate, key: ($('lkey').value || '').trim() || undefined }) });
+      const res = await fetch('/api/id/join', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeaders(lock.project), ...(DEVICE_PREV ? { 'x-device-prev': DEVICE_PREV } : {}) }, body: JSON.stringify({ bot: lock.project, email: em, ...gate, key: ($('lkey').value || '').trim() || undefined }) });
       const data = await res.json().catch(() => ({}));
       if (res.ok) rememberGate({ name: gate.name, email: em, phone: gate.phone, marketing: gate.marketing, sms: gate.sms });
       if (!res.ok) { $('lockmsg').textContent = res.status === 429 ? 'Too many tries. Wait a minute.' : (data.reason || 'Could not join. Try again.'); if (data.error === 'phone') $('lphone').focus(); else if (data.error === 'name') $('lname').focus(); else if (data.error === 'email') $('email').focus(); return; }
       if (!data.linked) { showPending(data.code, em.toLowerCase()); if (data.keyRejected) $('lockmsg').textContent = data.reason; return; }
+      forgetPrevDevice();   // in: the old key has done its job (or was never needed)
       VISITOR = data.email || em.toLowerCase(); VISITOR_NAME = data.name || gate.name || ''; identified[lock.project] = true;
       // a key typed at the gate is redeemed right away; a wrong one is just ignored here (the modal will ask again)
       const key = ($('lkey').value || '').trim(); const guide = (state.cfg?.projects || []).find((p) => p.tour) || (state.projects || []).find((p) => p.tour) || (SIGNUP.keys ? { id: lock.project } : null);
@@ -1006,8 +1011,11 @@ function signOut() {
   // Chats the server holds for this person leave this browser with them; the next person starts clean.
   try { for (const pid of Object.keys(identified)) localStorage.removeItem(store.key(pid)); } catch {}
   TOKEN = ''; VISITOR = ''; ADMIN = ''; TOKENS = {};
-  // byo:device goes too: the next load makes a fresh key, so this browser is nobody again.
+  // byo:device goes too: the next load makes a fresh key, so this browser is nobody again — except to the
+  // person who just signed out: the old key is kept seven days (byo:device:prev) and goes with their next
+  // join as proof, so the same email on this browser is back at once whatever the return window says.
   // the tour and the attacks belong to the person, not the browser: they go too (the gate's prefill stays — that's convenience, not identity)
+  try { if (/^[0-9a-f]{64}$/.test(DEVICE)) localStorage.setItem('byo:device:prev', JSON.stringify({ key: DEVICE, at: Date.now() })); } catch {}
   try { ['byo:token', 'byo:tokens', 'byo:visitor', 'byo:admin', 'byo:device', 'byo:tour', 'byo:break', 'byo:owner'].forEach((k) => localStorage.removeItem(k)); sessionStorage.removeItem('byo:breakbar'); sessionStorage.removeItem('byo:typed'); localStorage.removeItem('byo:intro'); } catch {}
   $('hood').classList.remove('show'); location.href = location.pathname;
 }
@@ -1022,7 +1030,7 @@ $('erasebtn').onclick = async () => {
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d.reason || d.error || r.status);
     try { localStorage.removeItem('byo:tour'); } catch {}
-    signOut();
+    signOut(); forgetPrevDevice();
   } catch (err) { b.disabled = false; b.dataset.armed = ''; b.textContent = 'Delete my data'; b.style.color = ''; alert('Could not delete: ' + err.message); }
 };
 // The server said no. Which door, and for which bot, is in the answer.
@@ -2071,8 +2079,8 @@ function drawOwner() {
       ], d.access.default) : '<p class="sechint">Now: <b>' + esc(d.access.default) + '</b>. ' + esc(line(d.access.default)) + ' Change it under the hood → Security.</p>')
       + (d.access.floor !== 'open' ? '<p class="sechint warn">The floor is <b>' + esc(d.access.floor) + '</b>: no bot is more open than that, whatever is picked here.</p>' : '')
       + '<h5>A second device</h5>' + secRadios('own_grace', [
-        { v: 0, label: 'Always waits for me to link it', hint: 'The safe one. A new computer that types a known email waits until you link it.' },
-        { v: 60, label: 'Trusted within an hour of their last visit', hint: 'Convenient. Inside that hour anyone who knows the email can pick up the recent conversation.' },
+        { v: 0, label: 'Always waits for me to link it', hint: 'The safe one. A new computer that types a known email waits until you link it (Leads → Waiting for approval). Signing out and back in on the same browser still works.' },
+        { v: 60, label: 'Trusted within an hour of their last visit', hint: 'Convenient. Inside that hour anyone who knows the email can pick up the recent conversation. After it, a new computer waits for you.' },
         { v: -1, label: 'Never waits', hint: 'Any computer that types the email is in. For a demo only.' },
       ], g === 0 ? 0 : g === -1 ? -1 : 60)
       + '<h5>Getting in as you</h5>' + ownReady(m.lock)
@@ -2853,7 +2861,7 @@ async function renderSettings() {
       + '<p style="color:var(--muted);font-size:12.5px;margin:10px 0">Order, most open first: <code>' + esc(d.order) + '</code>. A bot\'s effective mode is the stricter of what it says (or the default) and the floor. Save is live within seconds; Commit to GitHub writes <code>YourBots/settings.json</code> so the repo carries it.</p>'
       + '<div class="btnrow"><button class="btn primary" id="s_save"' + (d.canSave ? '' : ' disabled title="No database bound: edit YourBots/config.js → access instead"') + '>Save</button><button class="btn" id="s_git"' + (d.github.ready ? '' : ' disabled') + ' title="' + (d.github.ready ? 'Write YourBots/settings.json into ' + esc(d.github.repo) : d.github.repo ? 'Set the GITHUB_TOKEN secret to enable (docs/DEPLOY.md §B5)' : 'Set github.repo in YourBots/config.js to enable') + '">Commit to GitHub</button><span id="s_msg" style="color:var(--muted);font-size:13px"></span></div>'
       + '<div class="kv" style="margin-top:12px"><b>Shared key</b><span>' + (d.sharedKey ? 'ACCESS_PASSPHRASE is set.' : 'ACCESS_PASSPHRASE is NOT set — a bot that wants a key runs open and says so in the logs.') + '</span><b>Admin token</b><span>version ' + esc(d.adminTokenVersion) + ' — set the ADMIN_TOKEN_VERSION secret to a new value to log every admin out (docs/DEPLOY.md §B3).</span><b>Admin second factor</b><span>' + (d.adminTotp ? 'ON — ADMIN_TOTP_SECRET is set; the admin code needs the six digits too.' : 'off — set the ADMIN_TOTP_SECRET secret (a base32 key from an authenticator app) to require six digits with the admin code (docs/IDENTITY.md).') + '</span><b>Break-glass key</b><span>' + (d.breakGlass ? 'SET — ADMIN_UNLOCK_KEY typed where the admin code goes opens this door with no code and no authenticator step; every use is in the record below. Keep it somewhere the authenticator isn\'t.' : 'not set — set the ADMIN_UNLOCK_KEY secret (16+ random characters) so you can always get back in here if the authenticator is lost (docs/DEPLOY.md → B3d).') + '</span></div>'
-      + '<h4>The return window</h4><p style="color:var(--muted);font-size:12.5px;margin:0 0 6px">A visitor in email / allow mode who types their email on a <b>new</b> computer within this many minutes of their last activity is trusted at once and their chats follow them (docs/IDENTITY.md). After it, the new computer waits for you to link it (Leads). <b>The trade-off:</b> inside the window, anyone who knows the email can pick up that person\'s recent conversation from their own computer. 0 = off. A bot can set its own in Configure. Now from: ' + esc(d.identity?.source || 'built-in') + '.</p><div class="row2"><input type="number" id="s_grace" min="0" max="10080" step="1" value="' + esc(String(d.identity?.graceMinutes ?? 60)) + '" style="max-width:160px" /><span style="color:var(--muted);font-size:12.5px;align-self:center">minutes</span></div>'
+      + '<h4>The return window</h4><p style="color:var(--muted);font-size:12.5px;margin:0 0 6px">A visitor in email / allow mode who types their email on a <b>new</b> computer within this many minutes of their last activity is trusted at once and their chats follow them (docs/IDENTITY.md). After it, the new computer waits for you to link it (Leads). <b>The trade-off:</b> inside the window, anyone who knows the email can pick up that person\'s recent conversation from their own computer. <b>0</b> = a new computer always waits for you. <b>-1</b> = never waits: any computer that types a known email is in (the demo\'s setting). Signing out and back in on the <b>same</b> browser is always let through, whatever this says. A bot can set its own in Configure. Now from: ' + esc(d.identity?.source || 'built-in') + '.</p><div class="row2"><input type="number" id="s_grace" min="-1" max="10080" step="1" value="' + esc(String(d.identity?.graceMinutes ?? 60)) + '" style="max-width:160px" /><span style="color:var(--muted);font-size:12.5px;align-self:center">minutes</span></div>'
       + '<h4>The badge under the chat</h4><div class="caps"><label><input type="checkbox" id="s_badge_show"' + (d.createYourOwn.show ? ' checked' : '') + ' /> Show "create your own" (now from: ' + esc(d.createYourOwn.source) + ')</label></div><div class="row2" style="margin-top:6px"><input type="text" id="s_badge_text" value="' + esc(d.createYourOwn.text) + '" placeholder="Create your own bot" /><input type="url" id="s_badge_url" value="' + esc(d.createYourOwn.url) + '" placeholder="https://…" /></div>'
       + '<h4>Motivational quotes — the line under the greeting</h4><p style="color:var(--muted);font-size:12.5px;margin:0 0 6px">When a chat starts, one line from this list shows under the bot\'s greeting, picked at random each time. <b>${name}</b> becomes the visitor\'s first name (what the sign-up gate collected). No name: the fallback word is used, or with none the placeholder is dropped and the sentence tidied ("Keep going, ${name}." → "Keep going."). A bot\'s greeting in Configure may use ${name} too. Every line that ships is public domain. Now from: ' + esc(d.quotes?.source || 'built-in') + '.</p>'
       + '<div class="caps"><label><input type="checkbox" id="q_show"' + (d.quotes?.show !== false ? ' checked' : '') + ' /> Show a quote under the greeting</label></div>'

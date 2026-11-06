@@ -113,7 +113,12 @@ not here: it hands out an access token, not an ID token, which is a different ch
 A chat bot whose door is `email` or `key+email` uses the same front door as Plate:
 
 - The chat page makes a device key once (`localStorage` → `byo:device`) and sends
-  it as `x-device-key` with every request. Sign out throws it away.
+  it as `x-device-key` with every request. Sign out throws it away — but keeps a
+  copy for seven days (`byo:device:prev`) that goes once with the next join as
+  `x-device-prev`. If that old key is still bound to the same email, the new key
+  is bound at once and the old one dropped: signing out and back in on the same
+  browser always works, whatever the return window says. A different email gets
+  nothing from it. Plate does the same (`foodlog:prev`).
 - The email screen calls `POST /api/id/join {bot, email}`. First device: linked,
   the chat opens. A known email from a new browser: `{ linked: false, code }` —
   the page shows the code and asks `GET /api/id/me?bot=` every ten seconds.

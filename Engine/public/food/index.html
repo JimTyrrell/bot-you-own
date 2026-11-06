@@ -883,6 +883,10 @@ $('sheetx').onclick = () => closeSheet();
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('sheet').hidden) { if (dirtySheet()) return nudgeSheet(); closeSheet(); } });
 
 if (!S.deviceKey) { const b = crypto.getRandomValues(new Uint8Array(32)); S.deviceKey = [...b].map((x) => x.toString(16).padStart(2, '0')).join(''); save(); }
+// The key "Sign out on this device" threw away, kept seven days and sent once with the next join
+// (x-device-prev): the same email on this phone is back at once, whatever the return window.
+let PREV_KEY = ''; try { const p = JSON.parse(localStorage.getItem(LS + ':prev') || 'null'); if (p && /^[0-9a-f]{64}$/.test(p.key) && Date.now() - Number(p.at) < 7 * 864e5) PREV_KEY = p.key; else localStorage.removeItem(LS + ':prev'); } catch {}
+const forgetPrevKey = () => { PREV_KEY = ''; try { localStorage.removeItem(LS + ':prev'); } catch {} };
 
 // Talking to the server. A flaky connection, a Worker mid-deploy, or a rate-limit
 // gets a few quiet retries with a longer pause each time before the person is asked
@@ -893,7 +897,7 @@ const RETRY_WAITS = [1500, 4000, 9000];                 // three more goes over 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const OFFLINE_REASON = 'Can’t reach the server right now. Check your connection and try again in a moment.';
 async function api(path, opts = {}) {
-  const headers = Object.assign({ 'x-device-key': S.deviceKey }, opts.headers || {});
+  const headers = Object.assign({ 'x-device-key': S.deviceKey }, path === 'join' && PREV_KEY ? { 'x-device-prev': PREV_KEY } : {}, opts.headers || {});
   if (opts.json) { headers['content-type'] = 'application/json'; opts.body = JSON.stringify({ tz: TZ, zone: ZONE, planned: day > localDate(), ...opts.json }); }
   const method = opts.method || (opts.body ? 'POST' : 'GET');
   for (let attempt = 0; ; attempt++) {
@@ -944,7 +948,7 @@ const idApi = (path, json = {}) => api(path, { base: '/api/id/', json: { bot: BO
   // Known email, unknown device (storage was cleared server-side?): try joining again.
   const j = await api('join', { json: { email: S.email } });
   if (j.offline) return showOffline(j.reason);
-  if (j.linked) return onLinked(j);
+  if (j.linked) { forgetPrevKey(); return onLinked(j); }
   if (j.code) { S.pending = j.code; save(); return showPending(j); }
   show('join');
 })();
@@ -975,7 +979,7 @@ $('joinbtn').onclick = async () => {
   $('joinbtn').disabled = true;
   const j = await api('join', { json: { email } });
   $('joinbtn').disabled = false;
-  if (j.linked) { S.email = email; return onLinked(j, true); }
+  if (j.linked) { forgetPrevKey(); S.email = email; return onLinked(j, true); }
   if (j.code) { S.email = email; S.pending = j.code; save(); return showPending(j); }
   toast(j.reason || 'Couldn’t start. Try again.');
 };
@@ -987,7 +991,7 @@ function showPending(j) {
   showPending._t = setInterval(async () => { const me = await api('me'); if (me.linked) { clearInterval(showPending._t); toast('Linked!'); onLinked(me, true); } }, 5000);
 }
 $('pendingreset').onclick = () => { S = { deviceKey: S.deviceKey }; save(); location.href = PAGE; };
-$('forget').onclick = () => { if (confirm('Sign out on this device? Your log is kept. To come back, sign in with your email.')) { localStorage.removeItem(LS); location.href = PAGE; } };
+$('forget').onclick = () => { if (confirm('Sign out on this device? Your log is kept. To come back, sign in with your email.')) { try { if (/^[0-9a-f]{64}$/.test(S.deviceKey || '')) localStorage.setItem(LS + ':prev', JSON.stringify({ key: S.deviceKey, at: Date.now() })); } catch {} localStorage.removeItem(LS); location.href = PAGE; } };
 
 // ---------- passkeys and authenticator codes (Engine/identity/, docs/IDENTITY.md) ----------
 // Order on the join screen: passkey → Google/Microsoft/Apple → email + device → six digits / coach code.

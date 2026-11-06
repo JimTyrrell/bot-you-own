@@ -233,7 +233,7 @@ It is stored in the visitor's browser, sent with every message, and logged with
 each turn (Workers Logs, and the D1 table's `visitor` column if logging is on).
 Questions and answers are still redacted; the email is kept on purpose. Say so in
 your privacy note. A **Sign out** button in the sidebar clears the key, the email,
-and the admin code.
+and the admin code (the same email on the same browser can sign straight back in).
 
 ### The key
 Set one secret and the bot asks for a passphrase before it will talk:

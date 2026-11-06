@@ -18,7 +18,8 @@
 //    POST /api/id/totp/link                  {bot, email, code}            → { linked: true } (an unknown device, six digits)
 //    GET  /api/id/methods?bot=<id>                                          → what's on for this bot, and for this device
 //    POST /api/id/join                       {bot, email}                  → { linked: true, email } (first device, or a second one
-//                                                                            inside the return window — devices.js)
+//                                                                            inside the return window, or the same browser signed
+//                                                                            out and back in: x-device-prev — devices.js)
 //                                                                            or { linked: false, code, email } (a second device: the
 //                                                                            owner links it with the code, or a passkey / six digits do)
 //    GET  /api/id/me?bot=<id>                                               → { linked, email } or { linked: false, pending: {code, email} }
@@ -27,7 +28,7 @@
 //  Never an email is sent. Nothing here can be "reset by email".
 // ============================================================================
 
-import { deviceHash, userForDevice, userById, userByEmail, pendingFor, bindDevice, cleanEmail, ensureIdentitySchema, nowIso, deviceCount, join as joinDevice, linkByCode, touch, cleanGrace, DEFAULT_GRACE_MINUTES, recordSignup, cleanPhone, pepperOf, adoptDevice } from "./devices.js";
+import { deviceHash, prevDeviceHash, userForDevice, userById, userByEmail, pendingFor, bindDevice, cleanEmail, ensureIdentitySchema, nowIso, deviceCount, join as joinDevice, linkByCode, touch, cleanGrace, DEFAULT_GRACE_MINUTES, recordSignup, cleanPhone, pepperOf, adoptDevice } from "./devices.js";
 import { SIGNUP_BUILT_IN } from "../worker/settings.js";
 import { redeemInvite } from "../worker/allowlist.js";
 import { DISPOSABLE } from "../worker/signups.js";
@@ -221,7 +222,7 @@ export async function handleIdentity(request, env, url, { bot, allowed = async (
       const gate = fresh ? checkSignup(signup, body) : { ok: true };
       if (!gate.ok) return json({ error: gate.error, reason: gate.reason }, 400);
       if (fresh) { const real = await checkEmailReal(email, signup); if (!real.ok) return json({ error: "email", reason: real.reason }, 400); }
-      const r = await joinDevice(env, bot.id, { email, keyHash, graceMinutes });
+      const r = await joinDevice(env, bot.id, { email, keyHash, graceMinutes, prevKeyHash: await prevDeviceHash(request) });
       if (r.linked && r.fresh) {
         const now = nowIso();
         const ip = request.headers.get("cf-connecting-ip") || "";
@@ -234,7 +235,7 @@ export async function handleIdentity(request, env, url, { bot, allowed = async (
         console.log(JSON.stringify({ event: "signup", bot: bot.id, marketing: rec.marketing, sms: rec.sms, phone: Boolean(rec.phone), ip_hash: rec.ip_hash, fp_hash: rec.fp_hash }));
         await signupWebhook(signup.webhook, { event: "signup", bot: { id: bot.id, name: bot.name }, when: now, email, name: rec.name, phone: rec.phone, marketing: rec.marketing, sms: rec.sms, consent_text: rec.consent_text, source: rec.source, ip_hash: rec.ip_hash, fp_hash: rec.fp_hash, country: request.headers.get("cf-ipcountry") || "" });
       }
-      if (r.linked) return json({ ok: true, linked: true, email: r.user.email, name: (r.fresh ? gate.name : r.user.name) || "", fresh: Boolean(r.fresh), ...(r.grace ? { grace: true } : {}) });
+      if (r.linked) return json({ ok: true, linked: true, email: r.user.email, name: (r.fresh ? gate.name : r.user.name) || "", fresh: Boolean(r.fresh), ...(r.grace ? { grace: true } : {}), ...(r.back ? { back: true } : {}) });
       // A second device holding a live workshop key: the key is proof enough. Link it now, no owner needed.
       if (body.key) {
         const k = await keyIsActive(env, String(body.key));

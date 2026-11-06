@@ -46,7 +46,7 @@ import { CONFIG } from "../../YourBots/config.js";
 import { identify, signInMethods, verifyIdToken } from "../identity/index.js";
 import { pickQuote } from "./quotes.js";
 import { resolve as resolveExpiry, lapseReply, noticeFor, EXPIRY_BUILT_IN } from "./expiry.js";
-import { join as idJoin, userIdFor, userById as idUserById, bindDevice, linkByCode, deviceCount, listDevices, pendingByEmail, touch as idTouch, DEV_PEPPER, pepperOf } from "../identity/devices.js";
+import { join as idJoin, prevDeviceHash, userIdFor, userById as idUserById, bindDevice, linkByCode, deviceCount, listDevices, pendingByEmail, touch as idTouch, DEV_PEPPER, pepperOf } from "../identity/devices.js";
 import { applyLabelMath, scaleGrams } from "./track-yield.js";
 import { runVision, streamVision, PROMPTS, labelTurn, extractJson, withBrands, sanitiseItems, sanitiseLabel, sanitiseReceipt, totalsOf, imageSize, mergeCorrection } from "./track-vision.js";
 import { lookupBarcode, useBarcodes, rememberLabel, saveReceipt, listReceipts, deleteReceipt, setWeight, listWeights, importWeights, householdOf, createHousehold, joinHousehold, leaveHousehold, canView } from "./track-extras.js";
@@ -162,7 +162,7 @@ export async function handleTrack(request, env, url, { ctx = null, bot, api, pag
     if (request.method !== "POST") return json({ error: "POST only" }, 405);
     if (!(await allowed(env, request))) return json({ error: "rate-limited", reason: "Too many tries. Give it a minute." }, 429);
     if (!keyHash) return json({ error: "no device key", reason: "This browser didn't send a device key. Reload the page." }, 400);
-    return join(env, cfg, await readJson(request), keyHash, graceMinutes);
+    return join(env, cfg, await readJson(request), keyHash, graceMinutes, await prevDeviceHash(request));
   }
 
   // Everything below needs a known device. Unknown → 401, no exceptions.
@@ -510,10 +510,10 @@ function foodConfig(bot, env) {
 }
 
 // --- JOIN: first device creates the log; a second device gets a code instead (Engine/identity/devices.js). ---
-async function join(env, cfg, body, keyHash, graceMinutes) {
+async function join(env, cfg, body, keyHash, graceMinutes, prevKeyHash = null) {
   const email = cleanEmail(body.email);
   if (!email) return json({ error: "email", reason: "That doesn't look like an email address." }, 400);
-  const r = await idJoin(env, cfg.id, { email, keyHash, graceMinutes });
+  const r = await idJoin(env, cfg.id, { email, keyHash, graceMinutes, prevKeyHash });
   if (r.linked) return json({ linked: true, ...(await profile(env, await withProfile(env, r.user))), ...(r.fresh ? { fresh: true } : {}) });
   return json({ linked: false, code: r.code, email, message: PENDING_MESSAGE, signIn: cfg.signIn.map((s) => s.provider), methods: { passkeys: cfg.methods.passkeys, totp: cfg.methods.totp } }, 202);
 }

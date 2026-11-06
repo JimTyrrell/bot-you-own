@@ -740,7 +740,9 @@ browser as a token. They tell strangers and scripts no, and tell you who asked.
 `allow` is the first step past that: the owner said who; still no password.
 A bot that needs accounts, sign-in, or per-person permissions is a later mode.
 Say so in your privacy note. A **Sign out** button in the sidebar clears the keys,
-the email, and the admin code (and the local copy of chats the server holds).
+the email, and the admin code (and the local copy of chats the server holds). The
+same person typing the same email on that browser is back in at once, whatever the
+return window says; it is only a *different* computer that waits for you.
 
 ## Two things to know about the iframe
 1. Your website analytics won't see chat activity (different origin). Log from the Worker instead — better data anyway.

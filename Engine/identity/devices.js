@@ -77,6 +77,13 @@ export async function deviceHash(request) {
   const k = String(request.headers.get("x-device-key") || "");
   return DEVICE_KEY_RE.test(k) ? sha256hex(k) : null;
 }
+// The key Sign out threw away, sent once with the next join as x-device-prev (the page keeps it
+// seven days). Proof that this browser WAS this person: join() binds the new key at once when the
+// old one is still bound to the same email, whatever the return window says.
+export async function prevDeviceHash(request) {
+  const k = String(request.headers.get("x-device-prev") || "");
+  return DEVICE_KEY_RE.test(k) ? sha256hex(k) : null;
+}
 
 // The same browser on ANY bot of this deployment: one sign-up covers every bot.
 export async function userForDeviceAnyBot(env, keyHash) {
@@ -125,12 +132,15 @@ export async function bindDevice(env, bot, { userId, email, keyHash, label }) {
 // --- JOIN: the first device creates the person; a second device gets a code instead —
 //     unless the person was active within the return window (graceMinutes), in which
 //     case the new device is bound at once. ---
-//   → { linked: true, user, fresh }  ·  { linked: true, user, grace: true }  ·  { linked: false, code, email }
+//   → { linked: true, user, fresh }  ·  { linked: true, user, grace: true }  ·  { linked: true, user, back: true }  ·  { linked: false, code, email }
+//   back: signed out and back in on the same browser — the key Sign out threw away (prevKeyHash)
+//   is still bound to this same email, so the new key is bound at once and the old one dropped.
+//   A different email gets nothing from the old key. Whatever the return window says.
 export const DEFAULT_GRACE_MINUTES = 60;
 // 0 = a second device always waits for the owner; up to a week in minutes; ALWAYS (-1) = never block a second device.
 export const ALWAYS = -1;
 export function cleanGrace(v, fallback = DEFAULT_GRACE_MINUTES) { const n = Number(v); if (n === ALWAYS || v === "always") return ALWAYS; return Number.isFinite(n) && n >= 0 ? Math.min(Math.round(n), 7 * 24 * 60) : fallback; }
-export async function join(env, bot, { email, keyHash, graceMinutes = DEFAULT_GRACE_MINUTES }) {
+export async function join(env, bot, { email, keyHash, graceMinutes = DEFAULT_GRACE_MINUTES, prevKeyHash = null }) {
   const known = await userForDevice(env, bot, keyHash);
   if (known) return { linked: true, user: known };                          // reload of a known browser
   const userId = await userIdFor(email, env, bot);
@@ -139,6 +149,16 @@ export async function join(env, bot, { email, keyHash, graceMinutes = DEFAULT_GR
     const user = await bindDevice(env, bot, { userId, email, keyHash, label: "first device" });
     console.log(JSON.stringify({ event: "identity-join", bot, userId: userId.slice(0, 8) }));
     return { linked: true, user, fresh: true };
+  }
+  // Signed out and back in on this browser: the old key is still theirs → in at once.
+  if (prevKeyHash && prevKeyHash !== keyHash) {
+    const prev = (await userForDevice(env, bot, prevKeyHash)) || (await userForDeviceAnyBot(env, prevKeyHash));
+    if (prev && prev.email === email) {
+      const user = await bindDevice(env, bot, { userId, email, keyHash, label: "signed out and back in" });
+      await env.DB.prepare(`DELETE FROM id_devices WHERE key_hash = ?`).bind(prevKeyHash).run();
+      console.log(JSON.stringify({ event: "identity-join-back", bot, userId: userId.slice(0, 8) }));
+      return { linked: true, user, back: true };
+    }
   }
   // The return window: last seen within N minutes → this is them, on another machine.
   const grace = cleanGrace(graceMinutes);
